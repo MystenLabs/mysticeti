@@ -1,9 +1,9 @@
-
-
-use crate::types::{Authority, BlockReference, MetaStatement, BaseStatement, SequenceNumber, Transaction, TransactionId, Vote, MetaStatementBlock};
+use crate::types::{
+    Authority, BaseStatement, BlockReference, MetaStatement, MetaStatementBlock, SequenceNumber,
+    Transaction, TransactionId, Vote,
+};
 
 use std::collections::{HashMap, HashSet, VecDeque};
-
 
 // Only used for testing
 #[cfg(test)]
@@ -15,8 +15,6 @@ fn make_test_transaction(transaction: Transaction) -> MetaStatement {
 fn make_test_vote_accept(txid: TransactionId) -> MetaStatement {
     MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept))
 }
-
-
 
 // Algorithm that takes ONE MetaStatement::Block(Authority, SequenceNumber, SequenceDigest, Vec<MetaStatement>)
 // and turns it into a sequence Vec<BaseStatement> where all base statements are emitted by the Authority that

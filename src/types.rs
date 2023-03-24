@@ -1,6 +1,6 @@
 use std::{collections::HashSet, hash::Hasher, sync::Arc};
 
-pub type Authority = u16;
+pub type Authority = RichAuthority;
 pub type Transaction = u64;
 pub type TransactionId = u64;
 pub type SequenceNumber = u64;
@@ -30,13 +30,13 @@ pub enum MetaStatement {
     Include(BlockReference),
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct MetaStatementBlock(BlockReference, Vec<MetaStatement>, Signature);
 
 impl MetaStatementBlock {
     #[cfg(test)]
-    pub fn new_for_testing(authority: Authority, sequence: SequenceNumber) -> Self {
-        MetaStatementBlock((authority, sequence, 0), vec![], 0)
+    pub fn new_for_testing(authority: &Authority, sequence: SequenceNumber) -> Self {
+        MetaStatementBlock((authority.clone(), sequence, 0), vec![], 0)
     }
 
     pub fn get_authority(&self) -> &Authority {
@@ -65,7 +65,7 @@ impl MetaStatementBlock {
     }
 
     pub fn into_include(&self) -> MetaStatement {
-        MetaStatement::Include(*self.get_reference())
+        MetaStatement::Include(self.get_reference().clone())
     }
 
     pub fn extend_with(mut self, item: MetaStatement) -> Self {
@@ -84,7 +84,7 @@ pub type CommitteeId = u64;
 // clone() is not implemented for Arc, so we need to implement it ourselves
 #[derive(Clone)]
 pub struct RichAuthority {
-    index: usize, // Index of the authority in the committee
+    index: usize,              // Index of the authority in the committee
     committee: Arc<Committee>, // Reference to the committee
 }
 
@@ -116,14 +116,13 @@ impl RichAuthority {
 
 pub struct Committee {
     committee_id: CommitteeId, // Unique identifier for the committee
-    authorities: Vec<Stake>,  // List of authorities and their stakes
+    authorities: Vec<Stake>,   // List of authorities and their stakes
     validity_threshold: Stake, // The minimum stake required for validity
-    quorum_threshold: Stake, // The minimum stake required for quorum
+    quorum_threshold: Stake,   // The minimum stake required for quorum
 }
 
 impl Committee {
-
-    // What this function does: 
+    // What this function does:
     // 1. Creates a new committee with the given committee_id and authorities
     // 2. Ensures that the list of authorities is not empty
     // 3. Ensures that all stakes are positive
@@ -224,7 +223,13 @@ mod tests {
         let rich_authority2 = committee.get_rich_authority(1);
         let rich_authority3 = committee.get_rich_authority(2);
         let rich_authority4 = committee.get_rich_authority(3);
-        let authorities = vec![rich_authority, rich_authority_clone, rich_authority2, rich_authority3, rich_authority4];
+        let authorities = vec![
+            rich_authority,
+            rich_authority_clone,
+            rich_authority2,
+            rich_authority3,
+            rich_authority4,
+        ];
         let authorities = authorities.into_iter().collect();
         assert_eq!(committee.get_total_stake(&authorities), 4);
     }
@@ -243,5 +248,4 @@ mod tests {
         let rich_authority3 = committee3.get_rich_authority(0);
         assert!(rich_authority == rich_authority3);
     }
-
 }

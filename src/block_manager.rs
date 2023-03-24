@@ -1,6 +1,6 @@
 use crate::types::{
-    Authority, BaseStatement, BlockReference, MetaStatement, MetaStatementBlock, SequenceNumber,
-    Transaction, TransactionId, Vote,
+    Authority, BaseStatement, BlockReference, Committee, CommitteeId, MetaStatement,
+    MetaStatementBlock, SequenceNumber, Transaction, TransactionId, Vote,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -127,19 +127,19 @@ impl BlockManager {
                 if !self.blocks_processed.contains_key(&included_reference) {
                     processed = false;
                     self.block_references_waiting
-                        .entry(*included_reference)
+                        .entry(included_reference.clone())
                         .or_default()
-                        .insert(*block_reference);
+                        .insert(block_reference.clone());
                 }
             }
             if !processed {
-                self.blocks_pending.insert(*block_reference, block);
+                self.blocks_pending.insert(block_reference.clone(), block);
             } else {
                 let block_reference = block_reference.clone();
 
                 // Block can be processed. So need to update indexes etc
-                self.blocks_processed.insert(block_reference, block);
-                local_blocks_processed.push(block_reference);
+                self.blocks_processed.insert(block_reference.clone(), block);
+                local_blocks_processed.push(block_reference.clone());
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -190,7 +190,7 @@ impl BlockManager {
                         // Record the vote, if it is fresh
                         if let Some(entry) = self.transaction_entries.get_mut(txid) {
                             // If we have not seen this vote before, then add it.
-                            if entry.add_vote(*block.get_authority(), vote.clone()) {
+                            if entry.add_vote(block.get_authority().clone(), vote.clone()) {
                                 add_result
                                     .transactions_with_fresh_votes
                                     .insert(txid.clone());
@@ -214,7 +214,7 @@ impl BlockManager {
         let mut result = HashSet::new();
         if let Some(waiting_references) = self.block_references_waiting.get(block_ref) {
             for waiting_reference in waiting_references {
-                result.insert(waiting_reference.0);
+                result.insert(waiting_reference.0.clone());
             }
             return Some(result);
         }
@@ -257,7 +257,7 @@ impl BlockManager {
                     self.transaction_entries
                         .get_mut(&txid)
                         .unwrap()
-                        .add_vote(*our_name, vote.clone());
+                        .add_vote(our_name.clone(), vote.clone());
                     self.own_next_block
                         .push(MetaStatement::Base(BaseStatement::Vote(txid, vote)));
                 }
@@ -299,19 +299,31 @@ trait PersistBlockManager {}
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
+
     use super::*;
+
+    fn make_test_committee() -> Arc<Committee> {
+        Committee::new(0, vec![1, 1, 1, 1])
+    }
 
     #[test]
     fn add_one_block_no_dependencies() {
         let mut bm = BlockManager::default();
-        let block = MetaStatementBlock::default();
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let block = MetaStatementBlock::new_for_testing(&auth0, 0);
         bm.add_blocks([block].into_iter().collect());
     }
 
     #[test]
     fn add_one_block_one_met_dependency() {
-        let block0 = MetaStatementBlock::new_for_testing(0, 0);
-        let block1 = MetaStatementBlock::new_for_testing(0, 1).extend_with(block0.into_include());
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let block1 =
+            MetaStatementBlock::new_for_testing(&auth0, 1).extend_with(block0.into_include());
 
         // Add one then the other block. Dependencies are met in order, no pending.
         let mut bm = BlockManager::default();
@@ -346,9 +358,12 @@ mod tests {
 
     #[test]
     fn test_two_transactions_ordering() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
         let block0 =
-            MetaStatementBlock::new_for_testing(0, 0).extend_with(make_test_transaction(0));
-        let block1 = MetaStatementBlock::new_for_testing(0, 1)
+            MetaStatementBlock::new_for_testing(&auth0, 0).extend_with(make_test_transaction(0));
+        let block1 = MetaStatementBlock::new_for_testing(&auth0, 1)
             .extend_with(block0.into_include())
             .extend_with(make_test_transaction(1));
 
@@ -379,9 +394,12 @@ mod tests {
     // Submitting twice the same transaction only returns it the first time.
     #[test]
     pub fn two_same_blocks_with_same_transaction() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
         let block0 =
-            MetaStatementBlock::new_for_testing(0, 0).extend_with(make_test_transaction(0));
-        let block1 = MetaStatementBlock::new_for_testing(0, 1)
+            MetaStatementBlock::new_for_testing(&auth0, 0).extend_with(make_test_transaction(0));
+        let block1 = MetaStatementBlock::new_for_testing(&auth0, 1)
             .extend_with(block0.into_include())
             .extend_with(make_test_transaction(0));
 
@@ -395,9 +413,12 @@ mod tests {
 
     #[test]
     fn test_two_transactions_ordering_embeded() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
         let block0 =
-            MetaStatementBlock::new_for_testing(0, 0).extend_with(make_test_transaction(0));
-        let block1 = MetaStatementBlock::new_for_testing(0, 1)
+            MetaStatementBlock::new_for_testing(&auth0, 0).extend_with(make_test_transaction(0));
+        let block1 = MetaStatementBlock::new_for_testing(&auth0, 1)
             .extend_with(block0.into_include())
             .extend_with(make_test_transaction(1))
             .extend_with(make_test_transaction(0));
@@ -430,10 +451,14 @@ mod tests {
     // and checks that the transactions are returned in the correct order.
     #[test]
     pub fn test_many_blocks() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
         let mut blocks = vec![];
         for i in 0..100 {
             blocks.push(
-                MetaStatementBlock::new_for_testing(0, i).extend_with(make_test_transaction(i)),
+                MetaStatementBlock::new_for_testing(&auth0, i)
+                    .extend_with(make_test_transaction(i)),
             );
         }
 
@@ -459,15 +484,19 @@ mod tests {
     // returned in the same order.
     #[test]
     pub fn test_many_blocks_embeded() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
         let mut blocks = vec![];
         for i in 0..100 {
             if i == 0 {
                 blocks.push(
-                    MetaStatementBlock::new_for_testing(0, i).extend_with(make_test_transaction(i)),
+                    MetaStatementBlock::new_for_testing(&auth0, i)
+                        .extend_with(make_test_transaction(i)),
                 );
             } else {
                 blocks.push(
-                    MetaStatementBlock::new_for_testing(0, i)
+                    MetaStatementBlock::new_for_testing(&auth0, i)
                         .extend_with(blocks[i as usize - 1].clone().into_include())
                         .extend_with(make_test_transaction(i)),
                 );
@@ -493,23 +522,24 @@ mod tests {
 
     #[test]
     fn add_one_block_and_check_authority_reference() {
-        let block0 = MetaStatementBlock::new_for_testing(0, 0);
-        let block1 = MetaStatementBlock::new_for_testing(0, 1).extend_with(block0.into_include());
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let block1 =
+            MetaStatementBlock::new_for_testing(&auth0, 1).extend_with(block0.into_include());
 
         // Add out of order, one by one. First dependecy not me, then met.
         let mut bm = BlockManager::default();
         bm.add_blocks([block1.clone()].into_iter().collect());
         // check that the authority reference is set and equal to authority in block0
-        assert_eq!(
-            bm.get_authorities_waiting_on_block(block0.get_reference()),
-            Some(HashSet::from([block1.get_reference().0]))
+        assert!(
+            bm.get_authorities_waiting_on_block(block0.get_reference())
+                == Some(HashSet::from([block1.get_reference().0.clone()]))
         );
         // When the block is added, the authority reference should be removed.
         bm.add_blocks([block0.clone()].into_iter().collect());
-        assert_eq!(
-            bm.get_authorities_waiting_on_block(block0.get_reference()),
-            None
-        );
+        assert!(bm.get_authorities_waiting_on_block(block0.get_reference()) == None);
     }
 
     /// Make 4 blocks from 4 difference authorities. All blocks besides the fist include the first block.
@@ -518,18 +548,24 @@ mod tests {
     /// for the transaction.
     #[test]
     fn add_blocks_with_votes() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        let auth2 = cmt.get_rich_authority(2);
+        let auth3 = cmt.get_rich_authority(3);
+
         let tx = make_test_transaction(0);
         let vote = make_test_vote_accept(0);
-        let block0 = MetaStatementBlock::new_for_testing(0, 0)
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0)
             .extend_with(tx)
             .extend_with(vote.clone());
-        let block1 = MetaStatementBlock::new_for_testing(1, 1)
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 1)
             .extend_with(block0.clone().into_include())
             .extend_with(vote.clone());
-        let block2 = MetaStatementBlock::new_for_testing(2, 2)
+        let block2 = MetaStatementBlock::new_for_testing(&auth2, 2)
             .extend_with(block0.clone().into_include())
             .extend_with(vote.clone());
-        let block3 = MetaStatementBlock::new_for_testing(3, 3)
+        let block3 = MetaStatementBlock::new_for_testing(&auth3, 3)
             .extend_with(block0.clone().into_include())
             .extend_with(vote.clone());
 
@@ -557,7 +593,7 @@ mod tests {
         assert!(tx_entry.reject_votes.is_empty());
 
         // Make another block from authority 1 with the same vote
-        let block4 = MetaStatementBlock::new_for_testing(1, 4)
+        let block4 = MetaStatementBlock::new_for_testing(&auth1, 4)
             .extend_with(block0.clone().into_include())
             .extend_with(vote.clone());
         // Add it to the bm and check that the vote is not included in the return value.

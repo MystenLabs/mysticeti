@@ -318,6 +318,27 @@ impl BlockManager {
 
         let take_entries: Vec<_> = self.own_next_block.drain(..first_include_index).collect();
 
+        // Compress the references in the block
+        // Iterate through all the include statements in the block, and make a set of all the references in their includes.
+        let mut references_in_block = HashSet::new();
+        for statement in &take_entries {
+            if let MetaStatement::Include(block_ref) = statement {
+                // for all the includes in the block, add the references in the block to the set
+                if let Some(block) = self.blocks_processed.get(block_ref) {
+                    references_in_block.extend(block.get_includes());
+                }
+            }
+        }
+
+        // Only keep the includes in the take_entries vector that are not in the references_in_block set.
+        let take_entries: Vec<_> = take_entries
+            .into_iter()
+            .filter(|statement| match statement {
+                MetaStatement::Include(block_ref) => !references_in_block.contains(block_ref),
+                _ => true,
+            })
+            .collect();
+
         // Make a new block
         let block = MetaStatementBlock::new(&our_name, sequence_number, take_entries);
         let block_ref = block.get_reference().clone();
@@ -713,4 +734,65 @@ mod tests {
             panic!("First entry in own_next_block is not an include statement");
         }
     }
+
+
+    #[test]
+    fn seal_block_compress() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        let auth2 = cmt.get_rich_authority(2);
+        let auth3 = cmt.get_rich_authority(3);
+
+        let tx0 = make_test_transaction(0);
+        let tx1 = make_test_transaction(1);
+        let tx2 = make_test_transaction(2);
+        let tx3 = make_test_transaction(3);
+        let vote = make_test_vote_accept(0);
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0)
+            .extend_with(tx0.clone())
+            .extend_with(vote.clone());
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 1)
+            .extend_with(block0.clone().into_include())
+            .extend_with(tx1.clone())
+            .extend_with(vote.clone());
+        let block2 = MetaStatementBlock::new_for_testing(&auth2, 2)
+            .extend_with(block1.clone().into_include())
+            .extend_with(tx2.clone())
+            .extend_with(vote.clone());
+        let block3 = MetaStatementBlock::new_for_testing(&auth3, 3)
+            .extend_with(block2.clone().into_include())
+            .extend_with(tx3.clone())
+            .extend_with(vote.clone());
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let t0 = bm.add_blocks(
+            [
+                block0.clone(),
+                block1.clone(),
+                block2.clone(),
+                block3.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(t0.get_newly_added_transactions().len() == 4);
+
+        // Seal a block with all transactions. The reference should be to block0.
+        let sealed_block_reference = bm.seal_next_block(auth0.clone(), 4);
+        assert!(sealed_block_reference == (auth0.clone(), 4, 0));
+
+        // Check that the includes of the block do not contain block2, block1 or block0 -- they are compressed away
+        assert!(bm.blocks_processed.get(&sealed_block_reference).unwrap().get_includes().iter().all(|x| {            
+                x != block0.get_reference() && x != block1.get_reference() && x != block2.get_reference()            
+        }));
+
+        // But it includes block3
+        assert!(bm.blocks_processed.get(&sealed_block_reference).unwrap().get_includes().iter().all(|x| {            
+            x == block3.get_reference()       
+        }));
+        
+    }
+
 }

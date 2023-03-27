@@ -1,6 +1,6 @@
 use crate::types::{
-    Authority, BaseStatement, BlockReference, Committee, CommitteeId, MetaStatement,
-    MetaStatementBlock, SequenceNumber, Transaction, TransactionId, Vote,
+    Authority, BaseStatement, BlockReference, Committee, MetaStatement, MetaStatementBlock,
+    SequenceNumber, Transaction, TransactionId, Vote,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -305,25 +305,33 @@ impl BlockManager {
         // Assert sequence number is higher than next sequence number
         assert!(sequence_number >= self.own_next_sequence_number);
 
+        // Find the index of the first include in own_next_block that has a reference
+        // to a block with sequence number equal or larger to sequence_number.
+        let first_include_index = self
+            .own_next_block
+            .iter()
+            .position(|statement| match statement {
+                MetaStatement::Include(block_ref) => block_ref.1 >= sequence_number,
+                _ => false,
+            })
+            .unwrap_or(self.own_next_block.len());
+
+        let take_entries: Vec<_> = self.own_next_block.drain(..first_include_index).collect();
+
         // Make a new block
-        let block =
-            MetaStatementBlock::new(&our_name, sequence_number, self.own_next_block.clone());
+        let block = MetaStatementBlock::new(&our_name, sequence_number, take_entries);
 
         let block_ref = block.get_reference().clone();
 
         // Update our own next block
-        self.own_next_block.clear();
         self.own_next_sequence_number = sequence_number + 1;
 
         // Add the block to the block manager
         let results = self.add_blocks(vec![block].into_iter().collect());
+
         // Assert that the results are empty, since we just added this block.
         assert!(results.newly_added_transactions.is_empty());
         assert!(results.transactions_with_fresh_votes.is_empty());
-
-        // We always insert a reference to our own block as the first block included in the next block
-        self.own_next_block
-            .push(MetaStatement::Include(block_ref.clone()));
 
         block_ref
     }
@@ -688,6 +696,18 @@ mod tests {
         assert!(sealed_block_reference == (auth0, 1, 0));
 
         // Check own next block includes this reference as the first entry
-        assert!(bm.own_next_block[0] == MetaStatement::Include(sealed_block_reference));
+        assert!(
+            *bm.own_next_block.last().unwrap() == MetaStatement::Include(sealed_block_reference)
+        );
+
+        // Check that the first entry in the bm.own_next_block is an include statement for a block with
+        // sequence number 1 and authority 1.
+        let include = bm.own_next_block.first().unwrap();
+        if let MetaStatement::Include((auth, seq, _)) = include {
+            assert!(*auth == auth1);
+            assert!(*seq == 1);
+        } else {
+            panic!("First entry in own_next_block is not an include statement");
+        }
     }
 }

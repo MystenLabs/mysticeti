@@ -33,7 +33,13 @@ pub enum MetaStatement {
 #[derive(Clone)]
 pub struct MetaStatementBlock {
     reference: BlockReference,
+
+    //  A list of block references to other blocks that this block includes
+    //  Note that the order matters: if a reference to two blocks from the same round and same authority
+    //  are included, then the first reference is the one that this block conceptually votes for.
     includes: Vec<BlockReference>,
+
+    // A list of base statements in order.
     base_statements: Vec<BaseStatement>,
     _signature: Signature,
 }

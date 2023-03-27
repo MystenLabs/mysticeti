@@ -28,7 +28,7 @@ pub struct BlockManager {
 
     /// Our own strucutres for the next block
     own_next_sequence_number: SequenceNumber,
-    own_next_block: Vec<MetaStatement>,
+    own_next_block: VecDeque<MetaStatement>,
 
     /// The transactions and how many votes they got so far, incl potential conlicts.
     transaction_entries: HashMap<TransactionId, TransactionEntry>,
@@ -183,7 +183,7 @@ impl BlockManager {
                 .expect("We added this to the blocks processed above.");
 
             // Update our own next block
-            self.own_next_block.push(block.into_include());
+            self.own_next_block.push_back(block.into_include());
 
             for base_item in block.get_base_statements() {
                 match base_item {
@@ -247,7 +247,7 @@ impl BlockManager {
                     self.transaction_entries
                         .insert(txid.clone(), TransactionEntry::new(txid, tx.clone()));
                     self.own_next_block
-                        .push(MetaStatement::Base(BaseStatement::Share(txid, tx)));
+                        .push_back(MetaStatement::Base(BaseStatement::Share(txid, tx)));
                 }
                 BaseStatement::Vote(txid, vote) => {
                     // We should vote on existing transactions and only once.
@@ -267,7 +267,7 @@ impl BlockManager {
                         .unwrap()
                         .add_vote(our_name.clone(), vote.clone());
                     self.own_next_block
-                        .push(MetaStatement::Base(BaseStatement::Vote(txid, vote)));
+                        .push_back(MetaStatement::Base(BaseStatement::Vote(txid, vote)));
                 }
             }
         }
@@ -320,18 +320,18 @@ impl BlockManager {
 
         // Make a new block
         let block = MetaStatementBlock::new(&our_name, sequence_number, take_entries);
-
         let block_ref = block.get_reference().clone();
 
         // Update our own next block
         self.own_next_sequence_number = sequence_number + 1;
 
-        // Add the block to the block manager
-        let results = self.add_blocks(vec![block].into_iter().collect());
-
-        // Assert that the results are empty, since we just added this block.
-        assert!(results.newly_added_transactions.is_empty());
-        assert!(results.transactions_with_fresh_votes.is_empty());
+        self.blocks_processed.insert(block_ref.clone(), block);
+        self.blocks_processed_by_round
+            .entry(block_ref.1)
+            .or_default()
+            .push(block_ref.clone());
+        self.own_next_block
+            .push_front(MetaStatement::Include(block_ref.clone()));
 
         block_ref
     }
@@ -695,14 +695,17 @@ mod tests {
         let sealed_block_reference = bm.seal_next_block(auth0.clone(), 1);
         assert!(sealed_block_reference == (auth0, 1, 0));
 
-        // Check own next block includes this reference as the first entry
+        // Check own next block includes this reference as the first entry as the first item
         assert!(
-            *bm.own_next_block.last().unwrap() == MetaStatement::Include(sealed_block_reference)
+            *bm.own_next_block.iter().next().unwrap()
+                == MetaStatement::Include(sealed_block_reference)
         );
 
-        // Check that the first entry in the bm.own_next_block is an include statement for a block with
-        // sequence number 1 and authority 1.
-        let include = bm.own_next_block.first().unwrap();
+        // Check that the seconds entry is the next block reference
+        let mut iter = bm.own_next_block.iter();
+        iter.next();
+
+        let include = iter.next().unwrap();
         if let MetaStatement::Include((auth, seq, _)) = include {
             assert!(*auth == auth1);
             assert!(*seq == 1);

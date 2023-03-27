@@ -74,9 +74,14 @@ mod tests {
 
         // Are the 3 authroities a quorum
         let committee = auth0.get_committee();
-        assert!(committee.is_quorum(committee.get_total_stake(&[auth0.clone(), auth1.clone(), auth2.clone()].into_iter().collect())));
+        assert!(committee.is_quorum(
+            committee.get_total_stake(
+                &[auth0.clone(), auth1.clone(), auth2.clone()]
+                    .into_iter()
+                    .collect()
+            )
+        ));
 
         assert!(threshold_clock_valid(&block3)); // succeeds because there is a quorum of sequence number 0 blocks
-
     }
 }

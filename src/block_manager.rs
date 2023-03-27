@@ -33,6 +33,9 @@ pub struct BlockManager {
     /// The transactions and how many votes they got so far, incl potential conlicts.
     transaction_entries: HashMap<TransactionId, TransactionEntry>,
     blocks_processed: HashMap<BlockReference, MetaStatementBlock>,
+
+    // Maintain an index of blocks by round as well.
+    blocks_processed_by_round: HashMap<SequenceNumber, Vec<BlockReference>>,
 }
 
 /// A TransactionEntry structure stores the transactionId, the Transaction, and two maps. One that
@@ -141,6 +144,12 @@ impl BlockManager {
                 self.blocks_processed.insert(block_reference.clone(), block);
                 local_blocks_processed.push(block_reference.clone());
 
+                // Update the index of blocks by round
+                self.blocks_processed_by_round
+                    .entry(block_reference.1)
+                    .or_default()
+                    .push(block_reference.clone());
+
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
                     self.block_references_waiting.remove(&block_reference)
@@ -176,9 +185,9 @@ impl BlockManager {
             // Update our own next block
             self.own_next_block.push(block.into_include());
 
-            for item in block.all_items() {
-                match item {
-                    MetaStatement::Base(BaseStatement::Share(txid, tx)) => {
+            for base_item in block.get_base_statements() {
+                match base_item {
+                    BaseStatement::Share(txid, tx) => {
                         // This is a new transactions, so insert it, and ask for a vote.
                         if !self.transaction_entries.contains_key(&txid) {
                             self.transaction_entries
@@ -186,7 +195,7 @@ impl BlockManager {
                             add_result.newly_added_transactions.push(*txid);
                         }
                     }
-                    MetaStatement::Base(BaseStatement::Vote(txid, vote)) => {
+                    BaseStatement::Vote(txid, vote) => {
                         // Record the vote, if it is fresh
                         if let Some(entry) = self.transaction_entries.get_mut(txid) {
                             // If we have not seen this vote before, then add it.
@@ -197,7 +206,6 @@ impl BlockManager {
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -289,9 +297,36 @@ impl BlockManager {
         self.transaction_entries.get(txid)
     }
 
-    pub fn inspect_next_block(&mut self) {}
+    pub fn seal_next_block(
+        &mut self,
+        our_name: Authority,
+        sequence_number: SequenceNumber,
+    ) -> BlockReference {
+        // Assert sequence number is higher than next sequence number
+        assert!(sequence_number >= self.own_next_sequence_number);
 
-    pub fn seal_next_block(&mut self) {}
+        // Make a new block
+        let block =
+            MetaStatementBlock::new(&our_name, sequence_number, self.own_next_block.clone());
+
+        let block_ref = block.get_reference().clone();
+
+        // Update our own next block
+        self.own_next_block.clear();
+        self.own_next_sequence_number = sequence_number + 1;
+
+        // Add the block to the block manager
+        let results = self.add_blocks(vec![block].into_iter().collect());
+        // Assert that the results are empty, since we just added this block.
+        assert!(results.newly_added_transactions.is_empty());
+        assert!(results.transactions_with_fresh_votes.is_empty());
+
+        // We always insert a reference to our own block as the first block included in the next block
+        self.own_next_block
+            .push(MetaStatement::Include(block_ref.clone()));
+
+        block_ref
+    }
 }
 
 trait PersistBlockManager {}
@@ -600,5 +635,59 @@ mod tests {
         let t1 = bm.add_blocks([block4.clone()].into_iter().collect());
         assert!(t1.get_newly_added_transactions().is_empty());
         assert!(t1.get_transactions_with_fresh_votes().is_empty());
+    }
+
+    // Make 4 blocks from 4 difference authorities. All blocks besides the fist include the first block.
+    // Each block contains a different transaction, and a vote for the first transaction.
+    // At the end we seal a new block, amd check that the reference is as expected
+    #[test]
+    fn seal_block() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        let auth2 = cmt.get_rich_authority(2);
+        let auth3 = cmt.get_rich_authority(3);
+
+        let tx0 = make_test_transaction(0);
+        let tx1 = make_test_transaction(1);
+        let tx2 = make_test_transaction(2);
+        let tx3 = make_test_transaction(3);
+        let vote = make_test_vote_accept(0);
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0)
+            .extend_with(tx0.clone())
+            .extend_with(vote.clone());
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 1)
+            .extend_with(block0.clone().into_include())
+            .extend_with(tx1.clone())
+            .extend_with(vote.clone());
+        let block2 = MetaStatementBlock::new_for_testing(&auth2, 2)
+            .extend_with(block0.clone().into_include())
+            .extend_with(tx2.clone())
+            .extend_with(vote.clone());
+        let block3 = MetaStatementBlock::new_for_testing(&auth3, 3)
+            .extend_with(block0.clone().into_include())
+            .extend_with(tx3.clone())
+            .extend_with(vote.clone());
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let t0 = bm.add_blocks(
+            [
+                block0.clone(),
+                block1.clone(),
+                block2.clone(),
+                block3.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(t0.get_newly_added_transactions().len() == 4);
+
+        // Seal a block with all transactions. The reference should be to block0.
+        let sealed_block_reference = bm.seal_next_block(auth0.clone(), 1);
+        assert!(sealed_block_reference == (auth0, 1, 0));
+
+        // Check own next block includes this reference as the first entry
+        assert!(bm.own_next_block[0] == MetaStatement::Include(sealed_block_reference));
     }
 }

@@ -8,13 +8,13 @@ pub type SequenceDigest = u64;
 pub type BlockReference = (Authority, SequenceNumber, SequenceDigest);
 pub type Signature = u64;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Vote {
     Accept,
     Reject(Option<TransactionId>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
     Share(TransactionId, Transaction),
@@ -22,7 +22,7 @@ pub enum BaseStatement {
     Vote(TransactionId, Vote),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum MetaStatement {
     /// State a base statement
     Base(BaseStatement),
@@ -31,37 +31,53 @@ pub enum MetaStatement {
 }
 
 #[derive(Clone)]
-pub struct MetaStatementBlock(BlockReference, Vec<MetaStatement>, Signature);
+pub struct MetaStatementBlock {
+    reference: BlockReference,
+    includes: Vec<BlockReference>,
+    base_statements: Vec<BaseStatement>,
+    _signature: Signature,
+}
 
 impl MetaStatementBlock {
     #[cfg(test)]
     pub fn new_for_testing(authority: &Authority, sequence: SequenceNumber) -> Self {
-        MetaStatementBlock((authority.clone(), sequence, 0), vec![], 0)
+        MetaStatementBlock::new(authority, sequence, vec![])
+    }
+
+    pub fn new(
+        authority: &Authority,
+        sequence: SequenceNumber,
+        contents: Vec<MetaStatement>,
+    ) -> Self {
+        let mut includes: Vec<BlockReference> = vec![];
+        let mut base_statements: Vec<BaseStatement> = vec![];
+        contents.into_iter().for_each(|item| match item {
+            MetaStatement::Base(base) => base_statements.push(base),
+            MetaStatement::Include(block_ref) => includes.push(block_ref),
+        });
+
+        MetaStatementBlock {
+            reference: (authority.clone(), sequence, 0),
+            includes,
+            base_statements,
+            _signature: 0,
+        }
     }
 
     pub fn get_authority(&self) -> &Authority {
-        &self.0 .0
+        &self.reference.0
     }
 
-    pub fn get_includes(&self) -> Vec<&BlockReference> {
-        self.1
-            .iter()
-            .filter_map(|item| {
-                if let MetaStatement::Include(reference) = item {
-                    Some(reference)
-                } else {
-                    None
-                }
-            })
-            .collect()
+    pub fn get_includes(&self) -> &Vec<BlockReference> {
+        &self.includes
     }
 
     pub fn get_reference(&self) -> &BlockReference {
-        &self.0
+        &self.reference
     }
 
-    pub fn all_items(&self) -> &Vec<MetaStatement> {
-        &self.1
+    pub fn get_base_statements(&self) -> &Vec<BaseStatement> {
+        &self.base_statements
     }
 
     pub fn into_include(&self) -> MetaStatement {
@@ -69,12 +85,18 @@ impl MetaStatementBlock {
     }
 
     pub fn extend_with(mut self, item: MetaStatement) -> Self {
-        self.1.push(item);
+        match item {
+            MetaStatement::Base(base) => self.base_statements.push(base),
+            MetaStatement::Include(block_ref) => self.includes.push(block_ref),
+        }
         self
     }
 
     pub fn extend_inplace(&mut self, item: MetaStatement) {
-        self.1.push(item);
+        match item {
+            MetaStatement::Base(base) => self.base_statements.push(base),
+            MetaStatement::Include(block_ref) => self.includes.push(block_ref),
+        }
     }
 }
 

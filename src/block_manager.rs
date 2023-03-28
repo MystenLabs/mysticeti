@@ -735,7 +735,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn seal_block_compress() {
         let cmt = make_test_committee();
@@ -784,15 +783,25 @@ mod tests {
         assert!(sealed_block_reference == (auth0.clone(), 4, 0));
 
         // Check that the includes of the block do not contain block2, block1 or block0 -- they are compressed away
-        assert!(bm.blocks_processed.get(&sealed_block_reference).unwrap().get_includes().iter().all(|x| {            
-                x != block0.get_reference() && x != block1.get_reference() && x != block2.get_reference()            
-        }));
+        assert!(bm
+            .blocks_processed
+            .get(&sealed_block_reference)
+            .unwrap()
+            .get_includes()
+            .iter()
+            .all(|x| {
+                x != block0.get_reference()
+                    && x != block1.get_reference()
+                    && x != block2.get_reference()
+            }));
 
         // But it includes block3
-        assert!(bm.blocks_processed.get(&sealed_block_reference).unwrap().get_includes().iter().all(|x| {            
-            x == block3.get_reference()       
-        }));
-        
+        assert!(bm
+            .blocks_processed
+            .get(&sealed_block_reference)
+            .unwrap()
+            .get_includes()
+            .iter()
+            .all(|x| { x == block3.get_reference() }));
     }
-
 }

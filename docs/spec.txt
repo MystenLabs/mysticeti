@@ -1,0 +1,44 @@
+Mysticeti: design decisions & latest architecture
+
+Objective: Have a single simple DAG based broadcast structure, allowing validators to:
+(1) share transactions once, and disseminate them to all, (2) share votes on transactions 
+as part of a consistent broadcast based protocol, once per node (3) share potential 
+conflicting transactions and (4) allow agreement on consecutive commit sets of transactions.
+Thus the design combines and integrates the Sui fast path & the narwhal-based consensus path
+in Sui.
+
+The scaling logic is as follows: Mysticeti is used for transport of transactions and votes,
+however the logic by which a validator votes or rejects a transaction is external to the
+mysticeti component. As a result, we can shard transactions by txid and use multiple mysticeti
+instances to broadcast the transactions and votes relating to them. All of the instances 
+vote according to a common set of object locks, for owned objects. For shared objects 
+commits between instances been to be used in lock step to create a common sequence.
+
+The DAG creation and invariants:
+
+A mysticeti block contains:
+- A creator authority, a round number and a digest (acts as a reference for the block)
+- Base statements: transaction payloads, or transaction votes.
+- Included references: references that the block depends on, which need to be processed 
+  before this block is processed.
+- A signature from the creator over all the data.
+
+Some key invariants hold to ensure the validtiy of a block: all included references are 
+of a lower round; at least >2/3 stake from round - 1 are included in a block at round.
+The authority is known and the signature valid over all data in the block. A correct 
+block should contain votes only on transactions included previously in this block, or 
+any included blocks (transitivelly). 
+
+DAG processing:
+
+As a node receives blocks it processesed them in causal order ensuring included references
+are processed before each block refering to them. A the base statements of each block are 
+processed by accumulating votes, positive and negative, for each seen transaction. When >2/3
+positive votes are seen the transaction is considered certififed; A correct node can also 
+reject a transaction with an optional conflicting transaction. Correct nodes never change 
+their votes (between accept and conflict).
+
+As blocks are processed by a validator are included in the next block of the validator as
+references. Any transactions or votes presented by the validator are also included in the 
+next block as base statements. A process of reference compression allows a validator to only
+include the causally latest reference allowing others to infer previous ones. 

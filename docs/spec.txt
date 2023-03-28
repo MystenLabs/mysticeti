@@ -24,7 +24,8 @@ A mysticeti block contains:
 - A signature from the creator over all the data.
 
 Some key invariants hold to ensure the validtiy of a block: all included references are 
-of a lower round; at least >2/3 stake from round - 1 are included in a block at round.
+of a lower round; at least >2/3 stake from round - 1 are included in a block at round 
+(lower round references may also be included).
 The authority is known and the signature valid over all data in the block. A correct 
 block should contain votes only on transactions included previously in this block, or 
 any included blocks (transitivelly). 
@@ -42,3 +43,64 @@ As blocks are processed by a validator are included in the next block of the val
 references. Any transactions or votes presented by the validator are also included in the 
 next block as base statements. A process of reference compression allows a validator to only
 include the causally latest reference allowing others to infer previous ones. 
+
+End of epoch: once a node decides to reach the end of epoch, it needs to vote on all 
+transactions that were sequenced in its own history. By default it rejects all transactions
+that it may not accept. Then for all certified transactions it continues to run the 
+protocol until they are squenced, or until >2/3 close epoch transactions are seen. When all
+transactions certified locally are sequenced it sends its end-of-epoch transaction.
+
+Sync & Net protocol: 
+
+All communications
+are done as a request / response (there is no push as in Sui/NW) and we try to unify the 
+sync and common paths as much as possible. In the common case all nodes send a request to all
+other nodes for their blocks after a certain sequence number, and may request any block
+on a need by need basis that is inlcuded in a block from the party that created it or included it.
+
+We follow a 2-level sync protocol. Each commit of the consensus makes a commit
+set of blocks, and we can request to sync up to a commit set by sequence number. Commit 
+sets are shared between validators so one can request them from others. For the very latest 
+blocks we maintain a sussinct structure of blocks not in a commit set, and exchange it to 
+allow another node to send the missing blocks, or request more blocks. 
+
+
+Random notes:
+
+# Things we need to co-design:
+# - sync recovery
+# - persistance points
+# - safe close
+# - high perf interface to other parts
+# - network design
+# - crash recovery
+# - batch async client api to interact with system
+
+# The API: Client-Core
+# 
+# - Broadcast Txs: a set of transactions is provided by the cient to be broadcast. 
+#                  Efficiencies: a byte writer provided that allows for direct serialization 
+#                  into the block in which they they are broadcast.
+# - Process Messages: the core calls back the client with a set of blocks, in order that
+#                  need to be processed. This is asynchronous, and the core does not block
+#                  while waiting for a response.
+# - Sign Txs: a set of transaction digests with the decision on whether to sign, not sign, or 
+#                  delay signing them. Every transaction that is passed in should eventually
+#                  receive a response.
+# - Commit Bundles: A set of blocks belonging to the same commit set. This is used for both
+#                  executing shared object transactions, as well as making checkpoints.
+# - Shutdown: A signal from the core that the channel is to close. An a corresponding signal
+#                  returned from the core that the channel is in fact closed.
+
+# The Inter Validator API
+#
+# Pull APIs:
+#
+# - Subscribe at sequence number: request a validator at a sequence number
+# - Subscribe by hash: requrest a block from a validator at sequence numbe and hash
+# - Get commit blocks by sequence number. (bulk variant for sync)
+# 
+# Note that there are not push APIs. All APIs are unreliable, in that they may fail 
+# without internal re-transmission. The reliability of the protocol is not based on a
+# per message reliable transmission, but rather on a repetition of the overall protocol
+# loop.

@@ -111,6 +111,11 @@ impl AddBlocksResult {
 }
 
 impl BlockManager {
+    /// Returns a reference to blocks for this round or None
+    pub fn get_blocks_for_round(&self, round: SequenceNumber) -> Option<&Vec<BlockReference>> {
+        self.blocks_processed_by_round.get(&round)
+    }
+
     /// Processes a bunch of blocks, and returns the transactions that must be decided.
     pub fn add_blocks(&mut self, mut blocks: VecDeque<MetaStatementBlock>) -> AddBlocksResult {
         let mut local_blocks_processed: Vec<BlockReference> = vec![];
@@ -232,7 +237,7 @@ impl BlockManager {
             .unwrap_or(&vec![])
         {
             round_to_included_history.insert(block_reference.clone(), HashSet::new());
-            result.insert(block_reference.clone(), HashSet::new()  );
+            result.insert(block_reference.clone(), HashSet::new());
         }
 
         // Now we walk the rounds from target_round to latest_round, and add the blocks that are included
@@ -921,7 +926,7 @@ mod tests {
 
         let result = bm.get_blocks_consensus_committed(2, 0);
         // Ensure we have two blocks are a result
-        assert!(result.len() == 2); // What length will this be? 2 or 4?
+        assert!(result.len() == 2);
 
         // Assert all keys in result are block reference for round 0
         assert!(result.keys().all(|x| x.1 == 0));
@@ -942,7 +947,7 @@ mod tests {
         let block02 = MetaStatementBlock::new_for_testing(&auth1, 0);
         let block11 = MetaStatementBlock::new_for_testing(&auth2, 1);
         let block12 = MetaStatementBlock::new_for_testing(&auth3, 1);
-        let block21 = MetaStatementBlock::new_for_testing(&auth0, 2);        
+        let block21 = MetaStatementBlock::new_for_testing(&auth0, 2);
         let block22 = MetaStatementBlock::new_for_testing(&auth1, 2);
 
         // Add all blocks to a block manager and check that the transaction is present in the return value.
@@ -965,7 +970,7 @@ mod tests {
 
         let result = bm.get_blocks_consensus_committed(2, 0);
         // Ensure we have two blocks are a result
-        assert!(result.len() == 2); // What length will this be? 2 or 4?
+        assert!(result.len() == 2);
 
         // Assert all keys are for round 0
         assert!(result.keys().all(|x| x.1 == 0));

@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::types::MetaStatementBlock;
+use crate::block_manager::BlockManager;
+use crate::types::{BlockReference, Committee, MetaStatementBlock, SequenceNumber};
 
 // A block is threshold clock valid if:
 // - all included blocks have a sequence number lower than the block sequence number.
@@ -31,10 +32,41 @@ pub fn threshold_clock_valid(block: &MetaStatementBlock) -> bool {
         || committee.is_quorum(committee.get_total_stake(&authorities_with_includes))
 }
 
+// Take a committee and read the next sequence number from self, and for each sequence number
+// With any included blocks, check if we have included blocks from enough authorities to make
+// a quorum. Return the highest sequence number for which we have a quorum.
+pub fn get_highest_threshold_clock_valid_sequence_number(
+    committee: &Committee,
+    blocks_processed_by_round: &HashMap<SequenceNumber, Vec<BlockReference>>,
+    min_round: SequenceNumber,
+) -> Option<SequenceNumber> {
+    // Here we store the highest sequence number for which we have a quorum
+    let mut result = None;
+    let mut authorities_with_includes = HashSet::new();
+
+    // Get the next sequence number
+    let mut sequence_number = min_round;
+    loop {
+        if let Some(blocks) = blocks_processed_by_round.get(&sequence_number) {
+            authorities_with_includes.clear();
+            for block in blocks {
+                authorities_with_includes.insert(block.0.clone());
+            }
+            if committee.is_quorum(committee.get_total_stake(&authorities_with_includes)) {
+                result = Some(sequence_number);
+            }
+
+            sequence_number += 1;
+        } else {
+            return result;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use crate::types::Committee;
+    use crate::types::{Committee, Authority};
 
     use super::*;
 
@@ -84,4 +116,75 @@ mod tests {
 
         assert!(threshold_clock_valid(&block3)); // succeeds because there is a quorum of sequence number 0 blocks
     }
+
+    fn make_test_reference(auth: &Authority, round: SequenceNumber) -> BlockReference {
+        (auth.clone(), round, 0)
+    }
+
+    /// Make a committee of 4 nodes with equal stake
+    /// Make a blocks_processed_by_round HashMap with 3 block references in each round from a different authority
+    /// Check that the highest threshold clock valid sequence number is 2
+    #[test]
+    fn test_get_highest_threshold_clock_valid_sequence_number() {
+        let committee = Committee::new(0, vec![1, 1, 1, 1]);
+        let auth0 = committee.get_rich_authority(0);
+        let auth1 = committee.get_rich_authority(1);
+        let auth2 = committee.get_rich_authority(2);
+        let auth3 = committee.get_rich_authority(3);
+
+        let mut blocks_processed_by_round = HashMap::new();
+        blocks_processed_by_round.insert(
+            0,
+            vec![
+                make_test_reference(&auth0,0),
+                make_test_reference(&auth1,0),
+                make_test_reference(&auth2,0),
+            ],
+        );
+        blocks_processed_by_round.insert(
+            1,
+            vec![
+                make_test_reference(&auth0,1),
+                make_test_reference(&auth1,1),
+            ],
+        );
+        blocks_processed_by_round.insert(
+            2,
+            vec![
+                make_test_reference(&auth0,2),
+                make_test_reference(&auth1,2),
+                make_test_reference(&auth2,2),
+            ],
+        );
+        blocks_processed_by_round.insert(
+            3,
+            vec![
+                make_test_reference(&auth0,3),
+                make_test_reference(&auth1,3),
+            ],
+        );
+
+
+        // If we start at 0 we should get 2
+        let result = get_highest_threshold_clock_valid_sequence_number(
+            &committee,
+            &blocks_processed_by_round,
+            0,
+        );
+
+        // Assert it is 2
+        assert_eq!(result, Some(2));
+
+        // If we start at 1, we should get 2
+        let result = get_highest_threshold_clock_valid_sequence_number(
+            &committee,
+            &blocks_processed_by_round,
+            1,
+        );
+
+        // Assert it is 2
+        assert_eq!(result, Some(2));
+
+    }
+
 }

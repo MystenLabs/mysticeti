@@ -1,4 +1,4 @@
-use std::{collections::HashSet, hash::Hasher, sync::Arc, fmt::Formatter};
+use std::{collections::HashSet, fmt::Formatter, hash::Hasher, sync::Arc};
 
 pub type Authority = RichAuthority;
 pub type Transaction = u64;

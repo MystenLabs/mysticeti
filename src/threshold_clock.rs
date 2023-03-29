@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::block_manager::BlockManager;
 use crate::types::{BlockReference, Committee, MetaStatementBlock, SequenceNumber};
 
 // A block is threshold clock valid if:

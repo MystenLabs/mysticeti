@@ -1,4 +1,4 @@
-use std::{collections::HashSet, hash::Hasher, sync::Arc};
+use std::{collections::HashSet, hash::Hasher, sync::Arc, fmt::Formatter};
 
 pub type Authority = RichAuthority;
 pub type Transaction = u64;
@@ -114,6 +114,12 @@ pub type CommitteeId = u64;
 pub struct RichAuthority {
     index: usize,              // Index of the authority in the committee
     committee: Arc<Committee>, // Reference to the committee
+}
+
+impl std::fmt::Debug for RichAuthority {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RichAuthority({})", self.index)
+    }
 }
 
 impl PartialEq for RichAuthority {

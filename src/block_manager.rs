@@ -213,6 +213,74 @@ impl BlockManager {
         add_result
     }
 
+    /// We look back at the includes from latest_round - depth. And we list which of the authorities with blocks in
+    /// the round latest_round include the blocks indirectly though the references they include.
+    pub fn get_blocks_consensus_committed(
+        &self,
+        latest_round: SequenceNumber,
+        target_round: SequenceNumber,
+    ) -> HashMap<BlockReference, HashSet<Authority>> {
+        assert!(target_round < latest_round);
+        let mut round_to_included_history: HashMap<BlockReference, HashSet<BlockReference>> =
+            HashMap::new();
+
+        // Seed the result with the block references at round target_round to start with
+        for block_reference in self
+            .blocks_processed_by_round
+            .get(&target_round)
+            .unwrap_or(&vec![])
+        {
+            round_to_included_history.insert(block_reference.clone(), HashSet::new());
+        }
+
+        // Now we walk the rounds from target_round to latest_round, and add the blocks that are included
+        // by in the round, according to the includes in the blocks.
+        for round in target_round..=latest_round {
+            let blocks_in_later_round = self.blocks_processed_by_round.get(&round).unwrap();
+            for block_reference_in_later_round in blocks_in_later_round {
+
+                let later_block = self
+                    .blocks_processed
+                    .get(block_reference_in_later_round)
+                    .unwrap();
+                
+                round_to_included_history
+                    .entry(block_reference_in_later_round.clone())
+                    .or_default().extend(later_block.get_includes().clone());
+
+                for block_reference_in_earlier_round in later_block.get_includes() {
+                    let included_blocks = round_to_included_history
+                        .get(&block_reference_in_earlier_round)
+                        .unwrap()
+                        .clone();
+                    round_to_included_history.get_mut(&block_reference_in_later_round).unwrap().extend(included_blocks)
+                }
+            }
+        }
+
+        // Remove from result all keys not in latest_round
+        round_to_included_history.retain(|key, _| key.1 == latest_round);
+
+        let mut result: HashMap<BlockReference, HashSet<Authority>> = HashMap::new();
+        // Take each reference in the values of the map round_to_included_history and make an entry in result. Add the authority
+        // in the key of the map round_to_included_history coresponding to the value, to the value in result.
+        for (block_reference, included_blocks) in round_to_included_history {
+            for included_block in included_blocks {
+                // Only care about the blocks in the target round
+                if included_block.1 != target_round {
+                    continue;
+                }
+
+                result
+                    .entry(included_block)
+                    .or_default()
+                    .insert(block_reference.0.clone());
+            }
+        }
+
+        result
+    }
+
     /// List authorities waiting on a particular block reference. These are the authorities
     /// in the HashSet contained in block_reference_waiting.
     pub fn get_authorities_waiting_on_block(
@@ -803,5 +871,57 @@ mod tests {
             .get_includes()
             .iter()
             .all(|x| { x == block3.get_reference() }));
+    }
+
+    // Make 4 authorities. For rounds 0, 1 and 2 they all make a block. And the block contains 3 blocks from the previous round.
+    // Then we call get_blocks_consensus_committed for target round 0 and latest round 2 and chekck that the result is correct.
+    #[test]
+    fn get_blocks_consensus_committed() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        let auth2 = cmt.get_rich_authority(2);
+        let auth3 = cmt.get_rich_authority(3);
+
+        let block01 = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let block02 = MetaStatementBlock::new_for_testing(&auth1, 0);
+        let block11 = MetaStatementBlock::new_for_testing(&auth2, 1)
+            .extend_with(block01.clone().into_include());
+        let block12 = MetaStatementBlock::new_for_testing(&auth3, 1)
+            .extend_with(block02.clone().into_include());
+        let block21 = MetaStatementBlock::new_for_testing(&auth0, 2)
+            .extend_with(block11.clone().into_include())
+            .extend_with(block12.clone().into_include());
+        let block22 = MetaStatementBlock::new_for_testing(&auth1, 2);
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let t0 = bm.add_blocks(
+            [
+                block01.clone(),
+                block02.clone(),
+                block11.clone(),
+                block12.clone(),
+                block21.clone(),
+                block22.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // Check there are 6 blocks processed
+        assert!(bm.blocks_processed.len() == 6);
+
+        let result = bm.get_blocks_consensus_committed(2, 0);
+        // Ensure we have two blocks are a result
+        assert!(result.len() == 2); // What length will this be? 2 or 4?
+
+        // Assert all keys in result are block reference for round 0
+        println!("{:?}", result);
+        assert!(result.keys().all(|x| x.1 == 0));
+
+        // Assert only auth0 is in the values of the result
+        assert!(result.values().all(|x| x.contains(&auth0)));
+
     }
 }

@@ -66,7 +66,7 @@ pub fn get_highest_threshold_clock_valid_sequence_number(
 #[cfg(test)]
 mod tests {
 
-    use crate::types::{Committee, Authority};
+    use crate::types::{Authority, Committee};
 
     use super::*;
 
@@ -130,40 +130,39 @@ mod tests {
         let auth0 = committee.get_rich_authority(0);
         let auth1 = committee.get_rich_authority(1);
         let auth2 = committee.get_rich_authority(2);
-        let auth3 = committee.get_rich_authority(3);
+        let _auth3 = committee.get_rich_authority(3);
 
         let mut blocks_processed_by_round = HashMap::new();
         blocks_processed_by_round.insert(
             0,
             vec![
-                make_test_reference(&auth0,0),
-                make_test_reference(&auth1,0),
-                make_test_reference(&auth2,0),
+                make_test_reference(&auth0, 0),
+                make_test_reference(&auth1, 0),
+                make_test_reference(&auth2, 0),
             ],
         );
         blocks_processed_by_round.insert(
             1,
             vec![
-                make_test_reference(&auth0,1),
-                make_test_reference(&auth1,1),
+                make_test_reference(&auth0, 1),
+                make_test_reference(&auth1, 1),
             ],
         );
         blocks_processed_by_round.insert(
             2,
             vec![
-                make_test_reference(&auth0,2),
-                make_test_reference(&auth1,2),
-                make_test_reference(&auth2,2),
+                make_test_reference(&auth0, 2),
+                make_test_reference(&auth1, 2),
+                make_test_reference(&auth2, 2),
             ],
         );
         blocks_processed_by_round.insert(
             3,
             vec![
-                make_test_reference(&auth0,3),
-                make_test_reference(&auth1,3),
+                make_test_reference(&auth0, 3),
+                make_test_reference(&auth1, 3),
             ],
         );
-
 
         // If we start at 0 we should get 2
         let result = get_highest_threshold_clock_valid_sequence_number(
@@ -184,7 +183,5 @@ mod tests {
 
         // Assert it is 2
         assert_eq!(result, Some(2));
-
     }
-
 }

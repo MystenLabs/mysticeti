@@ -113,3 +113,42 @@ pub fn example_executor() {
     // Run the tasks to completion
     executor.run(&mut pool);
 }
+
+// Make a local thread pool and schedule two tasks to run to completion
+#[test]
+pub fn example_executor_spawn_in_spawn() {
+    // Use a futures::LocalPool to run the tasks
+    let mut pool = futures::executor::LocalPool::new();
+
+    // Get a DSimExecutor in an Arc so we can share it between tasks
+    let executor = Arc::new(DSimExecutor::new(&pool));
+
+    // Schedule a task for time 100
+    let executor1 = executor.clone();
+    executor.spawn_local(async move {
+        println!("Task 1 at time {}", executor1.get_time());
+        executor1.wait_until(100).await;
+        println!("done with task 1");
+    });
+
+    // Schedule a task for time 200
+    let executor2 = executor.clone();
+    executor.spawn_local(async move {
+        println!("Task 2 at time {}", executor2.get_time());
+        executor2.wait_until(200).await;
+        println!("done with task 2");
+
+        let executor3 = executor2.clone();
+        executor2.spawn_local(async move {
+            println!("Task 3 at time {}", executor3.get_time());
+            executor3.wait_until(300).await;
+            println!("done with task 2");
+        });
+
+        // And lets also try to wait inline.
+        executor2.wait_until(500).await;
+    });
+
+    // Run the tasks to completion
+    executor.run(&mut pool);
+}

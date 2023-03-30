@@ -1,6 +1,6 @@
 use crate::types::{
     Authority, BaseStatement, BlockReference, Committee, MetaStatement, MetaStatementBlock,
-    SequenceNumber, Transaction, TransactionId, Vote,
+    RoundNumber, Transaction, TransactionId, Vote,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -16,7 +16,7 @@ fn make_test_vote_accept(txid: TransactionId) -> MetaStatement {
     MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept))
 }
 
-// Algorithm that takes ONE MetaStatement::Block(Authority, SequenceNumber, SequenceDigest, Vec<MetaStatement>)
+// Algorithm that takes ONE MetaStatement::Block(Authority, RoundNumber, BlockDigest, Vec<MetaStatement>)
 // and turns it into a sequence Vec<BaseStatement> where all base statements are emitted by the Authority that
 // made the block.
 
@@ -27,7 +27,7 @@ pub struct BlockManager {
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
 
     /// Our own strucutres for the next block
-    own_next_sequence_number: SequenceNumber,
+    own_next_round_number: RoundNumber,
     own_next_block: VecDeque<MetaStatement>,
 
     /// The transactions and how many votes they got so far, incl potential conlicts.
@@ -35,7 +35,7 @@ pub struct BlockManager {
     blocks_processed: HashMap<BlockReference, MetaStatementBlock>,
 
     // Maintain an index of blocks by round as well.
-    blocks_processed_by_round: HashMap<SequenceNumber, Vec<BlockReference>>,
+    blocks_processed_by_round: HashMap<RoundNumber, Vec<BlockReference>>,
 }
 
 /// A TransactionEntry structure stores the transactionId, the Transaction, and two maps. One that
@@ -112,7 +112,7 @@ impl AddBlocksResult {
 
 impl BlockManager {
     /// Returns a reference to blocks for this round or None
-    pub fn get_blocks_for_round(&self, round: SequenceNumber) -> Option<&Vec<BlockReference>> {
+    pub fn get_blocks_for_round(&self, round: RoundNumber) -> Option<&Vec<BlockReference>> {
         self.blocks_processed_by_round.get(&round)
     }
 
@@ -222,8 +222,8 @@ impl BlockManager {
     /// the round latest_round include the blocks indirectly though the references they include.
     pub fn get_blocks_consensus_committed(
         &self,
-        latest_round: SequenceNumber,
-        target_round: SequenceNumber,
+        latest_round: RoundNumber,
+        target_round: RoundNumber,
     ) -> HashMap<BlockReference, HashSet<Authority>> {
         assert!(target_round < latest_round);
         let mut result: HashMap<BlockReference, HashSet<Authority>> = HashMap::new();
@@ -315,7 +315,7 @@ impl BlockManager {
         &mut self,
         our_name: &Authority,
         statements: Vec<BaseStatement>,
-    ) -> SequenceNumber {
+    ) -> RoundNumber {
         for base_statement in statements {
             match base_statement {
                 BaseStatement::Share(txid, tx) => {
@@ -352,7 +352,7 @@ impl BlockManager {
             }
         }
 
-        self.next_sequence_number()
+        self.next_round_number()
     }
 
     /// A link into the structure of missing blocks
@@ -360,10 +360,10 @@ impl BlockManager {
         &self.block_references_waiting
     }
 
-    /// The sequence number of the next block to be created. Items in previous sequence numbers
+    /// The round number of the next block to be created. Items in previous round numbers
     /// will be broadcast until they are included by all or end of epoch.
-    pub fn next_sequence_number(&self) -> SequenceNumber {
-        self.own_next_sequence_number
+    pub fn next_round_number(&self) -> RoundNumber {
+        self.own_next_round_number
     }
 
     /// Get a transaction from an entry by reference
@@ -380,18 +380,18 @@ impl BlockManager {
     pub fn seal_next_block(
         &mut self,
         our_name: Authority,
-        sequence_number: SequenceNumber,
+        round_number: RoundNumber,
     ) -> BlockReference {
-        // Assert sequence number is higher than next sequence number
-        assert!(sequence_number >= self.own_next_sequence_number);
+        // Assert round number is higher than next round number
+        assert!(round_number >= self.own_next_round_number);
 
         // Find the index of the first include in own_next_block that has a reference
-        // to a block with sequence number equal or larger to sequence_number.
+        // to a block with round number equal or larger to round_number.
         let first_include_index = self
             .own_next_block
             .iter()
             .position(|statement| match statement {
-                MetaStatement::Include(block_ref) => block_ref.1 >= sequence_number,
+                MetaStatement::Include(block_ref) => block_ref.1 >= round_number,
                 _ => false,
             })
             .unwrap_or(self.own_next_block.len());
@@ -420,11 +420,11 @@ impl BlockManager {
             .collect();
 
         // Make a new block
-        let block = MetaStatementBlock::new(&our_name, sequence_number, take_entries);
+        let block = MetaStatementBlock::new(&our_name, round_number, take_entries);
         let block_ref = block.get_reference().clone();
 
         // Update our own next block
-        self.own_next_sequence_number = sequence_number + 1;
+        self.own_next_round_number = round_number + 1;
 
         self.blocks_processed.insert(block_ref.clone(), block);
         self.blocks_processed_by_round

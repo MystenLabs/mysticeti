@@ -14,6 +14,29 @@ instances to broadcast the transactions and votes relating to them. All of the i
 vote according to a common set of object locks, for owned objects. For shared objects 
 commits between instances been to be used in lock step to create a common sequence.
 
+Issues we are trying to mitigate:
+
+- Mass of redundant transaction sends: currently each validator receives the transaction 
+3 times. One to sign it, one as a certificate, and then again as part of consensus. We want to
+only share transaction bodies once.
+
+- Mass of signatures and verifications: currently for each transaction clients / full nodes
+need to create certiicates, involving each validator signing each signature, and checking a 
+certificate which is either BLS (expensive) or linear in the number of validators. We want to 
+drmatically reduce the cost of signature creation and certification, and decouple it from the 
+number of transactions (couple it with latency instead).
+
+- Separate consistent broadcast and consensus leads to the need to maintain separate protocols
+separate network, with different retry / sync / connection management sub systems. Integrating 
+these too deeply is hard to maintain as complexity increases; keeing modules separate means that
+they are poorly coordinated and compete with each other for resources.
+
+- The choice of which validator places a certificate into consensus has become complex, due 
+to the longer delay between expecting a transaction and seeing it, as well as the fact that all
+validators are given the certificate in Sui. A model by which one validator is responsible for
+puting a transaction into the system, with a very short delay to observe correct inclusion is 
+simpler and better.
+
 The DAG creation and invariants:
 
 A mysticeti block contains:
@@ -55,52 +78,62 @@ Sync & Net protocol:
 All communications
 are done as a request / response (there is no push as in Sui/NW) and we try to unify the 
 sync and common paths as much as possible. In the common case all nodes send a request to all
-other nodes for their blocks after a certain sequence number, and may request any block
+other nodes for their blocks after a certain round number, and may request any block
 on a need by need basis that is inlcuded in a block from the party that created it or included it.
 
 We follow a 2-level sync protocol. Each commit of the consensus makes a commit
-set of blocks, and we can request to sync up to a commit set by sequence number. Commit 
+set of blocks, and we can request to sync up to a commit set by round number. Commit 
 sets are shared between validators so one can request them from others. For the very latest 
 blocks we maintain a sussinct structure of blocks not in a commit set, and exchange it to 
 allow another node to send the missing blocks, or request more blocks. 
 
+TODO Things we need to co-design:
+- sync recovery
+- persistance points
+- safe close
+- high perf interface to other parts
+- network design
+- crash recovery
+- batch async client api to interact with system
 
-Random notes:
+Key APIs:
 
-# Things we need to co-design:
-# - sync recovery
-# - persistance points
-# - safe close
-# - high perf interface to other parts
-# - network design
-# - crash recovery
-# - batch async client api to interact with system
+Core-Mysticeti API
 
-# The API: Client-Core
-# 
-# - Broadcast Txs: a set of transactions is provided by the cient to be broadcast. 
-#                  Efficiencies: a byte writer provided that allows for direct serialization 
-#                  into the block in which they they are broadcast.
-# - Process Messages: the core calls back the client with a set of blocks, in order that
-#                  need to be processed. This is asynchronous, and the core does not block
-#                  while waiting for a response.
-# - Sign Txs: a set of transaction digests with the decision on whether to sign, not sign, or 
-#                  delay signing them. Every transaction that is passed in should eventually
-#                  receive a response.
-# - Commit Bundles: A set of blocks belonging to the same commit set. This is used for both
-#                  executing shared object transactions, as well as making checkpoints.
-# - Shutdown: A signal from the core that the channel is to close. An a corresponding signal
-#                  returned from the core that the channel is in fact closed.
+This is the interface that the validator code uses to "talk to" the mysticeti logic that runs 
+on the validator.
 
-# The Inter Validator API
-#
-# Pull APIs:
-#
-# - Subscribe at sequence number: request a validator at a sequence number
-# - Subscribe by hash: requrest a block from a validator at sequence numbe and hash
-# - Get commit blocks by sequence number. (bulk variant for sync)
-# 
-# Note that there are not push APIs. All APIs are unreliable, in that they may fail 
-# without internal re-transmission. The reliability of the protocol is not based on a
-# per message reliable transmission, but rather on a repetition of the overall protocol
-# loop.
+- BroadcastTransaction(transactions: Vec<Transactions>) : put a number of transactions into the 
+  broadcast channel, so that other validators can vote on them. A validator should only place a
+  transaction in the channel if it is ready to vote for it positivelly.
+- BroadcastVotes(votes: Vec<(TransactionId, Votes)>) : place a number of positive or negative 
+  votes from itself associated with specific transactions into the broadcast channel. Other 
+  validators will receive the votes and tally them to make certificates.
+- ProcessBlocks( blocks: Vec<MysticetiBlocks>) : the core asks mysticeti to process a number 
+  of blocks from other validators.
+- Shutdown : asks the mysticeti logic to close the channel, after it has sent or sequenced all
+  data it has committed to send or sequence.
+
+Read APIs allow the core to determine:
+- Blocks missing.
+- Transactions received requiring votes
+- Transactions that have been certified.
+- Blocks committed and commit sets of transactions.
+
+Validator-Validator API
+
+This is the networked interface that mysticeti logic on a validator uses to "talk to" the 
+mysticeti logic on a different validator. It all takes the form of RPC request / response, but
+some responses are streamed and use a long poll. 
+
+- Subscribe at round number: request a validator at a round number, and the Validator
+  will send its own blocks after that round number, for a specified number of blocks.
+- Subscribe by hash: requrest a blocks from a validator using a set of hashes. These blocks 
+  may be created by others but the validator has included them.
+- Get commit blocks by round number: request all blocks between two committed rounds, by 
+  round numbers for start and end.
+
+Note that there are not push APIs. All APIs are unreliable, in that they may fail 
+without internal re-transmission. The reliability of the protocol is not based on a
+per message reliable transmission, but rather on a repetition of the overall protocol
+loop.

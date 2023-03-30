@@ -3,9 +3,9 @@ use std::{collections::HashSet, fmt::Formatter, hash::Hasher, sync::Arc};
 pub type Authority = RichAuthority;
 pub type Transaction = u64;
 pub type TransactionId = u64;
-pub type SequenceNumber = u64;
-pub type SequenceDigest = u64;
-pub type BlockReference = (Authority, SequenceNumber, SequenceDigest);
+pub type RoundNumber = u64;
+pub type BlockDigest = u64;
+pub type BlockReference = (Authority, RoundNumber, BlockDigest);
 pub type Signature = u64;
 
 #[derive(Clone, PartialEq)]
@@ -46,15 +46,11 @@ pub struct MetaStatementBlock {
 
 impl MetaStatementBlock {
     #[cfg(test)]
-    pub fn new_for_testing(authority: &Authority, sequence: SequenceNumber) -> Self {
-        MetaStatementBlock::new(authority, sequence, vec![])
+    pub fn new_for_testing(authority: &Authority, round: RoundNumber) -> Self {
+        MetaStatementBlock::new(authority, round, vec![])
     }
 
-    pub fn new(
-        authority: &Authority,
-        sequence: SequenceNumber,
-        contents: Vec<MetaStatement>,
-    ) -> Self {
+    pub fn new(authority: &Authority, round: RoundNumber, contents: Vec<MetaStatement>) -> Self {
         let mut includes: Vec<BlockReference> = vec![];
         let mut base_statements: Vec<BaseStatement> = vec![];
         contents.into_iter().for_each(|item| match item {
@@ -63,7 +59,7 @@ impl MetaStatementBlock {
         });
 
         MetaStatementBlock {
-            reference: (authority.clone(), sequence, 0),
+            reference: (authority.clone(), round, 0),
             includes,
             base_statements,
             _signature: 0,

@@ -436,6 +436,16 @@ impl BlockManager {
 
         block_ref
     }
+
+    // Get a reference to the processed blocks
+    pub fn get_blocks_processed(&self) -> &HashMap<BlockReference, MetaStatementBlock> {
+        &self.blocks_processed
+    }
+
+    // Get a reference to blocks processed by round
+    pub fn get_blocks_processed_by_round(&self) -> &HashMap<RoundNumber, Vec<BlockReference>> {
+        &self.blocks_processed_by_round
+    }
 }
 
 trait PersistBlockManager {}

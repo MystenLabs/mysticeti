@@ -1,6 +1,6 @@
 use crate::types::{
-    Authority, BaseStatement, BlockReference, Committee, MetaStatement, MetaStatementBlock,
-    RoundNumber, Transaction, TransactionId, Vote,
+    Authority, BaseStatement, BlockReference, MetaStatement, MetaStatementBlock, RoundNumber,
+    Transaction, TransactionId, Vote,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -63,12 +63,10 @@ impl TransactionEntry {
     /// Adds a vote to the TransactionEntry.
     pub fn add_vote(&mut self, authority: Authority, vote: Vote) -> bool {
         match vote {
-            Vote::Accept => {
-                return self.accept_votes.insert(authority);
-            }
+            Vote::Accept => self.accept_votes.insert(authority),
             Vote::Reject(_) => {
                 self.reject_votes.insert(authority, vote);
-                return true; // Always return since it might be a new conflict.
+                true // Always return since it might be a new conflict.
             }
         }
     }
@@ -132,7 +130,7 @@ impl BlockManager {
             let mut processed = true;
             for included_reference in block.get_includes() {
                 // If we are missing a reference then we insert into pending and update the waiting index
-                if !self.blocks_processed.contains_key(&included_reference) {
+                if !self.blocks_processed.contains_key(included_reference) {
                     processed = false;
                     self.block_references_waiting
                         .entry(included_reference.clone())
@@ -165,7 +163,7 @@ impl BlockManager {
 
                         if block_pointer
                             .get_includes()
-                            .into_iter()
+                            .iter()
                             .all(|item_ref| !self.block_references_waiting.contains_key(item_ref))
                         {
                             // No dependencies are left unprocessed, so remove from unprocessed list, and add to the
@@ -194,9 +192,9 @@ impl BlockManager {
                 match base_item {
                     BaseStatement::Share(txid, tx) => {
                         // This is a new transactions, so insert it, and ask for a vote.
-                        if !self.transaction_entries.contains_key(&txid) {
+                        if !self.transaction_entries.contains_key(txid) {
                             self.transaction_entries
-                                .insert(*txid, TransactionEntry::new(*txid, tx.clone()));
+                                .insert(*txid, TransactionEntry::new(*txid, *tx));
                             add_result.newly_added_transactions.push(*txid);
                         }
                     }
@@ -205,9 +203,7 @@ impl BlockManager {
                         if let Some(entry) = self.transaction_entries.get_mut(txid) {
                             // If we have not seen this vote before, then add it.
                             if entry.add_vote(block.get_authority().clone(), vote.clone()) {
-                                add_result
-                                    .transactions_with_fresh_votes
-                                    .insert(txid.clone());
+                                add_result.transactions_with_fresh_votes.insert(*txid);
                             }
                         }
                     }
@@ -259,11 +255,11 @@ impl BlockManager {
                 // Add the indirect includes to the result
                 for block_reference_in_earlier_round in later_block.get_includes() {
                     let included_blocks = round_to_included_history
-                        .get(&block_reference_in_earlier_round)
+                        .get(block_reference_in_earlier_round)
                         .unwrap()
                         .clone();
                     round_to_included_history
-                        .get_mut(&block_reference_in_later_round)
+                        .get_mut(block_reference_in_later_round)
                         .unwrap()
                         .extend(included_blocks)
                 }
@@ -325,7 +321,7 @@ impl BlockManager {
                         continue;
                     }
                     self.transaction_entries
-                        .insert(txid.clone(), TransactionEntry::new(txid, tx.clone()));
+                        .insert(txid, TransactionEntry::new(txid, tx));
                     self.own_next_block
                         .push_back(MetaStatement::Base(BaseStatement::Share(txid, tx)));
                 }
@@ -454,6 +450,8 @@ trait PersistBlockManager {}
 mod tests {
 
     use std::sync::Arc;
+
+    use crate::types::Committee;
 
     use super::*;
 
@@ -918,7 +916,7 @@ mod tests {
 
         // Add all blocks to a block manager and check that the transaction is present in the return value.
         let mut bm = BlockManager::default();
-        let t0 = bm.add_blocks(
+        let _t0 = bm.add_blocks(
             [
                 block01.clone(),
                 block02.clone(),
@@ -962,7 +960,7 @@ mod tests {
 
         // Add all blocks to a block manager and check that the transaction is present in the return value.
         let mut bm = BlockManager::default();
-        let t0 = bm.add_blocks(
+        let _t0 = bm.add_blocks(
             [
                 block01.clone(),
                 block02.clone(),

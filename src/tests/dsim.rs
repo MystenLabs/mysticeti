@@ -19,7 +19,7 @@ pub type Time = u64;
 // it needs to be sent.
 type EventMap = BTreeMap<Time, oneshot::Sender<()>>;
 
-struct DSimExecutor {
+pub struct DSimExecutor {
     current_time: AtomicU64,
     spawner: LocalSpawner,
     waiting_events: Arc<Mutex<EventMap>>,
@@ -64,7 +64,7 @@ impl DSimExecutor {
         loop {
             let mut lock = self.waiting_events.try_lock().unwrap();
 
-            if let Some(lowest) = lock.keys().next().map(|x| *x) {
+            if let Some(lowest) = lock.keys().next().copied() {
                 // Update the current time
                 self.current_time
                     .store(lowest, std::sync::atomic::Ordering::Relaxed);
@@ -75,7 +75,6 @@ impl DSimExecutor {
                 // Now we manually drop the lock, to allow tasks to get it.
                 drop(lock);
 
-                print!("Sent event at time {}\n", lowest);
                 local_pool.run_until_stalled();
             } else {
                 break;

@@ -8,7 +8,7 @@ use crate::types::{Authority, Committee, MetaStatementBlock};
 // of the threshold clock, in order to make a node that can fully run the mysticeti
 // DAG. In the tests we create an example network to ensure the APIs make sense.
 
-struct Node {
+pub struct Node {
     auth: Authority,
     block_manager: BlockManager,
 }
@@ -31,7 +31,7 @@ impl Node {
         // Create a default block manager
         let mut block_manager = BlockManager::default();
         // Get the genesis blocks for this committee
-        let genesis_blocks = genesis(&auth.get_committee());
+        let genesis_blocks = genesis(auth.get_committee());
         // Add the genesis blocks to the block manager
         block_manager.add_blocks(genesis_blocks.into());
 

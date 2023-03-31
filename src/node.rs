@@ -9,8 +9,8 @@ use crate::types::{Authority, Committee, MetaStatementBlock};
 // DAG. In the tests we create an example network to ensure the APIs make sense.
 
 pub struct Node {
-    auth: Authority,
-    block_manager: BlockManager,
+    pub auth: Authority,
+    pub block_manager: BlockManager,
 }
 
 pub fn genesis(committee: &Arc<Committee>) -> Vec<MetaStatementBlock> {
@@ -34,6 +34,7 @@ impl Node {
         let genesis_blocks = genesis(auth.get_committee());
         // Add the genesis blocks to the block manager
         block_manager.add_blocks(genesis_blocks.into());
+        block_manager.set_next_round_number(1);
 
         Node {
             auth,

@@ -362,6 +362,11 @@ impl BlockManager {
         self.own_next_round_number
     }
 
+    /// Set the next own round number
+    pub fn set_next_round_number(&mut self, round_number: RoundNumber) {
+        self.own_next_round_number = round_number;
+    }
+
     /// Get a transaction from an entry by reference
     pub fn get_transaction(&self, txid: &TransactionId) -> Option<&Transaction> {
         self.transaction_entries

@@ -38,6 +38,15 @@ pub struct BlockManager {
     blocks_processed_by_round: HashMap<RoundNumber, Vec<BlockReference>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransactionStatus {
+    New,
+    PendingVotes,
+    Certified,
+    Executed,
+    Final,
+}
+
 /// A TransactionEntry structure stores the transactionId, the Transaction, and two maps. One that
 /// stores all votes seen by authorities that are accept, and one that stores all votes that are reject.
 
@@ -45,6 +54,7 @@ pub struct TransactionEntry {
     #[allow(dead_code)]
     transaction_id: TransactionId,
     transaction: Transaction,
+    status: TransactionStatus,
     accept_votes: HashSet<Authority>,
     reject_votes: HashMap<Authority, Vote>,
 }
@@ -55,13 +65,26 @@ impl TransactionEntry {
         TransactionEntry {
             transaction_id,
             transaction,
+            status: TransactionStatus::New,
             accept_votes: HashSet::new(),
             reject_votes: HashMap::new(),
         }
     }
 
+    pub fn set_status(&mut self, status: TransactionStatus) {
+        self.status = status;
+    }
+
     /// Adds a vote to the TransactionEntry.
     pub fn add_vote(&mut self, authority: Authority, vote: Vote) -> bool {
+        // if the status is new, then we need to change it to pending votes.
+        // (Note: if higher than New we do not change the status as we do not want
+        // to downgrade the status.)
+        if self.status == TransactionStatus::New {
+            self.status = TransactionStatus::PendingVotes;
+        }
+
+        // Then we update the vote
         match vote {
             Vote::Accept => self.accept_votes.insert(authority),
             Vote::Reject(_) => {
@@ -79,6 +102,11 @@ impl TransactionEntry {
     /// Get the transaction by reference
     pub fn get_transaction(&self) -> &Transaction {
         &self.transaction
+    }
+
+    /// A reference to the accept votes
+    pub fn get_accept_votes(&self) -> &HashSet<Authority> {
+        &self.accept_votes
     }
 }
 
@@ -109,6 +137,40 @@ impl AddBlocksResult {
 }
 
 impl BlockManager {
+    // Set the status of an array of transactions / status tuples, and return their previous status. Panic if the
+    // transaction id is not found.
+    pub fn set_status<'a>(
+        &mut self,
+        transaction_id: &'a [(TransactionId, TransactionStatus)],
+    ) -> Vec<(&'a TransactionId, TransactionStatus)> {
+        let mut result = Vec::with_capacity(transaction_id.len());
+        for (txid, status) in transaction_id {
+            if let Some(entry) = self.transaction_entries.get_mut(txid) {
+                result.push((txid, entry.status));
+                entry.status = *status;
+            } else {
+                panic!("Transaction id not found");
+            }
+        }
+        result
+    }
+
+    // Get the status of an array of transaction IDs, return some status or None if not found.
+    pub fn get_status<'a>(
+        &mut self,
+        transaction_id: &'a [TransactionId],
+    ) -> Vec<(&'a TransactionId, Option<TransactionStatus>)> {
+        let mut result = Vec::with_capacity(transaction_id.len());
+        for txid in transaction_id {
+            if let Some(entry) = self.transaction_entries.get(txid) {
+                result.push((txid, Some(entry.status)));
+            } else {
+                result.push((txid, None));
+            }
+        }
+        result
+    }
+
     /// Returns a reference to blocks for this round or None
     pub fn get_blocks_for_round(&self, round: RoundNumber) -> Option<&Vec<BlockReference>> {
         self.blocks_processed_by_round.get(&round)
@@ -338,12 +400,22 @@ impl BlockManager {
                         panic!("Vote should be on a transaction that exists and has not been voted on before.")
                     }
 
-                    self.transaction_entries
-                        .get_mut(&txid)
-                        .unwrap()
-                        .add_vote(our_name.clone(), vote.clone());
-                    self.own_next_block
-                        .push_back(MetaStatement::Base(BaseStatement::Vote(txid, vote)));
+                    // Get a mutable reference to the transaction entry and add the vote
+                    let entry = self.transaction_entries.get_mut(&txid).unwrap();
+
+                    // If the status is new we change the status to pending
+                    if entry.status == TransactionStatus::New {
+                        entry.status = TransactionStatus::PendingVotes;
+                    }
+
+                    // If the status is pending we add it to our block -- no need to add certified
+                    // or higher status transactions to our block, since including our history will
+                    // make others reach the same conclusion.
+                    if entry.status == TransactionStatus::PendingVotes {
+                        entry.add_vote(our_name.clone(), vote.clone());
+                        self.own_next_block
+                            .push_back(MetaStatement::Base(BaseStatement::Vote(txid, vote)));
+                    }
                 }
             }
         }
@@ -376,6 +448,13 @@ impl BlockManager {
 
     pub fn get_transaction_entry(&self, txid: &TransactionId) -> Option<&TransactionEntry> {
         self.transaction_entries.get(txid)
+    }
+
+    pub fn get_transaction_entry_mut(
+        &mut self,
+        txid: &TransactionId,
+    ) -> Option<&mut TransactionEntry> {
+        self.transaction_entries.get_mut(txid)
     }
 
     pub fn seal_next_block(

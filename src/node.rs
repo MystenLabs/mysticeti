@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::block_manager::BlockManager;
+use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};
 use crate::threshold_clock::*;
-use crate::types::{Authority, Committee, MetaStatementBlock};
+use crate::types::{Authority, BaseStatement, Committee, MetaStatementBlock, TransactionId};
 
 // In this file we define a node that combines a block manager with the constraints
 // of the threshold clock, in order to make a node that can fully run the mysticeti
@@ -41,10 +41,83 @@ impl Node {
             block_manager,
         }
     }
+
+    // Upgrade a list of transaction Ids to certified if they have a quorum of votes
+    pub fn upgrade_to_certified(
+        &mut self,
+        transaction_ids: &Vec<TransactionId>,
+    ) -> Vec<TransactionId> {
+        let transaction_status_list = self.block_manager.get_status(transaction_ids);
+        let mut newly_certified_transactions = Vec::new();
+
+        for (transaction_id, transaction_status) in transaction_status_list {
+            if transaction_status.as_ref().unwrap() == &TransactionStatus::PendingVotes {
+                let transaction = self
+                    .block_manager
+                    .get_transaction_entry_mut(transaction_id)
+                    .unwrap();
+                let total_stake = self
+                    .auth
+                    .get_committee()
+                    .get_total_stake(&transaction.get_accept_votes());
+                if self.auth.get_committee().is_quorum(total_stake) {
+                    transaction.set_status(TransactionStatus::Certified);
+                    newly_certified_transactions.push(*transaction_id);
+                }
+            }
+        }
+
+        newly_certified_transactions
+    }
+
+    // Add blocks to the block manager
+    pub fn add_blocks(
+        &mut self,
+        blocks: Vec<MetaStatementBlock>,
+    ) -> (Vec<TransactionId>, Vec<TransactionId>) {
+        let AddBlocksResult {
+            newly_added_transactions,
+            transactions_with_fresh_votes,
+        } = self.block_manager.add_blocks(blocks.into());
+
+        // For all transactions with fresh votes, we get their status from the
+        // block manager and if they are pending votes we check if the votes form a quorum
+        // If they do, we change the status to certified, and add the transaction id to a list
+        // of transactions that are now certified.
+        let transactions_with_fresh_votes: Vec<_> =
+            transactions_with_fresh_votes.into_iter().collect();
+        let newly_certified_transactions =
+            self.upgrade_to_certified(&transactions_with_fresh_votes);
+
+        (newly_added_transactions, newly_certified_transactions)
+    }
+
+    pub fn add_base_statements(
+        &mut self,
+        base_statements: Vec<BaseStatement>,
+    ) -> Vec<TransactionId> {
+        // Collect all votes into a vector
+        let mut transactions_with_fresh_votes = Vec::with_capacity(base_statements.len());
+        for base_statement in &base_statements {
+            match base_statement {
+                BaseStatement::Vote(txid, _) => transactions_with_fresh_votes.push(*txid),
+                _ => (),
+            }
+        }
+
+        self.block_manager
+            .add_base_statements(&self.auth, base_statements);
+        let newly_certified_transactions =
+            self.upgrade_to_certified(&transactions_with_fresh_votes);
+
+        newly_certified_transactions
+    }
 }
 
 #[cfg(test)]
 mod tests {
+
+    use crate::types::Vote;
 
     use super::*;
     use std::sync::Arc;
@@ -118,5 +191,52 @@ mod tests {
                 assert!(result.get_transactions_with_fresh_votes().is_empty());
             }
         }
+    }
+
+    #[test]
+    fn test_block_manager_certify() {
+        let committee = Arc::new(Committee::new(0, vec![1, 1, 1, 1]));
+        let auth0 = committee.get_rich_authority(0);
+        let auth1 = committee.get_rich_authority(1);
+        let auth2 = committee.get_rich_authority(2);
+        let auth3 = committee.get_rich_authority(3);
+
+        let mut node = Node::new(auth0.clone());
+
+        // Make a Share base statement with a new transaction
+        let txid = 0;
+        let share = BaseStatement::Share(txid, 0);
+
+        // Insert the share into the block manager
+        node.add_base_statements(vec![share]);
+
+        // Try to upgrade to certified this transaction
+        let newly_certified_transactions = node.upgrade_to_certified(&vec![txid]);
+        // check the transaction is not certified
+        assert!(newly_certified_transactions.is_empty());
+
+        // get the entry for this transaction
+        let entry = node.block_manager.get_transaction_entry_mut(&txid).unwrap();
+        entry.add_vote(auth0.clone(), Vote::Accept);
+        entry.add_vote(auth1.clone(), Vote::Accept);
+
+        // Try to upgrade to certified this transaction (2 votes are not enough)
+        let newly_certified_transactions = node.upgrade_to_certified(&vec![txid]);
+        // check the transaction is not certified
+        assert!(newly_certified_transactions.is_empty());
+
+        let entry = node.block_manager.get_transaction_entry_mut(&txid).unwrap();
+        entry.add_vote(auth2.clone(), Vote::Accept);
+
+        // Try to upgrade to certified this transaction (2 votes are not enough)
+        let newly_certified_transactions = node.upgrade_to_certified(&vec![txid]);
+        // check txid in the certified list
+        assert_eq!(newly_certified_transactions, vec![txid]);
+
+        // But when we add the final vote, we do not get back the txid (since its already certified)
+        let entry = node.block_manager.get_transaction_entry_mut(&txid).unwrap();
+        entry.add_vote(auth3.clone(), Vote::Accept);
+        let newly_certified_transactions = node.upgrade_to_certified(&vec![txid]);
+        assert!(newly_certified_transactions.is_empty());
     }
 }

@@ -3,6 +3,7 @@
 // (2) schedule events to happen at a certain time, and (3) use all of the usual
 // async channels wakers based stuff.
 
+use futures::channel::mpsc;
 use futures::channel::oneshot;
 use futures::executor::LocalPool;
 use futures::executor::LocalSpawner;
@@ -17,13 +18,14 @@ use std::sync::Mutex;
 use crate::node::Node;
 use crate::threshold_clock::get_highest_threshold_clock_round_number;
 use crate::types::Committee;
+use crate::types::MetaStatementBlock;
 
 // Define a time type as a u64
 pub type Time = u64;
 
 // A Map that holds the sending end of a one shot channel keyed by the time
 // it needs to be sent.
-type EventMap = BTreeMap<Time, oneshot::Sender<()>>;
+type EventMap = BTreeMap<Time, Vec<oneshot::Sender<()>>>;
 
 pub struct DSimExecutor {
     current_time: AtomicU64,
@@ -58,7 +60,7 @@ impl DSimExecutor {
             assert!(time > self.get_time());
 
             let mut res = self.waiting_events.try_lock().unwrap();
-            let _ = res.insert(time, tx);
+            let _ = res.entry(time).or_insert_with(Vec::new).push(tx);
             drop(res);
         }
         let _ = rx.await;
@@ -76,8 +78,10 @@ impl DSimExecutor {
                     .store(lowest, std::sync::atomic::Ordering::Relaxed);
 
                 // Send the next event
-                let tx = lock.remove(&lowest).unwrap();
-                let _ = tx.send(());
+                let tx_list = lock.remove(&lowest).unwrap();
+                for tx in tx_list {
+                    let _ = tx.send(());
+                }
                 // Now we manually drop the lock, to allow tasks to get it.
                 drop(lock);
 
@@ -121,6 +125,49 @@ pub fn example_executor() {
 
 // Make a local thread pool and schedule two tasks to run to completion
 #[test]
+pub fn example_executor_same_time() {
+    // Use a futures::LocalPool to run the tasks
+    let mut pool = futures::executor::LocalPool::new();
+
+    // Make an atomic counter to keep track of how many tasks have run
+    let counter = Arc::new(AtomicU64::new(0));
+
+    // Get a DSimExecutor in an Arc so we can share it between tasks
+    let executor = Arc::new(DSimExecutor::new(&pool));
+
+    // Schedule a task for time 100
+    let local_counter = counter.clone();
+    let executor1 = executor.clone();
+    executor.spawn_local(async move {
+        println!("Task 1 at time {}", executor1.get_time());
+        executor1.wait_until(100).await;
+        println!("done with task 1");
+
+        // Increment the counter
+        local_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    // Schedule a task for time 100 (same time as task 1)
+    let local_counter = counter.clone();
+    let executor2 = executor.clone();
+    executor.spawn_local(async move {
+        println!("Task 2 at time {}", executor2.get_time());
+        executor2.wait_until(100).await;
+        println!("done with task 2");
+
+        // increment the counter
+        local_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    // Run the tasks to completion
+    executor.run(&mut pool);
+
+    // Check that both tasks ran
+    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 2);
+}
+
+// Make a local thread pool and schedule two tasks to run to completion
+#[test]
 pub fn example_executor_spawn_in_spawn() {
     // Use a futures::LocalPool to run the tasks
     let mut pool = futures::executor::LocalPool::new();
@@ -158,8 +205,10 @@ pub fn example_executor_spawn_in_spawn() {
     executor.run(&mut pool);
 }
 
+
+
 #[test]
-pub fn example_run_four_nodes() {
+pub fn example_run_four_nodes_no_delays() {
     // Use a futures::LocalPool to run the tasks
     let mut pool = futures::executor::LocalPool::new();
 
@@ -222,6 +271,111 @@ pub fn example_run_four_nodes() {
                     );
                     for tx in network_sender.iter_mut() {
                         let _ = tx.send(next_block.clone()).await;
+                    }
+
+                    if node.block_manager.next_round_number() > 100 {
+                        break;
+                    }
+                }
+
+                // Wait for the next block to be received
+                println!("Node {:?} waiting for block", node.auth);
+                let block = network_receiver.next().await.unwrap();
+                println!(
+                    "Node {:?} received block {:?}",
+                    node.auth,
+                    block.get_reference()
+                );
+                // process the next block
+                node.block_manager.add_blocks([block].into_iter().collect());
+            }
+        });
+    }
+
+    // Run the tasks to completion
+    executor.run(&mut pool);
+}
+
+fn delay_send(
+    executor: Arc<DSimExecutor>,
+    mut channel: mpsc::Sender<MetaStatementBlock>,
+    block: MetaStatementBlock,
+    delay: u64,
+) {
+    let exec2 = executor.clone();
+    executor.spawn_local(async move {
+        exec2.wait_until(exec2.get_time() + delay).await;
+        let _ = channel.send(block).await;
+    });
+}
+
+#[test]
+pub fn example_run_four_nodes_with_delays() {
+    // Use a futures::LocalPool to run the tasks
+    let mut pool = futures::executor::LocalPool::new();
+
+    // Get a DSimExecutor in an Arc so we can share it between tasks
+    let executor = Arc::new(DSimExecutor::new(&pool));
+
+    // Make 4 mpsc channels to simulate the network of the 4 nodes
+    let (tx1, rx1) = futures::channel::mpsc::channel(100);
+    let (tx2, rx2) = futures::channel::mpsc::channel(100);
+    let (tx3, rx3) = futures::channel::mpsc::channel(100);
+    let (tx4, rx4) = futures::channel::mpsc::channel(100);
+
+    let network_sender = vec![tx1, tx2, tx3, tx4];
+    let mut network_receiver = vec![rx1, rx2, rx3, rx4];
+
+    // make a committee of 4 authorities
+    let committee = Committee::new(0, vec![1, 1, 1, 1]);
+
+    for auth_seq in 0..4 {
+        let executor = executor.clone();
+        let mut network_sender = network_sender.clone();
+        let mut network_receiver = network_receiver.pop().unwrap();
+        let committee = committee.clone();
+        let authority = committee.get_rich_authority(auth_seq);
+
+        let inner_executor = executor.clone();
+        executor.spawn_local(async move {
+            let mut node = Node::new(authority);
+            println!("Node {:?} started", node.auth);
+            loop {
+                // Assert that for this node we are ready to emit the next block
+                let quorum_round = get_highest_threshold_clock_round_number(
+                    committee.as_ref(),
+                    node.block_manager.get_blocks_processed_by_round(),
+                    0,
+                );
+
+                println!(
+                    "{:?} {}",
+                    quorum_round,
+                    node.block_manager.next_round_number()
+                );
+                if quorum_round.is_some()
+                    && quorum_round.clone().unwrap() >= node.block_manager.next_round_number() - 1
+                {
+                    // We are ready to emit the next block
+                    let next_block_ref = node
+                        .block_manager
+                        .seal_next_block(node.auth.clone(), quorum_round.unwrap() + 1);
+                    let next_block = node
+                        .block_manager
+                        .get_blocks_processed()
+                        .get(&next_block_ref)
+                        .unwrap();
+
+                    // Send the block signature to all the other nodes
+                    println!(
+                        "Node {:?} sending block {:?}",
+                        node.auth,
+                        next_block.get_reference()
+                    );
+                    for tx in network_sender.iter_mut() {
+                        let exec3 = inner_executor.clone();
+                        delay_send(exec3, tx.clone(), next_block.clone(), 100);
+
                     }
 
                     if node.block_manager.next_round_number() > 100 {

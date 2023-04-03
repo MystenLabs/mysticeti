@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};
 use crate::threshold_clock::*;
-use crate::types::{Authority, BaseStatement, Committee, MetaStatementBlock, TransactionId};
+use crate::types::{
+    Authority, BaseStatement, Committee, MetaStatementBlock, RoundNumber, TransactionId,
+};
 
 // In this file we define a node that combines a block manager with the constraints
 // of the threshold clock, in order to make a node that can fully run the mysticeti
@@ -11,6 +13,7 @@ use crate::types::{Authority, BaseStatement, Committee, MetaStatementBlock, Tran
 pub struct Node {
     pub auth: Authority,
     pub block_manager: BlockManager,
+    pub last_commit_round: RoundNumber,
 }
 
 pub fn genesis(committee: &Arc<Committee>) -> Vec<MetaStatementBlock> {
@@ -39,6 +42,7 @@ impl Node {
         Node {
             auth,
             block_manager,
+            last_commit_round: 0,
         }
     }
 
@@ -113,6 +117,43 @@ impl Node {
         newly_certified_transactions
     }
 
+    pub fn try_commit(&mut self, period: u64) {
+        let committee = self.auth.get_committee();
+
+        // Assert that for this node we are ready to emit the next block
+        let quorum_round = get_highest_threshold_clock_round_number(
+            committee.as_ref(),
+            self.block_manager.get_blocks_processed_by_round(),
+            self.last_commit_round,
+        );
+
+        let quorum_round = quorum_round.unwrap();
+        if quorum_round > self.last_commit_round.max(period - 1) && quorum_round % period == 0 {
+            let target_authority = committee.get_rich_authority(
+                (quorum_round / period) as usize % committee.get_authorities().len(),
+            );
+
+            println!("Committing round {}", quorum_round);
+            let support = self
+                .block_manager
+                .get_blocks_consensus_committed(quorum_round - 1, quorum_round - period);
+            // For each entry in support, check whether the value has a quorum
+
+            for (reference, included_in_authorties) in support {
+                let total_stake = committee.get_total_stake(&included_in_authorties);
+                if committee.is_quorum(total_stake) {
+                    if reference.0 == target_authority {
+                        println!(
+                            "Committing round {} for authority {:?}",
+                            quorum_round, target_authority
+                        );
+                        self.last_commit_round = reference.1;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn try_new_block(&mut self) -> Option<&MetaStatementBlock> {
         let committee = self.auth.get_committee();
 
@@ -130,6 +171,9 @@ impl Node {
             let next_block_ref = self
                 .block_manager
                 .seal_next_block(self.auth.clone(), quorum_round.unwrap() + 1);
+
+            self.try_commit(3);
+
             let next_block = self
                 .block_manager
                 .get_blocks_processed()

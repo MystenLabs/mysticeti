@@ -320,7 +320,12 @@ impl BlockManager {
                     .extend(later_block.get_includes().clone());
 
                 // Add the indirect includes to the result
+
                 for block_reference_in_earlier_round in later_block.get_includes() {
+                    // We only consider the includes from this target to latest round
+                    if block_reference_in_earlier_round.1 < target_round {
+                        continue;
+                    }
                     let included_blocks = round_to_included_history
                         .get(block_reference_in_earlier_round)
                         .unwrap()

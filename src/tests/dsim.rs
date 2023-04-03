@@ -425,6 +425,7 @@ pub fn example_run_four_nodes_with_delays() {
                     }
                 }
 
+                let _newly_certified;
 
                 // select! between receiving a block and receiving a transaction
                 futures::select! {
@@ -432,7 +433,7 @@ pub fn example_run_four_nodes_with_delays() {
                     tx = tx_receiver.next().fuse() => {
                         if let Some((tx_id, tx)) = tx {
                             println!("Node {:?} inserts transaction {:?}", node.auth, tx_id);
-                            node.block_manager.add_base_statements(&node.auth, vec![BaseStatement::Share(tx_id, tx)]);
+                            _newly_certified =  node.add_base_statements(vec![BaseStatement::Share(tx_id, tx)]);
                         } else {
                             break;
                         }
@@ -441,12 +442,13 @@ pub fn example_run_four_nodes_with_delays() {
                     block = network_receiver.next().fuse() => {
                         if let Some(block) = block {
                             println!("Node {:?} received block {:?}", node.auth, block.get_reference());
-                            let results = node.block_manager.add_blocks([block].into_iter().collect());
+                            let (new_transactions, _newly_certified_2) = node.add_blocks([block].into_iter().collect());
+                            _newly_certified = _newly_certified_2;
 
                             // For each transaction in the results add a delay_vote future into the tasks
-                            for tx_id in results.get_newly_added_transactions() {
+                            for tx_id in new_transactions {
                                 let exec2 = inner_executor.clone();
-                                let task = delay_vote(*tx_id, 100, exec2);
+                                let task = delay_vote(tx_id, 100, exec2);
                                 tasks.push(task);
                             }
                         } else {
@@ -456,10 +458,15 @@ pub fn example_run_four_nodes_with_delays() {
                     // Receive a vote
                     tx_id = tasks.select_next_some() => {
                             println!("Node {:?} inserts vote for transaction {:?}", node.auth, tx_id);
-                            node.block_manager.add_base_statements(&node.auth, vec![BaseStatement::Vote(tx_id, Vote::Accept)]);
+                            _newly_certified = node.add_base_statements(vec![BaseStatement::Vote(tx_id, Vote::Accept)]);
                     }
 
                 }
+
+                for transaction in _newly_certified {
+                    println!("Node {:?} certified transaction {:?}", node.auth, transaction);
+                }
+
             }
         });
     }

@@ -108,6 +108,11 @@ impl TransactionEntry {
     pub fn get_accept_votes(&self) -> &HashSet<Authority> {
         &self.accept_votes
     }
+
+    // Get status by reference
+    pub fn get_status(&self) -> &TransactionStatus {
+        &self.status
+    }
 }
 
 /// A structure that holds the result of adding blocks, namely the list of the newly added transactions

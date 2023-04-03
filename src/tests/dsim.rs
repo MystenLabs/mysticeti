@@ -246,7 +246,7 @@ pub fn example_run_four_nodes_no_delays() {
                 let quorum_round = get_highest_threshold_clock_round_number(
                     committee.as_ref(),
                     node.block_manager.get_blocks_processed_by_round(),
-                    0,
+                    node.block_manager.next_round_number() - 1,
                 );
 
                 println!(
@@ -405,35 +405,13 @@ pub fn example_run_four_nodes_with_delays() {
 
             println!("Node {:?} started", node.auth);
             loop {
-                // Assert that for this node we are ready to emit the next block
-                let quorum_round = get_highest_threshold_clock_round_number(
-                    committee.as_ref(),
-                    node.block_manager.get_blocks_processed_by_round(),
-                    0,
-                );
 
-                println!(
-                    "{:?} {}",
-                    quorum_round,
-                    node.block_manager.next_round_number()
-                );
-                if quorum_round.is_some()
-                    && quorum_round.clone().unwrap() >= node.block_manager.next_round_number() - 1
-                {
-                    // We are ready to emit the next block
-                    let next_block_ref = node
-                        .block_manager
-                        .seal_next_block(node.auth.clone(), quorum_round.unwrap() + 1);
-                    let next_block = node
-                        .block_manager
-                        .get_blocks_processed()
-                        .get(&next_block_ref)
-                        .unwrap();
-
+                let auth = node.auth.clone();
+                if let Some(next_block) = node.try_new_block() {
                     // Send the block signature to all the other nodes
                     println!(
                         "Node {:?} sending block {:?} at time {}",
-                        node.auth,
+                        auth,
                         next_block.get_reference(),
                         inner_executor.get_time()
                     );
@@ -446,6 +424,7 @@ pub fn example_run_four_nodes_with_delays() {
                         break;
                     }
                 }
+
 
                 // select! between receiving a block and receiving a transaction
                 futures::select! {

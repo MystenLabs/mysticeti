@@ -112,12 +112,41 @@ impl Node {
 
         newly_certified_transactions
     }
+
+    pub fn try_new_block(&mut self) -> Option<&MetaStatementBlock> {
+        let committee = self.auth.get_committee();
+
+        // Assert that for this node we are ready to emit the next block
+        let quorum_round = get_highest_threshold_clock_round_number(
+            committee.as_ref(),
+            self.block_manager.get_blocks_processed_by_round(),
+            self.block_manager.next_round_number() - 1,
+        );
+
+        if quorum_round.is_some()
+            && quorum_round.clone().unwrap() >= self.block_manager.next_round_number() - 1
+        {
+            // We are ready to emit the next block
+            let next_block_ref = self
+                .block_manager
+                .seal_next_block(self.auth.clone(), quorum_round.unwrap() + 1);
+            let next_block = self
+                .block_manager
+                .get_blocks_processed()
+                .get(&next_block_ref)
+                .unwrap();
+
+            return Some(next_block);
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::types::Vote;
+    use crate::types::{MetaStatement, Vote};
 
     use super::*;
     use std::sync::Arc;
@@ -238,5 +267,58 @@ mod tests {
         entry.add_vote(auth3.clone(), Vote::Accept);
         let newly_certified_transactions = node.upgrade_to_certified(&vec![txid]);
         assert!(newly_certified_transactions.is_empty());
+    }
+
+    // Make a committee of 4 authorities each with Stake 1, and the corresponding 4 nodes
+    // Make 4 blocks one from each authority
+    // The first block contains a new transaction, and a vote for the transaction
+    // the other 3 include the first block and a vote for the transaction
+    // The blocks are added to the node
+    // We check that the transaction is certified
+    #[test]
+    fn test_block_manager_certify_2() {
+        let committee = Arc::new(Committee::new(0, vec![1, 1, 1, 1]));
+        let auth0 = committee.get_rich_authority(0);
+        let auth1 = committee.get_rich_authority(1);
+        let auth2 = committee.get_rich_authority(2);
+        let auth3 = committee.get_rich_authority(3);
+
+        let mut node = Node::new(auth0.clone());
+
+        // Make a Share base statement with a new transaction
+        let txid = 0;
+        let share = BaseStatement::Share(txid, 0);
+
+        // Make a Meta statement Block from auth0 including the share and a vote
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 1)
+            .extend_with(MetaStatement::Base(share))
+            .extend_with(MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept)));
+
+        // Make a block from auth1 including the block0 and a vote
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 2)
+            .extend_with(MetaStatement::Include(block0.get_reference().clone()))
+            .extend_with(MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept)));
+
+        // Add all the blocks to the node
+        node.add_blocks(vec![block0.clone(), block1]);
+
+        // Check that the transaction is pending votes
+        let entry = node.block_manager.get_transaction_entry_mut(&txid).unwrap();
+        assert_eq!(entry.get_status(), &TransactionStatus::PendingVotes);
+
+        let block2 = MetaStatementBlock::new_for_testing(&auth2, 2)
+            .extend_with(MetaStatement::Include(block0.get_reference().clone()))
+            .extend_with(MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept)));
+
+        let block3 = MetaStatementBlock::new_for_testing(&auth3, 2)
+            .extend_with(MetaStatement::Include(block0.get_reference().clone()))
+            .extend_with(MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept)));
+
+        // Add all the blocks to the node
+        node.add_blocks(vec![block2, block3]);
+
+        // Check that the transaction is certified
+        let entry = node.block_manager.get_transaction_entry_mut(&txid).unwrap();
+        assert_eq!(entry.get_status(), &TransactionStatus::Certified);
     }
 }

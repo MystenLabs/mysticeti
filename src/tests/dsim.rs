@@ -432,9 +432,10 @@ pub fn example_run_four_nodes_with_delays() {
 
                     // Send the block signature to all the other nodes
                     println!(
-                        "Node {:?} sending block {:?}",
+                        "Node {:?} sending block {:?} at time {}",
                         node.auth,
-                        next_block.get_reference()
+                        next_block.get_reference(),
+                        inner_executor.get_time()
                     );
                     for tx in network_sender.iter_mut() {
                         let exec3 = inner_executor.clone();
@@ -475,7 +476,7 @@ pub fn example_run_four_nodes_with_delays() {
                     },
                     // Receive a vote
                     tx_id = tasks.select_next_some() => {
-                            println!("Node {:?} received vote for transaction {:?}", node.auth, tx_id);
+                            println!("Node {:?} inserts vote for transaction {:?}", node.auth, tx_id);
                             node.block_manager.add_base_statements(&node.auth, vec![BaseStatement::Vote(tx_id, Vote::Accept)]);
                     }
 

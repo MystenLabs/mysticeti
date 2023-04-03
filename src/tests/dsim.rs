@@ -8,8 +8,10 @@ use futures::channel::oneshot;
 use futures::executor::LocalPool;
 use futures::executor::LocalSpawner;
 use futures::task::LocalSpawnExt;
+use futures::FutureExt;
 use futures::SinkExt;
 use futures::StreamExt;
+use rand::Rng;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -17,8 +19,12 @@ use std::sync::Mutex;
 
 use crate::node::Node;
 use crate::threshold_clock::get_highest_threshold_clock_round_number;
+use crate::types::BaseStatement;
 use crate::types::Committee;
 use crate::types::MetaStatementBlock;
+use crate::types::Transaction;
+use crate::types::TransactionId;
+use crate::types::Vote;
 
 // Define a time type as a u64
 pub type Time = u64;
@@ -205,8 +211,6 @@ pub fn example_executor_spawn_in_spawn() {
     executor.run(&mut pool);
 }
 
-
-
 #[test]
 pub fn example_run_four_nodes_no_delays() {
     // Use a futures::LocalPool to run the tasks
@@ -300,13 +304,66 @@ fn delay_send(
     executor: Arc<DSimExecutor>,
     mut channel: mpsc::Sender<MetaStatementBlock>,
     block: MetaStatementBlock,
-    delay: u64,
+    max_delay: u64,
 ) {
+    // Generate a random integer from 1 to delay
+    let mut rng = rand::thread_rng();
+    let delay = rng.gen_range(1..max_delay);
+
     let exec2 = executor.clone();
     executor.spawn_local(async move {
         exec2.wait_until(exec2.get_time() + delay).await;
         let _ = channel.send(block).await;
     });
+}
+
+fn generate_transactions(
+    executor: Arc<DSimExecutor>,
+    max_delay: u64,
+) -> mpsc::Receiver<(TransactionId, Transaction)> {
+    // Make a channel
+    let (mut tx, rx) = futures::channel::mpsc::channel(100);
+    let inner_executor = executor.clone();
+
+    // Make a random initeger u64
+    let mut rng = rand::thread_rng();
+    let mut tx_id = rng.gen::<u64>();
+
+    executor.spawn_local(async move {
+        loop {
+            // Generate a random integer from 1 to delay
+            let mut rng = rand::thread_rng();
+            let delay = rng.gen_range(1..max_delay);
+
+            inner_executor
+                .wait_until(inner_executor.get_time() + delay)
+                .await;
+
+            // increment tx_id
+            tx_id = tx_id + 1;
+
+            let ret = tx.send((tx_id, tx_id)).await;
+            // Exit loop on error
+            if ret.is_err() {
+                break;
+            }
+        }
+    });
+
+    rx
+}
+
+async fn delay_vote(
+    tx_id: TransactionId,
+    max_delay: u64,
+    executor: Arc<DSimExecutor>,
+) -> TransactionId {
+    // Generate a random integer from 1 to delay
+    let mut rng = rand::thread_rng();
+    let delay = rng.gen_range(1..max_delay);
+
+    executor.wait_until(executor.get_time() + delay).await;
+    tx_id
 }
 
 #[test]
@@ -339,6 +396,13 @@ pub fn example_run_four_nodes_with_delays() {
         let inner_executor = executor.clone();
         executor.spawn_local(async move {
             let mut node = Node::new(authority);
+
+            // transactions receiver
+            let mut tx_receiver = generate_transactions(inner_executor.clone(), 100);
+
+            // Make a FuturesUnordered to run the tasks
+            let mut tasks = futures::stream::FuturesUnordered::new();
+
             println!("Node {:?} started", node.auth);
             loop {
                 // Assert that for this node we are ready to emit the next block
@@ -375,7 +439,6 @@ pub fn example_run_four_nodes_with_delays() {
                     for tx in network_sender.iter_mut() {
                         let exec3 = inner_executor.clone();
                         delay_send(exec3, tx.clone(), next_block.clone(), 100);
-
                     }
 
                     if node.block_manager.next_round_number() > 100 {
@@ -383,16 +446,40 @@ pub fn example_run_four_nodes_with_delays() {
                     }
                 }
 
-                // Wait for the next block to be received
-                println!("Node {:?} waiting for block", node.auth);
-                let block = network_receiver.next().await.unwrap();
-                println!(
-                    "Node {:?} received block {:?}",
-                    node.auth,
-                    block.get_reference()
-                );
-                // process the next block
-                node.block_manager.add_blocks([block].into_iter().collect());
+                // select! between receiving a block and receiving a transaction
+                futures::select! {
+                    // Receive a transaction
+                    tx = tx_receiver.next().fuse() => {
+                        if let Some((tx_id, tx)) = tx {
+                            println!("Node {:?} inserts transaction {:?}", node.auth, tx_id);
+                            node.block_manager.add_base_statements(&node.auth, vec![BaseStatement::Share(tx_id, tx)]);
+                        } else {
+                            break;
+                        }
+                    },
+                    // Receive a block
+                    block = network_receiver.next().fuse() => {
+                        if let Some(block) = block {
+                            println!("Node {:?} received block {:?}", node.auth, block.get_reference());
+                            let results = node.block_manager.add_blocks([block].into_iter().collect());
+
+                            // For each transaction in the results add a delay_vote future into the tasks
+                            for tx_id in results.get_newly_added_transactions() {
+                                let exec2 = inner_executor.clone();
+                                let task = delay_vote(*tx_id, 100, exec2);
+                                tasks.push(task);
+                            }
+                        } else {
+                            break;
+                        }
+                    },
+                    // Receive a vote
+                    tx_id = tasks.select_next_some() => {
+                            println!("Node {:?} received vote for transaction {:?}", node.auth, tx_id);
+                            node.block_manager.add_base_statements(&node.auth, vec![BaseStatement::Vote(tx_id, Vote::Accept)]);
+                    }
+
+                }
             }
         });
     }

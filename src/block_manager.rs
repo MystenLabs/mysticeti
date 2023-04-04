@@ -1106,4 +1106,109 @@ mod tests {
         // Assert all value HashSets are empty
         assert!(result.values().all(|x| x.is_empty()));
     }
+
+
+    // Make a test committee. 
+    // Authority 0 makes a block for round 1.
+    // Another authority makes two blocks for round 1.
+    // The authority 0 includes all 3 blocks in its block for round 2.
+    // We check that the result of get_blocks_consensus_committed is correct.
+    #[test]
+    fn get_blocks_consensus_committed_equivocation() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        
+        let block01a = MetaStatementBlock::new_for_testing(&auth0, 1);
+        let mut block01b = MetaStatementBlock::new_for_testing(&auth0, 1);
+        block01b.set_digest(100);
+        let block11 = MetaStatementBlock::new_for_testing(&auth1, 1);
+        let block2 = MetaStatementBlock::new_for_testing(&auth1, 2)
+            .extend_with(block11.clone().into_include())
+            .extend_with(block01a.clone().into_include())
+            .extend_with(block01b.clone().into_include());
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks(
+            [
+                block01a.clone(),
+                block01b.clone(),
+                block11.clone(),
+                block2.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // Check there are 4 blocks processed
+        assert!(bm.blocks_processed.len() == 4);
+
+        let result = bm.get_blocks_consensus_committed(2,1);
+        // Ensure we have 1 blocks as a result
+        assert!(result.len() == 3);
+
+        // Ensure block11 is in the result
+        assert!(result.contains_key(&block11.get_reference()));
+
+        assert!(block01a.get_reference() != block01b.get_reference());
+
+        // The result contains both blocks for (auth0, 1)
+        assert!(result.contains_key(&block01a.get_reference()));
+        assert!(result.contains_key(&block01b.get_reference()));
+
+        // Only the first value has the vote from auth1
+        assert!(result.get(&block01a.get_reference()).unwrap().contains(&auth1));
+        assert!(!result.get(&block01b.get_reference()).unwrap().contains(&auth1));
+
+        
+    }
+
+    #[test]
+    fn get_blocks_consensus_committed_equivocation_pass_through() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        
+        let block00 = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let block01a = MetaStatementBlock::new_for_testing(&auth0, 1);
+        let mut block01b = MetaStatementBlock::new_for_testing(&auth0, 1)
+            .extend_with(block00.clone().into_include());
+        block01b.set_digest(100);
+        let block11 = MetaStatementBlock::new_for_testing(&auth1, 1);
+        let block2 = MetaStatementBlock::new_for_testing(&auth1, 2)
+            .extend_with(block11.clone().into_include())
+            .extend_with(block01a.clone().into_include())
+            .extend_with(block01b.clone().into_include());
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks(
+            [
+                block00.clone(),
+                block01a.clone(),
+                block01b.clone(),
+                block11.clone(),
+                block2.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // Check there are 4 blocks processed
+        assert!(bm.blocks_processed.len() == 5);
+
+        let result = bm.get_blocks_consensus_committed(2,0);
+        // Ensure we have 1 blocks as a result
+        assert!(result.len() == 1);
+        // Ensure block11 is in the result
+        assert!(result.contains_key(&block00.get_reference()));
+
+        // Only the first value has the vote from auth1
+        assert!(result.get(&block00.get_reference()).unwrap().contains(&auth1));
+        
+        // What happened: despite the block01b not being voted on, we still vote for blocks linked from it.
+
+    }
+
 }

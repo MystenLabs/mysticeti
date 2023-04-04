@@ -50,6 +50,11 @@ impl MetaStatementBlock {
         MetaStatementBlock::new(authority, round, vec![])
     }
 
+    #[cfg(test)]
+    pub fn set_digest(&mut self, digest: BlockDigest) {
+        self.reference.2 = digest;
+    }
+
     pub fn new(authority: &Authority, round: RoundNumber, contents: Vec<MetaStatement>) -> Self {
         let mut includes: Vec<BlockReference> = vec![];
         let mut base_statements: Vec<BaseStatement> = vec![];

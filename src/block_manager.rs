@@ -1107,8 +1107,7 @@ mod tests {
         assert!(result.values().all(|x| x.is_empty()));
     }
 
-
-    // Make a test committee. 
+    // Make a test committee.
     // Authority 0 makes a block for round 1.
     // Another authority makes two blocks for round 1.
     // The authority 0 includes all 3 blocks in its block for round 2.
@@ -1118,7 +1117,7 @@ mod tests {
         let cmt = make_test_committee();
         let auth0 = cmt.get_rich_authority(0);
         let auth1 = cmt.get_rich_authority(1);
-        
+
         let block01a = MetaStatementBlock::new_for_testing(&auth0, 1);
         let mut block01b = MetaStatementBlock::new_for_testing(&auth0, 1);
         block01b.set_digest(100);
@@ -1144,7 +1143,7 @@ mod tests {
         // Check there are 4 blocks processed
         assert!(bm.blocks_processed.len() == 4);
 
-        let result = bm.get_blocks_consensus_committed(2,1);
+        let result = bm.get_blocks_consensus_committed(2, 1);
         // Ensure we have 1 blocks as a result
         assert!(result.len() == 3);
 
@@ -1158,10 +1157,14 @@ mod tests {
         assert!(result.contains_key(&block01b.get_reference()));
 
         // Only the first value has the vote from auth1
-        assert!(result.get(&block01a.get_reference()).unwrap().contains(&auth1));
-        assert!(!result.get(&block01b.get_reference()).unwrap().contains(&auth1));
-
-        
+        assert!(result
+            .get(&block01a.get_reference())
+            .unwrap()
+            .contains(&auth1));
+        assert!(!result
+            .get(&block01b.get_reference())
+            .unwrap()
+            .contains(&auth1));
     }
 
     #[test]
@@ -1169,7 +1172,7 @@ mod tests {
         let cmt = make_test_committee();
         let auth0 = cmt.get_rich_authority(0);
         let auth1 = cmt.get_rich_authority(1);
-        
+
         let block00 = MetaStatementBlock::new_for_testing(&auth0, 0);
         let block01a = MetaStatementBlock::new_for_testing(&auth0, 1);
         let mut block01b = MetaStatementBlock::new_for_testing(&auth0, 1)
@@ -1198,17 +1201,18 @@ mod tests {
         // Check there are 4 blocks processed
         assert!(bm.blocks_processed.len() == 5);
 
-        let result = bm.get_blocks_consensus_committed(2,0);
+        let result = bm.get_blocks_consensus_committed(2, 0);
         // Ensure we have 1 blocks as a result
         assert!(result.len() == 1);
         // Ensure block11 is in the result
         assert!(result.contains_key(&block00.get_reference()));
 
         // Only the first value has the vote from auth1
-        assert!(result.get(&block00.get_reference()).unwrap().contains(&auth1));
-        
+        assert!(result
+            .get(&block00.get_reference())
+            .unwrap()
+            .contains(&auth1));
+
         // What happened: despite the block01b not being voted on, we still vote for blocks linked from it.
-
     }
-
 }

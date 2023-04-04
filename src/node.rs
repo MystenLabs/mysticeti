@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};
 use crate::threshold_clock::*;
 use crate::types::{
-    Authority, BaseStatement, Committee, MetaStatementBlock, RoundNumber, TransactionId,
+    Authority, BaseStatement, BlockReference, Committee, MetaStatementBlock, RichAuthority,
+    RoundNumber, TransactionId,
 };
 
 // In this file we define a node that combines a block manager with the constraints
@@ -117,7 +118,7 @@ impl Node {
         newly_certified_transactions
     }
 
-    pub fn try_commit(&mut self, period: u64) {
+    pub fn try_commit(&mut self, period: u64) -> Option<BlockReference> {
         let committee = self.auth.get_committee();
 
         // Assert that for this node we are ready to emit the next block
@@ -129,16 +130,15 @@ impl Node {
 
         let quorum_round = quorum_round.unwrap();
         if quorum_round > self.last_commit_round.max(period - 1) && quorum_round % period == 0 {
-            let target_authority = committee.get_rich_authority(
-                (quorum_round / period) as usize % committee.get_authorities().len(),
-            );
+            // Get the authority that is the leader at this round
+            let target_authority = self.leader_at_round(quorum_round, period).unwrap();
 
             println!("Committing round {}", quorum_round);
             let support = self
                 .block_manager
                 .get_blocks_consensus_committed(quorum_round - 1, quorum_round - period);
-            // For each entry in support, check whether the value has a quorum
 
+            // For each entry in support, check whether the value has a quorum
             for (reference, included_in_authorties) in support {
                 let total_stake = committee.get_total_stake(&included_in_authorties);
                 if committee.is_quorum(total_stake) {
@@ -148,10 +148,13 @@ impl Node {
                             quorum_round, target_authority
                         );
                         self.last_commit_round = reference.1;
+                        return Some(reference);
                     }
                 }
             }
         }
+
+        return None;
     }
 
     pub fn try_new_block(&mut self) -> Option<&MetaStatementBlock> {
@@ -184,6 +187,19 @@ impl Node {
         }
 
         None
+    }
+
+    pub fn leader_at_round(&self, round: RoundNumber, period: u64) -> Option<RichAuthority> {
+        // We only have leaders for round numbers that are multiples of the period
+        if round == 0 || round % period != 0 {
+            return None;
+        }
+
+        // TODO: fix to select by stake
+        let committee = self.auth.get_committee();
+        let target_authority = committee
+            .get_rich_authority((round / period) as usize % committee.get_authorities().len());
+        Some(target_authority)
     }
 }
 

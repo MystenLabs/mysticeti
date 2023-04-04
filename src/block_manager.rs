@@ -16,6 +16,12 @@ fn make_test_vote_accept(txid: TransactionId) -> MetaStatement {
     MetaStatement::Base(BaseStatement::Vote(txid, Vote::Accept))
 }
 
+// Get a block refeence and return a tuple of authority and round
+fn get_authority_and_round(block_ref: &BlockReference) -> (Authority, RoundNumber) {
+    let (authority, round, _) = block_ref;
+    (authority.clone(), *round)
+}
+
 // Algorithm that takes ONE MetaStatement::Block(Authority, RoundNumber, BlockDigest, Vec<MetaStatement>)
 // and turns it into a sequence Vec<BaseStatement> where all base statements are emitted by the Authority that
 // made the block.
@@ -283,6 +289,11 @@ impl BlockManager {
 
     /// We look back at the includes from latest_round - depth. And we list which of the authorities with blocks in
     /// the round latest_round include the blocks indirectly though the references they include.
+    ///
+    /// To deal with equivocations, ie validators sending diffferent blocks in the same round, we consider that each
+    /// block including previous blocks only "votes" for the first block it sees from a validator for a round and none
+    /// other in the future. However the blocks are followed and includes included to ensure we otherwise get all the
+    /// past history even through equivocating blocks.
     pub fn get_blocks_consensus_committed(
         &self,
         latest_round: RoundNumber,
@@ -290,8 +301,10 @@ impl BlockManager {
     ) -> HashMap<BlockReference, HashSet<Authority>> {
         assert!(target_round < latest_round);
         let mut result: HashMap<BlockReference, HashSet<Authority>> = HashMap::new();
-        let mut round_to_included_history: HashMap<BlockReference, HashSet<BlockReference>> =
-            HashMap::new();
+        let mut round_to_included_history: HashMap<
+            BlockReference,
+            HashMap<(Authority, RoundNumber), BlockReference>,
+        > = HashMap::new();
 
         // Seed the result with the block references at round target_round to start with
         for block_reference in self
@@ -299,7 +312,7 @@ impl BlockManager {
             .get(&target_round)
             .unwrap_or(&vec![])
         {
-            round_to_included_history.insert(block_reference.clone(), HashSet::new());
+            round_to_included_history.insert(block_reference.clone(), HashMap::new());
             result.insert(block_reference.clone(), HashSet::new());
         }
 
@@ -314,10 +327,16 @@ impl BlockManager {
                     .unwrap();
 
                 // Add the direct includes to the result
-                round_to_included_history
+                let map = round_to_included_history
                     .entry(block_reference_in_later_round.clone())
-                    .or_default()
-                    .extend(later_block.get_includes().clone());
+                    .or_default();
+
+                // Here we ensure that a block may only vote for a single (authority and round) pair.
+                for item in later_block.get_includes() {
+                    if !map.contains_key(&get_authority_and_round(&item)) {
+                        map.insert(get_authority_and_round(&item), item.clone());
+                    }
+                }
 
                 // Add the indirect includes to the result
 
@@ -330,10 +349,18 @@ impl BlockManager {
                         .get(block_reference_in_earlier_round)
                         .unwrap()
                         .clone();
-                    round_to_included_history
-                        .get_mut(block_reference_in_later_round)
-                        .unwrap()
-                        .extend(included_blocks)
+
+                    // Add the direct includes to the result
+                    let map = round_to_included_history
+                        .entry(block_reference_in_later_round.clone())
+                        .or_default();
+
+                    // Here we ensure that a block may only vote for a single (authority and round) pair.
+                    for (item_name, item) in included_blocks {
+                        if !map.contains_key(&get_authority_and_round(&item)) {
+                            map.insert(item_name, item.clone());
+                        }
+                    }
                 }
             }
         }
@@ -344,7 +371,7 @@ impl BlockManager {
         // Take each reference in the values of the map round_to_included_history and make an entry in result. Add the authority
         // in the key of the map round_to_included_history coresponding to the value, to the value in result.
         for (block_reference, included_blocks) in round_to_included_history {
-            for included_block in included_blocks {
+            for (_, included_block) in included_blocks {
                 // Only care about the blocks in the target round
                 if included_block.1 != target_round {
                     continue;

@@ -19,6 +19,7 @@ use std::sync::Mutex;
 
 use crate::node::Node;
 use crate::threshold_clock::get_highest_threshold_clock_round_number;
+use crate::threshold_clock::threshold_clock_valid;
 use crate::types::BaseStatement;
 use crate::types::Committee;
 use crate::types::MetaStatementBlock;
@@ -441,6 +442,10 @@ pub fn example_run_four_nodes_with_delays() {
                     // Receive a block
                     block = network_receiver.next().fuse() => {
                         if let Some(block) = block {
+
+                            // Assert the block is threshold clock valid
+                            assert!(threshold_clock_valid(&block));
+
                             println!("Node {:?} received block {:?}", node.auth, block.get_reference());
                             let (new_transactions, _newly_certified_2) = node.add_blocks([block].into_iter().collect());
                             _newly_certified = _newly_certified_2;

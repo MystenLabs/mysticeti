@@ -1,0 +1,29 @@
+The proof of safety and liveness for Mysticeti Consensus
+
+Brief description of scheme:
+- Validators have stake that is stable throughout the epoch.
+- Quorums are formed when validators with >2/3 stake support a decision.
+- The protocol proceeds in rounds 0, 1, 2, 
+- Each round correct validators create a single block for that round, 
+  referenced as (validator, round, digest).
+- A block contains an ordered list of references to previous blocks, 
+  and none to current or future round blocks. We call these blocks "included".
+- A block contains at least a quorum of referenced to blocks 
+  from the previoud round.
+- A correct block starts with a reference to the previous block from the
+  creator validator.
+- The system is initialized with blocks for round 0 from all 
+  validators.
+- A block also contains contents, which are playloads to be sequenced, 
+  but otherwise play no role in the agreement protocol.
+
+Definition of block support
+
+A block A is supported by another (causally future) block B if A is the first 
+block from the (validator, round) of A that is in the causal history of B. The
+concept of "first" is defined in relation to the order of included blocks in 
+the history of B, and defined recursivelly.
+
+B supports all blocks supported in its included blocks in order. If an included 
+block supports a past block that conflicts with an earlier supported block, the
+earlier remains supported and the later ignored. 

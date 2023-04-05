@@ -327,16 +327,9 @@ impl BlockManager {
                     .unwrap();
 
                 // Add the direct includes to the result
-                let map = round_to_included_history
+                let _map = round_to_included_history
                     .entry(block_reference_in_later_round.clone())
                     .or_default();
-
-                // Here we ensure that a block may only vote for a single (authority and round) pair.
-                for item in later_block.get_includes() {
-                    if !map.contains_key(&get_authority_and_round(&item)) {
-                        map.insert(get_authority_and_round(&item), item.clone());
-                    }
-                }
 
                 // Add the indirect includes to the result
 
@@ -360,6 +353,16 @@ impl BlockManager {
                         if !map.contains_key(&get_authority_and_round(&item)) {
                             map.insert(item_name, item.clone());
                         }
+                    }
+
+                    // Add the entry to the block iteslef last, just in case it conflicts with blocks referenced.
+                    if !map
+                        .contains_key(&get_authority_and_round(&block_reference_in_earlier_round))
+                    {
+                        map.insert(
+                            get_authority_and_round(&block_reference_in_earlier_round),
+                            block_reference_in_earlier_round.clone(),
+                        );
                     }
                 }
             }
@@ -1214,5 +1217,58 @@ mod tests {
             .contains(&auth1));
 
         // What happened: despite the block01b not being voted on, we still vote for blocks linked from it.
+    }
+
+    #[test]
+    fn get_blocks_consensus_committed_equivocation_dependent() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+
+        // Here we have an equivocation, where the conflicting blocks link to each other.
+        let block01a = MetaStatementBlock::new_for_testing(&auth0, 1);
+        let mut block01b = MetaStatementBlock::new_for_testing(&auth0, 1)
+            .extend_with(block01a.clone().into_include());
+        block01b.set_digest(100);
+        let block11 = MetaStatementBlock::new_for_testing(&auth1, 1);
+        let block2 = MetaStatementBlock::new_for_testing(&auth1, 2)
+            .extend_with(block11.clone().into_include())
+            .extend_with(block01a.clone().into_include())
+            .extend_with(block01b.clone().into_include());
+
+        // Add all blocks to a block manager and check that the transaction is present in the return value.
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks(
+            [
+                block01a.clone(),
+                block01b.clone(),
+                block11.clone(),
+                block2.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // Check there are 4 blocks processed
+        assert!(bm.blocks_processed.len() == 4);
+
+        let result = bm.get_blocks_consensus_committed(2, 1);
+        // Ensure we have 1 blocks as a result
+        assert!(result.len() == 3);
+        // Ensure block11 is in the result
+        assert!(result.contains_key(&block01a.get_reference()));
+
+        // Only the first - causally first - value has the vote from auth1
+        assert!(result
+            .get(&block01a.get_reference())
+            .unwrap()
+            .contains(&auth1));
+        // The second conflicting block does not have the vote from auth1
+        assert!(!result
+            .get(&block01b.get_reference())
+            .unwrap()
+            .contains(&auth1));
+
+        // What happened: despite the block01b not being voted on, we still vote for blocks linked in its history
     }
 }

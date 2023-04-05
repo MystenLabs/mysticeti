@@ -24,6 +24,80 @@ block from the (validator, round) of A that is in the causal history of B. The
 concept of "first" is defined in relation to the order of included blocks in 
 the history of B, and defined recursivelly.
 
-B supports all blocks supported in its included blocks in order. If an included 
-block supports a past block that conflicts with an earlier supported block, the
-earlier remains supported and the later ignored. 
+B supports all blocks supported in its included blocks in order. For each included
+block a block supports in order the blocks supported by the included block, and the 
+block itself. If an included  block supports a past block that conflicts with an 
+earlier supported block, the earlier remains supported and the later ignored. This
+implements a depth first, right-to-left in includes, support collection.
+
+As a result two lemmas hold:
+Lemma 1. A block only supports a single block from a given (authority, round).
+Lemma 2. A correct node will only ever support in any of its blocks at most a single
+ (authority, round) block.
+Lemma 3. Only a single block at a (val, round) will ever gather a quorum of support.
+
+Proofs:
+
+Lemma 1: 
+By the definition of support for a block only a single (val, round) block can be
+supported from a future block.  
+
+Lemma 2: 
+since a correct validator includes its last block first in any subsequent
+block, the subsequent block initially supports all previously supported blocks, and 
+any additional blocks included supporting conflicting blocks, will not overwrite 
+this "earlier" support. Thus a validator will never change which (val, round) block
+is supported once one is supported.
+
+
+Lemma 3:
+By quorum intersection, if two blocks A and A' with the same (val, round)
+gather support, they intersect at at least one correct node. This means that the 
+correct node in one block supports A and in another block support A', which by 
+Lemma 2 means A = A'.
+
+Period, Leader rounds & Decision rounds
+
+The period (p > 1) is the number of rounds between leaders. Rounds with leaders are 
+p * k (for k = 1, 2, 3, ...)  ie non-zero rounds divisible by the period. During these 
+rounds a validator is deterministically chosen by all nodes to act as a leader. The 
+round preceeding the leader round (ie p*(k+1) -1, for k = 1, 2, 3, 4) are called 
+decision rounds, since we decide based on blocks on these rounds whether to commit 
+a leader or not. We call these the leader for k and the decision round for k.
+
+After a node passes a decision round for k (it it has a quorum of blocks for 
+round p*(k+1) - 1) it checks whether there is a quorum of support for a block from 
+the leader at the leader round k (ie round k*p). If so the block is committed.
+
+When a leader at k is committed, the node goes back and check if any leaders between
+the last commit and k has a quorum of support, and commits them if so. It then commits
+the last leader for k.
+
+Lemma 4: 
+If a node commits a leader, the leader block will be in the history of any 
+subsequent block after the decision round.
+
+Lemma 5 (NOT TRUE NOW!)
+If a node commits a leader eventually all node will commit the leader.
+
+NOT TRUE DUE TO THE FACT THAT WE ARE NOT COUNTING POTENTIAL DOUBLE SUPPORT 
+FROM BYZ NODES - SO A CORRECT NODE MAY RELY ON A BYZ VOTE TO FORM A QUORUM 
+THAT OTHER NODES IGNORE, MAKING IT IMPOSIBLE TO FORM A QUORUM. NEED TO FIX
+THIS IN HOW WE DEFINE SUPPORT.
+
+Lemma 6:
+At all subsequent decisions rounds if a leader has been committed in round k 
+then it will have a quorum in the subsequent decisions round.
+
+UNCLEAR IF TRUE: SO FAR WE ONLY REQUIRE THE LEADER TO HAVE A QUORUM OF SUPPORT
+IN THE DECISION ROUND, BUT THIS ONLY ENSURES IT WILL BE IN THE HISTORY, NOT A 
+FULL QUORUM WILL BE IN THE HISTORY. IF WE REQUIRE THAT EACH BLOCK IN THE DECISION 
+ROUND HAVE A QUORUM THAT SUPPORTS THE LEADER AT K THEN THIS MAY BE STRONG ENOUGH, 
+BUT MAY ALSO BE TOO STRONG TO COMMIT OFTEN.
+
+Proofs:
+
+Lemma 4:
+A quorum at the decision round means that >2/3 by stake of blocks support the 
+leader block, thus any future block needs to inlcude at least one of them to 
+have sufficient stake to advance round.

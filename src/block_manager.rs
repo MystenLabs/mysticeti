@@ -355,7 +355,7 @@ impl BlockManager {
                         }
                     }
 
-                    // Add the entry to the block iteslef last, just in case it conflicts with blocks referenced.
+                    // Add the entry to the block itself last, just in case it conflicts with blocks referenced.
                     if !map
                         .contains_key(&get_authority_and_round(&block_reference_in_earlier_round))
                     {
@@ -369,7 +369,7 @@ impl BlockManager {
         }
 
         // Remove from result all keys not in latest_round
-        round_to_included_history.retain(|key, _| key.1 == latest_round);
+        // round_to_included_history.retain(|key, _| key.1 == latest_round);
 
         // Take each reference in the values of the map round_to_included_history and make an entry in result. Add the authority
         // in the key of the map round_to_included_history coresponding to the value, to the value in result.
@@ -1270,5 +1270,98 @@ mod tests {
             .contains(&auth1));
 
         // What happened: despite the block01b not being voted on, we still vote for blocks linked in its history
+    }
+
+    #[test]
+    fn test_quorum_is_quorum_even_if_equivocation() {
+        let cmt = make_test_committee();
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+        let auth2 = cmt.get_rich_authority(2);
+        let auth3 = cmt.get_rich_authority(3);
+
+        // Authority 0 is byzantine and equivocates
+
+        let block00a = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let mut block00b = MetaStatementBlock::new_for_testing(&auth0, 0);
+        block00b.set_digest(100);
+
+        let block01a =
+            MetaStatementBlock::new_for_testing(&auth0, 1).extend_with(block00a.into_include());
+        let mut block01b =
+            MetaStatementBlock::new_for_testing(&auth0, 1).extend_with(block00b.into_include());
+        block01b.set_digest(100);
+
+        // Nodes 1, 2 see block00a first
+        let block_node0_r2 =
+            MetaStatementBlock::new_for_testing(&auth1, 2).extend_with(block01a.into_include());
+        let block_node2_r2 =
+            MetaStatementBlock::new_for_testing(&auth2, 2).extend_with(block01a.into_include());
+
+        // But node 3 sees block00b first
+        let block_node3_r2 =
+            MetaStatementBlock::new_for_testing(&auth3, 2).extend_with(block01b.into_include());
+
+        // Now in round 3
+        let block_node0_r3 = MetaStatementBlock::new_for_testing(&auth1, 3)
+            .extend_with(block_node0_r2.into_include())
+            .extend_with(block_node2_r2.into_include())
+            .extend_with(block_node3_r2.into_include());
+
+        let block_node3_r3 = MetaStatementBlock::new_for_testing(&auth3, 3)
+            .extend_with(block_node3_r2.into_include())
+            .extend_with(block_node0_r2.into_include())
+            .extend_with(block_node2_r2.into_include());
+
+        // Make a bm and insert all blocks in it
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks(
+            [
+                block00a.clone(),
+                block00b.clone(),
+                block01a,
+                block01b,
+                block_node3_r2,
+                block_node0_r2,
+                block_node2_r2,
+                block_node3_r3,
+                block_node0_r3.clone(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // Get the consensus committed blocks from round 0 to round 3
+        let result = bm.get_blocks_consensus_committed(3, 0);
+        for k in result.keys() {
+            println!(" - Key: {:?}: {:?}", k, result.get(k));
+        }
+
+        // Chek that node 0 votes for block00a, but node 3 votes for block00b
+        assert!(result
+            .get(&block00a.get_reference())
+            .unwrap()
+            .contains(&auth0));
+
+        assert!(!result
+            .get(&block00a.get_reference())
+            .unwrap()
+            .contains(&auth3));
+
+        // Check that there is a quorum for block00a
+        assert!(cmt.is_quorum(cmt.get_total_stake(result.get(&block00a.get_reference()).unwrap())));
+
+        assert!(result
+            .get(&block00b.get_reference())
+            .unwrap()
+            .contains(&auth3));
+
+        assert!(!result
+            .get(&block00a.get_reference())
+            .unwrap()
+            .contains(&auth3));
+
+        // Check that there is a quorum for block00a
+        assert!(!cmt.is_quorum(cmt.get_total_stake(result.get(&block00b.get_reference()).unwrap())));
     }
 }

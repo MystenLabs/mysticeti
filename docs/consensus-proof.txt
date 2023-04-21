@@ -56,6 +56,24 @@ gather support, they intersect at at least one correct node. This means that the
 correct node in one block supports A and in another block support A', which by 
 Lemma 2 means A = A'.
 
+Block Certified Support
+
+A block B certifies a caually included block A if the subgraph connecting A to B 
+contains 2f+1 blocks from distinct authorities that support A. Note that in this
+calculation equivocating blocks may support different blocks, and yet they are 
+counted towards supporting each of the different blocks (not only the first is
+counted as when we define block support.)
+
+The following lemmas hold:
+
+Lemma 4: 
+only a single block from an authority round will be certified across
+any future blocks.
+
+Lemma 5: 
+if a block B certifies a block A, any block C that includes B will
+also certify A.
+
 Period, Leader rounds & Decision rounds
 
 The period (p > 1) is the number of rounds between leaders. Rounds with leaders are 
@@ -66,43 +84,19 @@ decision rounds, since we decide based on blocks on these rounds whether to comm
 a leader or not. We call these the leader for k and the decision round for k.
 
 After a node passes a decision round for k (it it has a quorum of blocks for 
-round p*(k+1) - 1) it checks whether there is a quorum of support for a block from 
+round p*(k+1) - 1) it checks whether there is a quorum of certified support for a block from 
 the leader at the leader round k (ie round k*p). If so the block is committed.
 
-When a leader at k is committed, the node goes back and check if any leaders between
-the last commit and k has a quorum of support, and commits them if so. It then commits
-the last leader for k.
-
-Lemma 4: 
-If a node commits a leader, the leader block will be in the history of any 
-subsequent block after the decision round.
-
-Lemma 5: 
-If a node observed a quorum of support for a previous target block, all nodes that 
-include a futue block from that node will also observe a quorum of support from the 
-target block. 
+When a leader at k is committed, the node goes back and check for each leader round 
+after the last commit: If the leader is in the causal graph of the committed leader, and 
+in the next leader ground all included blocks certify this leader,  
+we first commit this leader. This continues until the last leader (that does have support) 
+is committed.
 
 Lemma 6:
-At all subsequent decisions rounds if a leader has been committed in round k 
-then it will have a quorum in the subsequent decisions round.
+If at a round x 2f+1 blocks from distinct authorities certify a block at a previous
+round, then all blocks at future rounds > x will certify that block.
 
-UNCLEAR IF TRUE: SO FAR WE ONLY REQUIRE THE LEADER TO HAVE A QUORUM OF SUPPORT
-IN THE DECISION ROUND, BUT THIS ONLY ENSURES IT WILL BE IN THE HISTORY, NOT A 
-FULL QUORUM WILL BE IN THE HISTORY. IF WE REQUIRE THAT EACH BLOCK IN THE DECISION 
-ROUND HAVE A QUORUM THAT SUPPORTS THE LEADER AT K THEN THIS MAY BE STRONG ENOUGH, 
-BUT MAY ALSO BE TOO STRONG TO COMMIT OFTEN.
-
-Proofs:
-
-Lemma 4:
-A quorum at the decision round means that >2/3 by stake of blocks support the 
-leader block, thus any future block needs to inlcude at least one of them to 
-have sufficient stake to advance round.
-
-Lemma 5:
-
-A node counts the support or a previous target block by tallying all the support it has
-received in blocks between the round of the target block, and the current round 
-of the node. Eventually all these blocks will be included in the future round of 
-the node and received by others who will sync and derive the same set of votes 
-and therefore support for the target block.
+Lemma 7: 
+If a node commits a leader at round k all subsequent leaders will commit the leader 
+at round k before committing any later leaders. 

@@ -67,12 +67,23 @@ counted as when we define block support.)
 The following lemmas hold:
 
 Lemma 4: 
-only a single block from an authority round will be certified across
+only a single block from an authority & round will be certified across
 any future blocks.
 
 Lemma 5: 
 if a block B certifies a block A, any block C that includes B will
 also certify A.
+
+Proofs: 
+
+Lemma 4: Consider two blocks that certify different blocks for the same
+authority round. They each contain in their history 2f+1 support for the 
+respective equivocating blocks they support. However this stake must intersect
+on a correct node. A correct by lemma 2 will not support two different blocks
+and therefore there is a contradiction that proves the lemma.
+
+Lemma 5: The block C contains the full history of block B, which contains 
+2f+1 support for block A, and therefore block C also certifies block A.
 
 Period, Leader rounds & Decision rounds
 
@@ -94,9 +105,43 @@ we first commit this leader. This continues until the last leader (that does hav
 is committed.
 
 Lemma 6:
-If at a round x 2f+1 blocks from distinct authorities certify a block at a previous
+If at a round x 2f+1 blocks from distinct authorities certify a block A at a previous
 round, then all blocks at future rounds > x will certify that block.
 
 Lemma 7: 
 If a node commits a leader at round k all subsequent leaders will commit the leader 
 at round k before committing any later leaders. 
+
+Theorem 8 (safety):
+All correct nodes commit a consistent sequence of leaders (ie the commit of one is 
+a subsequence of the commit of another.)
+
+Theorem 9 (liveness):
+All correct nodes eventually commit all leaders up to the end of the epoch. 
+
+Lemma 10:
+The full causal history of the final block to be committed will be included in the
+commit.
+
+Proofs:
+
+Lemma 6: A block at round x+1 includes 2f+1 blocks from previous round, one of which 
+will intersect with a block from a correct authority at x with certified support for 
+block A. By lemma 5 since this included block certifies A all blocks at round x+1 will 
+also certify A. The argument applies recursivelly for round x+1, which also has 2f+1
+certified blocks for A, and so on for ever.
+
+Lemma 7: By lemma 6 if a ndoe commits a leader at round k then all subsequent blocks 
+will contain a certificate for this leader. If a future leader is committed by a node 
+it will check this previous leader, and whether it is certified by all blocks after 
+its corresponding decision round. If anyone has committed this leader, the condition 
+is always true, and therefore any other node committing will also comit this leader 
+before committing future leaders. 
+
+Theorem 8 (safety): consider two correct nodes with sequences that are not consistent. 
+Then consider the first leader on which they diverge in their commits. By lemma 7 if 
+one of them has committed the leader all other ones, will first commit this leader, 
+which means the committed leader where they diverge is the same. Leading to a 
+contradiction, proving the theorem.
+
+Theorem 9 (liveness): USE TIMEOUTS!

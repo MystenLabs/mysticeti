@@ -98,13 +98,17 @@ After a node passes a decision round for k (it it has a quorum of blocks for
 round p*(k+1) - 1) it checks whether there is a quorum of certified support for a block from 
 the leader at the leader round k (ie round k*p). If so the block is committed.
 
-When a leader at k is committed, the node goes back and check for each leader round 
-after the last commit: If the leader is in the causal graph of the committed leader, and 
-in the next leader ground all included blocks certify this leader,  
-we first commit this leader. This continues until the last leader (that does have support) 
+When a leader at k is committed, the node goes back and check for each leader Lk round 
+after the last commit: If the leader Lk is in the causal graph of the committed leader, and 
+and the decision round for Lk contains at least one certified block for the leader Lk
+we first commit leader Lk. This continues until the last leader (that does have support) 
 is committed.
 
-Lemma 6:
+Lemma 6a: 
+If at round x 2f+1 blocks from distinct authorities certify a block A at a previous round
+then any block in the next round will contain at least 1 block that certifies A at round x.
+
+Lemma 6b:
 If at a round x 2f+1 blocks from distinct authorities certify a block A at a previous
 round, then all blocks at future rounds > x will certify that block.
 
@@ -125,15 +129,19 @@ commit.
 
 Proofs:
 
-Lemma 6: A block at round x+1 includes 2f+1 blocks from previous round, one of which 
-will intersect with a block from a correct authority at x with certified support for 
-block A. By lemma 5 since this included block certifies A all blocks at round x+1 will 
+Lemma 6a: 
+A block at round x+1 needs to link to 2f+1 blocks ar round x. By quorum intersection
+one of the 2f+1 blocks included must intersect with 1 honest block from the 2f+1 blocks
+that certify A. 
+
+Lemma 6b: A block at round x+1 at least one block that certifies A, by lemma 6a. 
+By lemma 5 since this included block certifies A all blocks at round x+1 will 
 also certify A. The argument applies recursivelly for round x+1, which also has 2f+1
 certified blocks for A, and so on for ever.
 
 Lemma 7: By lemma 6 if a ndoe commits a leader at round k then all subsequent blocks 
 will contain a certificate for this leader. If a future leader is committed by a node 
-it will check this previous leader, and whether it is certified by all blocks after 
+it will check this previous leader, and whether it is certified by at least one block in
 its corresponding decision round. If anyone has committed this leader, the condition 
 is always true, and therefore any other node committing will also comit this leader 
 before committing future leaders. 

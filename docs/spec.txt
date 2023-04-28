@@ -70,27 +70,40 @@ include the causally latest reference allowing others to infer previous ones.
 End of epoch: once a node decides to reach the end of epoch, it needs to vote on all 
 transactions that were sequenced in its own history. By default it rejects all transactions
 that it may not accept. Then for all certified transactions it continues to run the 
-protocol until they are squenced, or until >2/3 close epoch transactions are seen. When all
+protocol until they are sequenced, or until >2/3 close epoch transactions are seen. When all
 transactions certified locally are sequenced it sends its end-of-epoch transaction.
 
 DAG processing: Consensus
 
-We determine a period, ie every how many rounds we elect a leader ( so if period is 2, we elect
-at rounds 0, 2, 4, ...). We consider that a block "votes" for another block if the other 
+We determine a period, ie every how many rounds we elect a leader ( so if period is 3, we elect
+at rounds 0, 3, 6, ...). We consider that a block "votes" for another block if the other 
 block is included in its history. Only the first block from an (authority, round) included
 direcly or indirecly is "voted" for. When a block votes for a past block we consider the 
 creator authority or the authority that included it in a block votes for it.
 
-At every round period * k - 1 (for k = 1, 2, 3, ...) we look at how many votes blocks at 
-round period * (k -1) have. If a block has received votes from >2/3 validators by stake we
-consider it certified. 
+We call every round period * k - 1 (for k = 1, 2, 3, ...) a decision round. We look at how many 
+votes blocks at round period * (k -1) have. If a block has received votes from >2/3 validators 
+by stake in the history of a block we consider it certified. If the leader block for k is certified 
+by >2/3 blocks in the decision round for k we commit it.
 
-We use a deterministic algorithm to elect a leader for each round period * k . If the leader
-block is certified we commit to it. When we commit a leader we go back and commit all leaders
-blocks that are connected from that leader block from the past first (CHECK THIS!)
+When a leader at round k is committed, we consider all leaders between the last committed leader 
+and the leader at k. If the leader k' < k is certified by at least one block in its decision round 
+within the causal history of k, we commit it first, and then consider the next one.
 
-Liveness is based on partial sync: we wait at each round period * k + 1 for the leader 
-until some timeout which we increase every time we do not have a commit.
+From commits to executions:
+
+As soon as a transaction is certified, and only contains owned objects, it may be executed by the 
+validator. The validator then includes in its block sufficient evidence to ensure all will eventually 
+execute. This is also sufficient evidence to ensure that eventually it will be sequenced.
+
+If a certified transaction contains shared objects, the certificate needs to be included in a commit 
+at the time of the commit it is assigned a version number of each shared object, and then it may be 
+executed. 
+
+A validator may not vote to close the epoch unless all transactions that it has observed as certified 
+are executed and sequenced in a causal order. However, a validator may vote to reject transactions after 
+some time, to allow for the epoch to close. 
+
 
 Sync & Net protocol: 
 

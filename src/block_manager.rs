@@ -62,6 +62,10 @@ pub struct TransactionEntry {
     transaction: Transaction,
     status: TransactionStatus,
     accept_votes: HashSet<Authority>,
+
+    // TODO: Refactor this to (1) indicate if a node will never vote to accept
+    //       due to already having accepted something else, or (2) to support 
+    //       a fast unlock type of mechanism.
     reject_votes: HashMap<Authority, Vote>,
 }
 
@@ -294,6 +298,9 @@ impl BlockManager {
     /// block including previous blocks only "votes" for the first block it sees from a validator for a round and none
     /// other in the future. However the blocks are followed and includes included to ensure we otherwise get all the
     /// past history even through equivocating blocks.
+    /// 
+    /// TODO: THIS CODE PREDATES THE COMMIT RULE BASED ON 2f+1 CERTIFICTES BEING SEEN AT THE DECISION ROUND
+    /// SO WE NEED TO AUDIT AND ADAPT IT TO THE NEW SCHEME.
     pub fn get_blocks_consensus_committed(
         &self,
         latest_round: RoundNumber,

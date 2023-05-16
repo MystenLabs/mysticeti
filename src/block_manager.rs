@@ -1500,4 +1500,101 @@ mod tests {
         // Check that there is a quorum for block00a
         assert!(!cmt.is_quorum(cmt.get_total_stake(result.get(&block00b.get_reference()).unwrap())));
     }
+
+    #[test]
+    fn test_decision_simple() {
+        let cmt = make_test_committee();
+
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+
+        // Authority 0 make a block
+        let block0 = MetaStatementBlock::new_for_testing(&auth0, 0);
+        // Authority 1 makes a block for round 1 and includes block0 in it
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 1)
+            .extend_with(block0.clone().into_include());
+
+        // make a block manager and add the blocks
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks([block0.clone(), block1.clone()].into_iter().collect());
+
+        let certs = bm.get_decision_round_certificates(0, &auth0, 1);
+
+        // Assert that the reference to block1 is in certs
+        assert!(certs.contains_key(&block1.get_reference()));
+
+        // Assert that the cert for block0 contains votes from both auth0 and auth1
+        assert!(certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0.get_reference())
+            .unwrap()
+            .contains(&auth0));
+        assert!(certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0.get_reference())
+            .unwrap()
+            .contains(&auth1));
+    }
+
+    #[test]
+    fn test_decision_equivocation() {
+        let cmt = make_test_committee();
+
+        let auth0 = cmt.get_rich_authority(0);
+        let auth1 = cmt.get_rich_authority(1);
+
+        // Authority 0 make a block
+        let block0a = MetaStatementBlock::new_for_testing(&auth0, 0);
+        let mut block0b = MetaStatementBlock::new_for_testing(&auth0, 0);
+        block0b.set_digest(100);
+
+        // Authority 1 makes a block for round 1 and includes block0 in it
+        let block1 = MetaStatementBlock::new_for_testing(&auth1, 1)
+            .extend_with(block0a.clone().into_include())
+            .extend_with(block0b.clone().into_include());
+
+        // make a block manager and add the blocks
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks(
+            [block0a.clone(), block0b.clone(), block1.clone()]
+                .into_iter()
+                .collect(),
+        );
+
+        let certs = bm.get_decision_round_certificates(0, &auth0, 1);
+
+        // Assert that the reference to block1 is in certs
+        assert!(certs.contains_key(&block1.get_reference()));
+
+        // Assert that the cert for block0a contains votes from both auth0 and auth1
+        assert!(certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0a.get_reference())
+            .unwrap()
+            .contains(&auth0));
+        assert!(certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0a.get_reference())
+            .unwrap()
+            .contains(&auth1));
+
+        // The second equivocating block0b is voted by byzantine auth0 but not auth1,
+        // despite including it in the block (after block0b)
+        assert!(certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0b.get_reference())
+            .unwrap()
+            .contains(&auth0));
+        assert!(!certs
+            .get(&block1.get_reference())
+            .unwrap()
+            .get(&block0b.get_reference())
+            .unwrap()
+            .contains(&auth1));
+    }
 }

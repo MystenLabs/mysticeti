@@ -1597,4 +1597,82 @@ mod tests {
             .unwrap()
             .contains(&auth1));
     }
+
+
+    #[test]
+    fn test_decision_commit() {
+        let cmt = make_test_committee();
+
+        let authA = cmt.get_rich_authority(0);
+        let authB = cmt.get_rich_authority(1);
+        let authC = cmt.get_rich_authority(2);
+
+        // Round 10
+        let blockA10 = MetaStatementBlock::new_for_testing(&authA, 10);
+        let blockB10 = MetaStatementBlock::new_for_testing(&authB, 10);
+        let blockC10 = MetaStatementBlock::new_for_testing(&authC, 10);
+        
+        // Round 11
+        let blockA11 = MetaStatementBlock::new_for_testing(&authA, 11)
+            .extend_with(blockA10.clone().into_include())
+            .extend_with(blockB10.clone().into_include())
+            .extend_with(blockC10.clone().into_include());
+        let blockB11 = MetaStatementBlock::new_for_testing(&authB, 11)
+            .extend_with(blockA10.clone().into_include())
+            .extend_with(blockB10.clone().into_include())
+            .extend_with(blockC10.clone().into_include());
+        let blockC11 = MetaStatementBlock::new_for_testing(&authC, 11)
+            .extend_with(blockA10.clone().into_include())
+            .extend_with(blockB10.clone().into_include())
+            .extend_with(blockC10.clone().into_include());
+
+        // Round 12
+        let blockA12 = MetaStatementBlock::new_for_testing(&authA, 12)
+            .extend_with(blockA11.clone().into_include())
+            .extend_with(blockB11.clone().into_include())
+            .extend_with(blockC11.clone().into_include());
+        let blockB12 = MetaStatementBlock::new_for_testing(&authB, 12)
+            .extend_with(blockA11.clone().into_include())
+            .extend_with(blockB11.clone().into_include())
+            .extend_with(blockC11.clone().into_include());
+        let blockC12 = MetaStatementBlock::new_for_testing(&authC, 12)
+            .extend_with(blockA11.clone().into_include())
+            .extend_with(blockB11.clone().into_include())
+            .extend_with(blockC11.clone().into_include());
+
+
+        // make a block manager and add the blocks
+        let mut bm = BlockManager::default();
+        let _t0 = bm.add_blocks([blockA10.clone(), blockB10.clone(), blockC10.clone(),blockA11.clone(), blockB11.clone(), blockC11.clone(),blockA12.clone(), blockB12.clone(), blockC12.clone(),].into_iter().collect());
+
+        let certs = bm.get_decision_round_certificates(10, &authA, 12);
+
+        // For each entry in the map, check that the reference is for round 12
+        let mut authorities_with_certs = HashSet::new();
+
+        for (k, v) in certs.iter() {
+            assert!(k.1 == 12);
+            
+            // the value is a map that contains 1 entry, the reference to blockA10
+            assert!(v.len() == 1);
+            assert!(v.contains_key(&blockA10.get_reference()));
+
+            // get the value
+            let votes = v.get(&blockA10.get_reference()).unwrap();
+            // Check this forms a quorum
+            assert!(cmt.is_quorum(cmt.get_total_stake(votes)));
+
+            authorities_with_certs.insert(k.0.clone());
+        }
+
+        // Check that all authorities have a certificate
+        assert!(authorities_with_certs.len() == 3);
+        // check there is a quorum in authorities_with_certs
+        assert!(cmt.is_quorum(cmt.get_total_stake(&authorities_with_certs)));
+
+        
+
+    }
+
+
 }

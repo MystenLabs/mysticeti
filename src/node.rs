@@ -1,3 +1,5 @@
+use std::collections::{HashSet, HashMap};
+use std::hash::Hash;
 use std::sync::Arc;
 
 use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};
@@ -136,22 +138,31 @@ impl Node {
             println!("Committing round {}", quorum_round);
             let support = self
                 .block_manager
-                .get_blocks_consensus_committed(quorum_round - 1, quorum_round - period);
+                .get_decision_round_certificates(quorum_round - period, &target_authority, quorum_round - 1, );
 
-            // For each entry in support, check whether the value has a quorum
-            for (reference, included_in_authorties) in support {
-                let total_stake = committee.get_total_stake(&included_in_authorties);
-                if committee.is_quorum(total_stake) {
-                    if reference.0 == target_authority {
-                        println!(
-                            "Committing round {} for authority {:?}",
-                            quorum_round, target_authority
-                        );
-                        self.last_commit_round = reference.1;
-                        return Some(reference);
+            
+            // iterate over all references in support
+            let mut certificate_votes : HashMap<&BlockReference, HashSet<&RichAuthority>> = HashMap::new();
+            for (decision_reference, leader_votes) in support {
+                for (potential_cert, votes) in leader_votes {
+                    if committee.is_quorum(committee.get_total_stake(&votes)) {
+                        let votes = certificate_votes.entry(potential_cert).or_insert(HashSet::new());
+                        votes.insert(&decision_reference.0);
                     }
                 }
             }
+
+            // Assert there is only one entry in certificate_votes, since only one certificate can ever
+            // exist with a quorum of votes.
+            assert!(certificate_votes.len() <= 1);
+
+            // If there is a certificate, then we can commit the block
+            for (block_ref, votes) in certificate_votes {
+                if committee.is_quorum(committee.get_total_stake(&votes)) {
+                    return Some(block_ref.clone());
+                }
+            }
+
         }
 
         return None;
@@ -176,6 +187,8 @@ impl Node {
                 .seal_next_block(self.auth.clone(), quorum_round.unwrap() + 1);
 
             self.try_commit(3);
+            // TODO: Here we should go back and commit all previous leaders with a certificate in
+            // the causal graph.
 
             let next_block = self
                 .block_manager

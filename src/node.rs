@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -136,17 +136,21 @@ impl Node {
             let target_authority = self.leader_at_round(quorum_round, period).unwrap();
 
             println!("Committing round {}", quorum_round);
-            let support = self
-                .block_manager
-                .get_decision_round_certificates(quorum_round - period, &target_authority, quorum_round - 1, );
+            let support = self.block_manager.get_decision_round_certificates(
+                quorum_round - period,
+                &target_authority,
+                quorum_round - 1,
+            );
 
-            
             // iterate over all references in support
-            let mut certificate_votes : HashMap<&BlockReference, HashSet<&RichAuthority>> = HashMap::new();
+            let mut certificate_votes: HashMap<&BlockReference, HashSet<&RichAuthority>> =
+                HashMap::new();
             for (decision_reference, leader_votes) in support {
                 for (potential_cert, votes) in leader_votes {
                     if committee.is_quorum(committee.get_total_stake(&votes)) {
-                        let votes = certificate_votes.entry(potential_cert).or_insert(HashSet::new());
+                        let votes = certificate_votes
+                            .entry(potential_cert)
+                            .or_insert(HashSet::new());
                         votes.insert(&decision_reference.0);
                     }
                 }
@@ -162,7 +166,6 @@ impl Node {
                     return Some(block_ref.clone());
                 }
             }
-
         }
 
         return None;

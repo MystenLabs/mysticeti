@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Formatter, hash::Hasher, sync::Arc, borrow::Borrow};
+use std::{borrow::Borrow, collections::HashSet, fmt::Formatter, hash::Hasher, sync::Arc};
 
 pub type Authority = RichAuthority;
 pub type Transaction = u64;
@@ -210,7 +210,7 @@ impl Committee {
 
     /// Take a list of rich authorities and return the total stake to which they
     /// correspond in the committee.
-    pub fn get_total_stake<A : Borrow<RichAuthority>>(&self, authorities: &HashSet<A>) -> Stake {
+    pub fn get_total_stake<A: Borrow<RichAuthority>>(&self, authorities: &HashSet<A>) -> Stake {
         let mut total_stake = 0;
         for authority in authorities {
             total_stake += self.authorities[authority.borrow().index];

@@ -163,6 +163,9 @@ impl Node {
             // If there is a certificate, then we can commit the block
             for (block_ref, votes) in certificate_votes {
                 if committee.is_quorum(committee.get_total_stake(&votes)) {
+                    // Set the last commit round
+                    self.last_commit_round = quorum_round - period;
+
                     return Some(block_ref.clone());
                 }
             }

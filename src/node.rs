@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::sync::Arc;
 
 use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};

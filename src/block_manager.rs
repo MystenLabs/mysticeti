@@ -17,6 +17,7 @@ fn make_test_vote_accept(txid: TransactionId) -> MetaStatement {
 }
 
 // Get a block refeence and return a tuple of authority and round
+#[allow(dead_code)]
 fn get_authority_and_round(block_ref: &BlockReference) -> (Authority, RoundNumber) {
     let (authority, round, _) = block_ref;
     (authority.clone(), *round)

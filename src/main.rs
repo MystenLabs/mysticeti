@@ -5,6 +5,7 @@ pub mod types;
 
 #[cfg(test)]
 pub mod tests;
+mod v2;
 
 fn main() {
     println!("Hello, world!");

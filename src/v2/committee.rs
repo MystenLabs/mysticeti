@@ -37,12 +37,12 @@ impl Committee {
         self.stake.get(authority as usize).copied()
     }
 
-    pub fn authorities(&self) -> Range<u64> {
-        0u64..(self.stake.len() as u64)
+    pub fn authorities(&self) -> Range<AuthorityIndex> {
+        0u64..(self.stake.len() as AuthorityIndex)
     }
 
     /// Block for for_authority will go first
-    pub fn genesis_blocks(&self, for_authority: AuthorityIndex) -> Vec<StatementBlock> {
+    pub fn genesis_blocks(&self, for_authority: AuthorityIndex) -> Vec<Arc<StatementBlock>> {
         let mut blocks: Vec<_> = self
             .authorities()
             .map(StatementBlock::new_genesis)

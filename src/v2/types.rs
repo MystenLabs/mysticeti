@@ -9,6 +9,7 @@ pub type BlockDigest = u64;
 pub type Stake = u64;
 
 use std::fmt;
+use std::sync::Arc;
 #[cfg(test)]
 pub use test::Dag;
 
@@ -51,8 +52,12 @@ pub struct StatementBlock {
 }
 
 impl StatementBlock {
-    pub fn new_genesis(authority: AuthorityIndex) -> Self {
-        Self::new(BlockReference::genesis_test(authority), vec![], vec![])
+    pub fn new_genesis(authority: AuthorityIndex) -> Arc<Self> {
+        Arc::new(Self::new(
+            BlockReference::genesis_test(authority),
+            vec![],
+            vec![],
+        ))
     }
 
     pub fn new(
@@ -82,6 +87,18 @@ impl StatementBlock {
     pub fn author(&self) -> AuthorityIndex {
         self.reference.authority
     }
+
+    pub fn round(&self) -> RoundNumber {
+        self.reference.round
+    }
+
+    // /// Reference to the parent block made by the same authority
+    // pub fn own_parent(&self) -> Option<BlockReference> {
+    //     self.includes.get(0).map(|r| {
+    //         debug_assert_eq!(r.authority, self.author());
+    //         *r
+    //     })
+    // }
 }
 
 impl BlockReference {
@@ -166,8 +183,9 @@ mod test {
     use rand::prelude::SliceRandom;
     use rand::Rng;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
-    pub struct Dag(HashMap<BlockReference, StatementBlock>);
+    pub struct Dag(HashMap<BlockReference, Arc<StatementBlock>>);
 
     #[cfg(test)]
     impl Dag {
@@ -176,10 +194,10 @@ mod test {
         /// For example B3 is a block for round 3 made by validator index 2
         /// Note that blocks are separated with semicolon(;) and dependencies within block are separated with coma(,)
         pub fn draw(s: &str) -> Self {
-            let mut blocks: HashMap<BlockReference, StatementBlock> = HashMap::new();
+            let mut blocks = HashMap::new();
             for block in s.split(";") {
                 let block = Self::draw_block(block);
-                blocks.insert(*block.reference(), block);
+                blocks.insert(*block.reference(), Arc::new(block));
             }
             Self(blocks)
         }
@@ -227,10 +245,12 @@ mod test {
             for authority in self.authorities() {
                 let reference = BlockReference::genesis_test(authority);
                 let entry = self.0.entry(reference);
-                entry.or_insert_with(|| StatementBlock {
-                    reference,
-                    includes: vec![],
-                    statements: vec![],
+                entry.or_insert_with(|| {
+                    Arc::new(StatementBlock {
+                        reference,
+                        includes: vec![],
+                        statements: vec![],
+                    })
                 });
             }
             self
@@ -261,7 +281,7 @@ mod test {
     pub struct RandomDagIter<'a>(&'a Dag, std::vec::IntoIter<BlockReference>);
 
     impl<'a> Iterator for RandomDagIter<'a> {
-        type Item = &'a StatementBlock;
+        type Item = &'a Arc<StatementBlock>;
 
         fn next(&mut self) -> Option<Self::Item> {
             let next = self.1.next()?;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// returning newly connected blocks
 #[derive(Default)]
 pub struct BlockManager {
-    blocks_pending: HashMap<BlockReference, StatementBlock>,
+    blocks_pending: HashMap<BlockReference, Arc<StatementBlock>>,
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
     blocks_processed: HashMap<BlockReference, Arc<StatementBlock>>,
     // Maintain an index of blocks by round as well.
@@ -18,8 +18,8 @@ pub struct BlockManager {
 
 impl BlockManager {
     #[allow(dead_code)]
-    pub fn add_blocks(&mut self, blocks: Vec<StatementBlock>) -> Vec<Arc<StatementBlock>> {
-        let mut blocks: VecDeque<StatementBlock> = blocks.into();
+    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) -> Vec<Arc<StatementBlock>> {
+        let mut blocks: VecDeque<Arc<StatementBlock>> = blocks.into();
         let mut newly_blocks_processed: Vec<Arc<StatementBlock>> = vec![];
         while let Some(block) = blocks.pop_front() {
             let block_reference = block.reference();
@@ -48,15 +48,14 @@ impl BlockManager {
                 let block_reference = block_reference.clone();
 
                 // Block can be processed. So need to update indexes etc
-                let block = Arc::new(block);
                 newly_blocks_processed.push(block.clone());
-                self.blocks_processed.insert(block_reference.clone(), block);
+                self.blocks_processed.insert(block_reference, block);
 
                 // Update the index of blocks by round
                 self.blocks_processed_by_round
                     .entry(block_reference.round)
                     .or_default()
-                    .push(block_reference.clone());
+                    .push(block_reference);
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -97,6 +96,14 @@ impl BlockManager {
 
     pub fn get_processed_block(&self, reference: &BlockReference) -> Option<&Arc<StatementBlock>> {
         self.blocks_processed.get(reference)
+    }
+
+    pub fn processed_block_exists(&self, authority: AuthorityIndex, round: RoundNumber) -> bool {
+        if let Some(r) = self.blocks_processed_by_round.get(&round) {
+            r.iter().any(|r| r.authority == authority)
+        } else {
+            false
+        }
     }
 
     /// Apply the consensus decision rule for a given leader round and decision round.

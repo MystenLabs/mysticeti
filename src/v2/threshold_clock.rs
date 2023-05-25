@@ -51,6 +51,7 @@ impl ThresholdClockAggregator {
             // If we processed block for round r, we also have stored 2f+1 blocks from r-1
             Ordering::Greater => {
                 self.aggregator.clear();
+                self.aggregator.add(block.authority, committee);
                 self.round = block.round;
             }
             Ordering::Equal => {

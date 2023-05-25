@@ -46,14 +46,14 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<StatementBlock>) {
+    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) {
         let processed = self.block_manager.add_blocks(blocks);
         let statements = self.block_handler.handle_blocks(&processed);
         for processed in processed {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
-                .push_back(MetaStatement::Include(processed.reference().clone()));
+                .push_back(MetaStatement::Include(*processed.reference()));
         }
         self.pending.push_back(MetaStatement::Payload(statements));
     }
@@ -141,7 +141,7 @@ impl<H: BlockHandler> Core<H> {
         let quorum_round = self.threshold_clock.get_round();
         if quorum_round > self.last_commit_round.max(period - 1) && quorum_round % period == 0 {
             // Get the authority that is the leader at this round
-            let target_authority = self.leader_at_round(quorum_round, period).unwrap();
+            let target_authority = self.leader_at_round(quorum_round, period);
 
             println!("Committing round {}", quorum_round);
             let support = self.block_manager.get_decision_round_certificates(
@@ -188,20 +188,54 @@ impl<H: BlockHandler> Core<H> {
         return None;
     }
 
-    pub fn leader_at_round(&self, round: RoundNumber, period: u64) -> Option<AuthorityIndex> {
-        // We only have leaders for round numbers that are multiples of the period
-        if round == 0 || round % period != 0 {
-            return None;
+    /// This only checks readiness in terms of helping liveness for commit rule,
+    /// try_new_block might still return None if threshold clock is not ready
+    ///
+    /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
+    pub fn ready_new_block(&self, period: u64) -> bool {
+        let quorum_round = self.threshold_clock.get_round();
+        if quorum_round % period != 0 {
+            // Non leader round we are ready to emit block asap
+            true
+        } else {
+            // Leader round we check if we have a leader block
+            if quorum_round > self.last_commit_round.max(period - 1) {
+                let leader = self.leader_at_round(quorum_round, period);
+                self.block_manager
+                    .processed_block_exists(leader, quorum_round)
+            } else {
+                false
+            }
         }
+    }
 
-        Some(self.committee.pick_authority(round / period))
+    pub fn last_proposed(&self) -> RoundNumber {
+        self.last_proposed
+    }
+
+    pub fn authority(&self) -> AuthorityIndex {
+        self.authority
+    }
+
+    pub fn block_handler(&self) -> &H {
+        &self.block_handler
+    }
+
+    pub fn committee(&self) -> &Arc<Committee> {
+        &self.committee
+    }
+
+    fn leader_at_round(&self, round: RoundNumber, period: u64) -> AuthorityIndex {
+        assert!(round == 0 || round % period == 0);
+
+        self.committee.pick_authority(round / period)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::v2::block_handler::TestBlockHandler;
+    use crate::v2::test_util::committee_and_cores;
     use crate::v2::threshold_clock;
     use rand::prelude::StdRng;
     use rand::{Rng, SeedableRng};
@@ -221,7 +255,7 @@ mod test {
             assert_eq!(block.reference().round, 1);
             proposed_transactions.push(core.block_handler.last_transaction);
             eprintln!("{}: {}", core.authority, block);
-            blocks.push(StatementBlock::clone(&block));
+            blocks.push(block.clone());
         }
         assert_eq!(proposed_transactions.len(), 4);
         let more_blocks = blocks.split_off(2);
@@ -238,7 +272,7 @@ mod test {
                 .expect("Must be able to create block after full round");
             eprintln!("{}: {}", core.authority, block);
             assert_eq!(block.reference().round, 2);
-            blocks_r2.push(StatementBlock::clone(&block));
+            blocks_r2.push(block.clone());
         }
 
         for core in &mut cores {
@@ -268,20 +302,18 @@ mod test {
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();
             for core in &mut cores {
-                core.add_blocks(committee.genesis_blocks(core.authority));
                 let block = core
                     .try_new_block()
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
                 proposed_transactions.push(core.block_handler.last_transaction);
                 eprintln!("{}: {}", core.authority, block);
-                let block = StatementBlock::clone(&block);
                 assert!(
                     threshold_clock::threshold_clock_valid(&block, &committee),
                     "Invalid clock {}",
                     block
                 );
-                push_all(&mut pending, core.authority, block);
+                push_all(&mut pending, core.authority, &block);
             }
             // Each iteration we pick one authority and deliver to it 1..3 random blocks
             // First 20 iterations we record all transactions created by authorities
@@ -312,14 +344,13 @@ mod test {
                     eprintln!("No new block");
                     continue;
                 };
-                let block = StatementBlock::clone(&block);
                 assert!(
                     threshold_clock::threshold_clock_valid(&block, &committee),
                     "Invalid clock {}",
                     block
                 );
                 eprintln!("Created {block}");
-                push_all(&mut pending, core.authority, block);
+                push_all(&mut pending, core.authority, &block);
                 if i < 20 {
                     // First 20 iterations we record proposed transactions
                     proposed_transactions.push(core.block_handler.last_transaction);
@@ -344,25 +375,15 @@ mod test {
         }
     }
 
-    fn push_all(p: &mut Vec<Vec<StatementBlock>>, except: AuthorityIndex, block: StatementBlock) {
+    fn push_all(
+        p: &mut Vec<Vec<Arc<StatementBlock>>>,
+        except: AuthorityIndex,
+        block: &Arc<StatementBlock>,
+    ) {
         for (i, q) in p.iter_mut().enumerate() {
             if i as AuthorityIndex != except {
                 q.push(block.clone());
             }
         }
-    }
-
-    fn committee_and_cores() -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
-        let committee = Committee::new(vec![1, 1, 1, 1]);
-        let cores: Vec<_> = committee
-            .authorities()
-            .map(|authority| {
-                let last_transaction = authority * 1_000_000;
-                let block_handler =
-                    TestBlockHandler::new(last_transaction, committee.clone(), authority);
-                Core::new(block_handler, authority, committee.clone())
-            })
-            .collect();
-        (committee, cores)
     }
 }

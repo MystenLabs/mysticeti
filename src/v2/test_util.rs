@@ -5,7 +5,7 @@ use crate::v2::block_handler::TestBlockHandler;
 use crate::v2::committee::Committee;
 use crate::v2::core::Core;
 use crate::v2::syncer::Syncer;
-use crate::v2::types::{AuthorityIndex, TransactionId};
+use crate::v2::types::{AuthorityIndex, BlockReference, TransactionId};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::sync::Arc;
@@ -39,13 +39,16 @@ pub fn first_n_transactions(committee: &Committee, n: u64) -> Vec<TransactionId>
     result
 }
 
-pub fn committee_and_syncers() -> (Arc<Committee>, Vec<Syncer<TestBlockHandler, bool>>) {
+pub fn committee_and_syncers() -> (
+    Arc<Committee>,
+    Vec<Syncer<TestBlockHandler, bool, Vec<BlockReference>>>,
+) {
     let (committee, cores) = committee_and_cores();
     (
         committee,
         cores
             .into_iter()
-            .map(|core| Syncer::new(core, 3, Default::default()))
+            .map(|core| Syncer::new(core, 3, Default::default(), Default::default()))
             .collect(),
     )
 }

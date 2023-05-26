@@ -75,6 +75,10 @@ impl Committee {
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {
         rng.gen_range(self.authorities())
     }
+
+    pub fn len(&self) -> usize {
+        self.stake.len()
+    }
 }
 
 pub trait CommitteeThreshold {

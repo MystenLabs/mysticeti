@@ -3,31 +3,37 @@
 
 use crate::v2::block_handler::BlockHandler;
 use crate::v2::core::Core;
-use crate::v2::types::{RoundNumber, StatementBlock};
+use crate::v2::types::{BlockReference, RoundNumber, StatementBlock};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub struct Syncer<H: BlockHandler, S: SyncerSignals> {
+pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
     own_blocks: BTreeMap<RoundNumber, Arc<StatementBlock>>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
+    commit_observer: C,
 }
 
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
 }
 
+pub trait CommitObserver: Send + Sync {
+    fn handle_commit(&mut self, committed_leader: BlockReference);
+}
+
 #[allow(dead_code)]
-impl<H: BlockHandler, S: SyncerSignals> Syncer<H, S> {
-    pub fn new(core: Core<H>, commit_period: u64, signals: S) -> Self {
+impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
+    pub fn new(core: Core<H>, commit_period: u64, signals: S, commit_observer: C) -> Self {
         Self {
             core,
             own_blocks: Default::default(),
             force_new_block: false,
             commit_period,
             signals,
+            commit_observer,
         }
     }
 
@@ -52,6 +58,10 @@ impl<H: BlockHandler, S: SyncerSignals> Syncer<H, S> {
             assert!(self.own_blocks.insert(block.round(), block).is_none());
             self.signals.new_block_ready();
             self.force_new_block = false;
+            if let Some(commit) = self.core.try_commit(3) {
+                // todo - we need to inspect previous leaders too
+                self.commit_observer.handle_commit(commit);
+            }
         }
     }
 
@@ -83,6 +93,12 @@ impl SyncerSignals for bool {
     }
 }
 
+impl CommitObserver for Vec<BlockReference> {
+    fn handle_commit(&mut self, committed_leader: BlockReference) {
+        self.push(committed_leader);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +106,7 @@ mod tests {
     use crate::v2::simulator::{Scheduler, Simulator, SimulatorState};
     use crate::v2::test_util::{committee_and_syncers, first_n_transactions, rng_at_seed};
     use rand::Rng;
+    use std::collections::HashSet;
     use std::ops::Range;
     use std::time::Duration;
 
@@ -101,7 +118,7 @@ mod tests {
         DeliverBlock(Arc<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool> {
+    impl SimulatorState for Syncer<TestBlockHandler, bool, Vec<BlockReference>> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {
@@ -164,8 +181,9 @@ mod tests {
             );
         }
         // Simulation awaits for first 5 transactions proposed by each authority to certify
-        let await_transactions = first_n_transactions(&committee, 5);
-        assert_eq!(await_transactions.len(), 20); // 4 authorities 5 transactions each
+        let num_txn = 20;
+        let await_transactions = first_n_transactions(&committee, num_txn);
+        assert_eq!(await_transactions.len(), num_txn as usize * committee.len());
 
         let mut iteration = 0u64;
         loop {
@@ -197,10 +215,41 @@ mod tests {
                     .max()
                     .unwrap();
                 eprintln!("Certified {} transactions in {time:.2?}, {rounds} rounds, {iteration} iterations", await_transactions.len());
+                let mut commits: HashSet<_> = simulator
+                    .states()
+                    .iter()
+                    .map(|state| &state.commit_observer)
+                    .collect();
+                let zero_commit = vec![];
+                let mut max_commit = &zero_commit;
+                for commit in commits {
+                    if commit.len() >= max_commit.len() {
+                        if is_prefix(&max_commit, &commit) {
+                            max_commit = commit;
+                        } else {
+                            panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
+                        }
+                    } else {
+                        if !is_prefix(&commit, &max_commit) {
+                            panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
+                        }
+                    }
+                }
+                eprintln!("Max commit sequence: {max_commit:?}");
                 break;
             } /*else if iteration % 100 == 0 {
                   eprintln!("Not certified: {not_certified:?}");
               }*/
         }
+    }
+
+    fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {
+        assert!(short.len() <= long.len());
+        for (a, b) in short.iter().zip(long.iter().take(short.len())) {
+            if a != b {
+                return false;
+            }
+        }
+        return true;
     }
 }

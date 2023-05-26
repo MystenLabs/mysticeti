@@ -104,7 +104,7 @@ mod tests {
     impl SimulatorState for Syncer<TestBlockHandler, bool> {
         type Event = SyncerEvent;
 
-        fn handle_event(&mut self, mut scheduler: Scheduler<Self::Event>, event: Self::Event) {
+        fn handle_event(&mut self, event: Self::Event) {
             match event {
                 SyncerEvent::ForceNewBlock(round) => {
                     if self.force_new_block(round) {
@@ -121,7 +121,7 @@ mod tests {
             if self.signals {
                 self.signals = false;
                 let last_block = self.last_own_block().unwrap();
-                scheduler.schedule_event(
+                Scheduler::schedule_event(
                     ROUND_TIMEOUT,
                     self.scheduler_state_id(),
                     SyncerEvent::ForceNewBlock(last_block.round()),
@@ -130,8 +130,9 @@ mod tests {
                     if authority == self.core.authority() {
                         continue;
                     }
-                    let latency = scheduler.rng().gen_range(LATENCY_RANGE);
-                    scheduler.schedule_event(
+                    let latency =
+                        Scheduler::<SyncerEvent>::with_rng(|rng| rng.gen_range(LATENCY_RANGE));
+                    Scheduler::schedule_event(
                         latency,
                         authority as usize,
                         SyncerEvent::DeliverBlock(last_block.clone()),

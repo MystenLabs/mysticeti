@@ -111,7 +111,6 @@ impl BlockReference {
         }
     }
 
-    #[cfg(test)]
     pub fn genesis_test(authority: AuthorityIndex) -> Self {
         Self {
             authority,

@@ -111,7 +111,7 @@ mod tests {
     use std::time::Duration;
 
     const ROUND_TIMEOUT: Duration = Duration::from_millis(1000);
-    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(1200);
+    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(200);
 
     pub enum SyncerEvent {
         ForceNewBlock(RoundNumber),

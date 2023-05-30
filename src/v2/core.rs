@@ -200,9 +200,10 @@ impl<H: BlockHandler> Core<H> {
         } else {
             // Leader round we check if we have a leader block
             if quorum_round > self.last_commit_round.max(period - 1) {
-                let leader = self.leader_at_round(quorum_round, period);
+                let leader_round = quorum_round - period;
+                let leader = self.leader_at_round(leader_round, period);
                 self.block_manager
-                    .processed_block_exists(leader, quorum_round)
+                    .processed_block_exists(leader, leader_round)
             } else {
                 false
             }

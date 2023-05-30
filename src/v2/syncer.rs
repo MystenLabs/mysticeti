@@ -194,7 +194,7 @@ mod tests {
     pub fn test_syncer_at(seed: u64) {
         eprintln!("Seed {seed}");
         let rng = rng_at_seed(seed);
-        let (committee, syncers) = committee_and_syncers();
+        let (committee, syncers) = committee_and_syncers(4);
         let mut simulator = Simulator::new(syncers, rng);
 
         // Kick off process by asking validators create a block after genesis

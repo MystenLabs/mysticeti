@@ -14,8 +14,8 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 
-pub fn committee_and_cores() -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
-    let committee = Committee::new(vec![1, 1, 1, 1]);
+pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
+    let committee = Committee::new(vec![1; n]);
     let cores: Vec<_> = committee
         .authorities()
         .map(|authority| {
@@ -43,11 +43,13 @@ pub fn first_n_transactions(committee: &Committee, n: u64) -> Vec<TransactionId>
     result
 }
 
-pub fn committee_and_syncers() -> (
+pub fn committee_and_syncers(
+    n: usize,
+) -> (
     Arc<Committee>,
     Vec<Syncer<TestBlockHandler, bool, Vec<BlockReference>>>,
 ) {
-    let (committee, cores) = committee_and_cores();
+    let (committee, cores) = committee_and_cores(n);
     (
         committee,
         cores
@@ -70,8 +72,10 @@ pub async fn networks_and_addresses(n: usize) -> (Vec<Network>, Vec<SocketAddr>)
     (networks, addresses)
 }
 
-pub async fn network_syncers() -> Vec<NetworkSyncer<TestBlockHandler, Vec<BlockReference>>> {
-    let (_committee, cores) = committee_and_cores();
+pub async fn network_syncers(
+    n: usize,
+) -> Vec<NetworkSyncer<TestBlockHandler, Vec<BlockReference>>> {
+    let (_committee, cores) = committee_and_cores(n);
     let (networks, _) = networks_and_addresses(cores.len()).await;
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {

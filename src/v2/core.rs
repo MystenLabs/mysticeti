@@ -246,7 +246,7 @@ mod test {
 
     #[test]
     fn test_core_simple_exchange() {
-        let (committee, mut cores) = committee_and_cores();
+        let (committee, mut cores) = committee_and_cores(4);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -300,7 +300,7 @@ mod test {
     fn test_randomized_simple_exchange() {
         'l: for seed in 0..100 {
             let mut rng = StdRng::from_seed([seed; 32]);
-            let (committee, mut cores) = committee_and_cores();
+            let (committee, mut cores) = committee_and_cores(4);
 
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();

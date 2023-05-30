@@ -8,19 +8,20 @@ pub type RoundNumber = u64;
 pub type BlockDigest = u64;
 pub type Stake = u64;
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 #[cfg(test)]
 pub use test::Dag;
 
 #[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
     Accept,
     Reject(Option<TransactionId>),
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
     pub round: RoundNumber,
@@ -28,7 +29,7 @@ pub struct BlockReference {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
     Share(TransactionId, Transaction),
@@ -36,7 +37,7 @@ pub enum BaseStatement {
     Vote(TransactionId, Vote),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementBlock {
     // todo - derive digest instead of storing
     reference: BlockReference,

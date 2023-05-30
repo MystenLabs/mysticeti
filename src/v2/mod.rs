@@ -5,6 +5,8 @@ mod block_handler;
 mod block_manager;
 mod committee;
 mod core;
+mod net_sync;
+mod network;
 #[cfg(test)]
 mod simulator;
 mod syncer;

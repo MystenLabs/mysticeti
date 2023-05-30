@@ -3,13 +3,14 @@
 
 use crate::v2::block_handler::BlockHandler;
 use crate::v2::core::Core;
-use crate::v2::types::{BlockReference, RoundNumber, StatementBlock};
+use crate::v2::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
     own_blocks: BTreeMap<RoundNumber, Arc<StatementBlock>>,
+    last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
@@ -27,6 +28,7 @@ pub trait CommitObserver: Send + Sync {
 #[allow(dead_code)]
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     pub fn new(core: Core<H>, commit_period: u64, signals: S, commit_observer: C) -> Self {
+        let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
             own_blocks: Default::default(),
@@ -34,11 +36,21 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             commit_period,
             signals,
             commit_observer,
+            last_seen_by_authority,
         }
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) {
-        self.core.add_blocks(blocks);
+        let processed = self.core.add_blocks(blocks);
+        for block in processed {
+            let last_seen = self
+                .last_seen_by_authority
+                .get_mut(block.author() as usize)
+                .expect("last_seen_by_authority not found");
+            if block.round() > *last_seen {
+                *last_seen = block.round();
+            }
+        }
         self.try_new_block();
     }
 
@@ -77,8 +89,19 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .collect()
     }
 
-    fn last_own_block(&self) -> Option<Arc<StatementBlock>> {
+    pub fn last_own_block(&self) -> Option<Arc<StatementBlock>> {
         self.own_blocks.values().last().cloned()
+    }
+
+    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
+        *self
+            .last_seen_by_authority
+            .get(authority as usize)
+            .expect("last_seen_by_authority not found")
+    }
+
+    pub fn commit_observer(&self) -> &C {
+        &self.commit_observer
     }
 
     #[cfg(test)]
@@ -104,9 +127,10 @@ mod tests {
     use super::*;
     use crate::v2::block_handler::TestBlockHandler;
     use crate::v2::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::v2::test_util::{committee_and_syncers, first_n_transactions, rng_at_seed};
+    use crate::v2::test_util::{
+        check_commits, committee_and_syncers, first_n_transactions, rng_at_seed,
+    };
     use rand::Rng;
-    use std::collections::HashSet;
     use std::ops::Range;
     use std::time::Duration;
 
@@ -215,41 +239,11 @@ mod tests {
                     .max()
                     .unwrap();
                 eprintln!("Certified {} transactions in {time:.2?}, {rounds} rounds, {iteration} iterations", await_transactions.len());
-                let mut commits: HashSet<_> = simulator
-                    .states()
-                    .iter()
-                    .map(|state| &state.commit_observer)
-                    .collect();
-                let zero_commit = vec![];
-                let mut max_commit = &zero_commit;
-                for commit in commits {
-                    if commit.len() >= max_commit.len() {
-                        if is_prefix(&max_commit, &commit) {
-                            max_commit = commit;
-                        } else {
-                            panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
-                        }
-                    } else {
-                        if !is_prefix(&commit, &max_commit) {
-                            panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
-                        }
-                    }
-                }
-                eprintln!("Max commit sequence: {max_commit:?}");
+                check_commits(simulator.states());
                 break;
             } /*else if iteration % 100 == 0 {
                   eprintln!("Not certified: {not_certified:?}");
               }*/
         }
-    }
-
-    fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {
-        assert!(short.len() <= long.len());
-        for (a, b) in short.iter().zip(long.iter().take(short.len())) {
-            if a != b {
-                return false;
-            }
-        }
-        return true;
     }
 }

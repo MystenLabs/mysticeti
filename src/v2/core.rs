@@ -46,16 +46,17 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) {
+    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) -> Vec<Arc<StatementBlock>> {
         let processed = self.block_manager.add_blocks(blocks);
         let statements = self.block_handler.handle_blocks(&processed);
-        for processed in processed {
+        for processed in &processed {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
                 .push_back(MetaStatement::Include(*processed.reference()));
         }
         self.pending.push_back(MetaStatement::Payload(statements));
+        processed
     }
 
     pub fn try_new_block(&mut self) -> Option<Arc<StatementBlock>> {

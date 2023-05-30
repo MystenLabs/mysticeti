@@ -154,7 +154,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 _notified = notified => {
                     // restart loop
                 }
-                stopped = inner.stopped() => {
+                _stopped = inner.stopped() => {
                     return None;
                 }
             }

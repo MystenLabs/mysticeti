@@ -1,6 +1,7 @@
 use crate::v2::block_handler::BlockHandler;
 use crate::v2::block_manager::BlockManager;
 use crate::v2::committee::Committee;
+use crate::v2::data::Data;
 use crate::v2::threshold_clock::ThresholdClockAggregator;
 use crate::v2::types::{
     AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock,
@@ -46,7 +47,7 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) -> Vec<Arc<StatementBlock>> {
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
         let processed = self.block_manager.add_blocks(blocks);
         let statements = self.block_handler.handle_blocks(&processed);
         for processed in &processed {
@@ -59,7 +60,7 @@ impl<H: BlockHandler> Core<H> {
         processed
     }
 
-    pub fn try_new_block(&mut self) -> Option<Arc<StatementBlock>> {
+    pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
         let clock_round = self.threshold_clock.get_round();
         if clock_round <= self.last_proposed {
             return None;
@@ -378,9 +379,9 @@ mod test {
     }
 
     fn push_all(
-        p: &mut Vec<Vec<Arc<StatementBlock>>>,
+        p: &mut Vec<Vec<Data<StatementBlock>>>,
         except: AuthorityIndex,
-        block: &Arc<StatementBlock>,
+        block: &Data<StatementBlock>,
     ) {
         for (i, q) in p.iter_mut().enumerate() {
             if i as AuthorityIndex != except {

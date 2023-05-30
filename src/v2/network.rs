@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::v2::data::Data;
 use crate::v2::types::{RoundNumber, StatementBlock};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
@@ -8,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, io};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 #[derive(Serialize, Deserialize)]
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
-    Block(Arc<StatementBlock>),
+    Block(Data<StatementBlock>),
 }
 
 pub struct Network {

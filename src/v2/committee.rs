@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::v2::data::Data;
 use crate::v2::types::{AuthorityIndex, Stake, StatementBlock};
 use rand::Rng;
 use std::borrow::Borrow;
@@ -42,7 +43,7 @@ impl Committee {
     }
 
     /// Block for for_authority will go first
-    pub fn genesis_blocks(&self, for_authority: AuthorityIndex) -> Vec<Arc<StatementBlock>> {
+    pub fn genesis_blocks(&self, for_authority: AuthorityIndex) -> Vec<Data<StatementBlock>> {
         let mut blocks: Vec<_> = self
             .authorities()
             .map(StatementBlock::new_genesis)

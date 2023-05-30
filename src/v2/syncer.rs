@@ -3,13 +3,13 @@
 
 use crate::v2::block_handler::BlockHandler;
 use crate::v2::core::Core;
+use crate::v2::data::Data;
 use crate::v2::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
-    own_blocks: BTreeMap<RoundNumber, Arc<StatementBlock>>,
+    own_blocks: BTreeMap<RoundNumber, Data<StatementBlock>>,
     last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
@@ -40,7 +40,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) {
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
         let processed = self.core.add_blocks(blocks);
         for block in processed {
             let last_seen = self
@@ -81,7 +81,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         &self,
         from_excluded: RoundNumber,
         limit: usize,
-    ) -> Vec<Arc<StatementBlock>> {
+    ) -> Vec<Data<StatementBlock>> {
         self.own_blocks
             .range((from_excluded + 1)..)
             .take(limit)
@@ -89,7 +89,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .collect()
     }
 
-    pub fn last_own_block(&self) -> Option<Arc<StatementBlock>> {
+    pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
         self.own_blocks.values().last().cloned()
     }
 
@@ -126,6 +126,7 @@ impl CommitObserver for Vec<BlockReference> {
 mod tests {
     use super::*;
     use crate::v2::block_handler::TestBlockHandler;
+    use crate::v2::data::Data;
     use crate::v2::simulator::{Scheduler, Simulator, SimulatorState};
     use crate::v2::test_util::{
         check_commits, committee_and_syncers, first_n_transactions, rng_at_seed,
@@ -139,7 +140,7 @@ mod tests {
 
     pub enum SyncerEvent {
         ForceNewBlock(RoundNumber),
-        DeliverBlock(Arc<StatementBlock>),
+        DeliverBlock(Data<StatementBlock>),
     }
 
     impl SimulatorState for Syncer<TestBlockHandler, bool, Vec<BlockReference>> {

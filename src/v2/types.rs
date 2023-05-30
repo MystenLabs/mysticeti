@@ -8,9 +8,9 @@ pub type RoundNumber = u64;
 pub type BlockDigest = u64;
 pub type Stake = u64;
 
+use crate::v2::data::Data;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::sync::Arc;
 #[cfg(test)]
 pub use test::Dag;
 
@@ -53,8 +53,8 @@ pub struct StatementBlock {
 }
 
 impl StatementBlock {
-    pub fn new_genesis(authority: AuthorityIndex) -> Arc<Self> {
-        Arc::new(Self::new(
+    pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
+        Data::new(Self::new(
             BlockReference::genesis_test(authority),
             vec![],
             vec![],
@@ -183,9 +183,8 @@ mod test {
     use rand::prelude::SliceRandom;
     use rand::Rng;
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
 
-    pub struct Dag(HashMap<BlockReference, Arc<StatementBlock>>);
+    pub struct Dag(HashMap<BlockReference, Data<StatementBlock>>);
 
     #[cfg(test)]
     impl Dag {
@@ -197,7 +196,7 @@ mod test {
             let mut blocks = HashMap::new();
             for block in s.split(";") {
                 let block = Self::draw_block(block);
-                blocks.insert(*block.reference(), Arc::new(block));
+                blocks.insert(*block.reference(), Data::new(block));
             }
             Self(blocks)
         }
@@ -246,7 +245,7 @@ mod test {
                 let reference = BlockReference::genesis_test(authority);
                 let entry = self.0.entry(reference);
                 entry.or_insert_with(|| {
-                    Arc::new(StatementBlock {
+                    Data::new(StatementBlock {
                         reference,
                         includes: vec![],
                         statements: vec![],
@@ -281,7 +280,7 @@ mod test {
     pub struct RandomDagIter<'a>(&'a Dag, std::vec::IntoIter<BlockReference>);
 
     impl<'a> Iterator for RandomDagIter<'a> {
-        type Item = &'a Arc<StatementBlock>;
+        type Item = &'a Data<StatementBlock>;
 
         fn next(&mut self) -> Option<Self::Item> {
             let next = self.1.next()?;

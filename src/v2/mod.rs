@@ -5,6 +5,7 @@ mod block_handler;
 mod block_manager;
 mod committee;
 mod core;
+mod data;
 mod net_sync;
 mod network;
 #[cfg(test)]

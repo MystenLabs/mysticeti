@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::v2::committee::{Committee, QuorumThreshold, StakeAggregator};
+use crate::v2::data::Data;
 use crate::v2::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId, Vote};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub trait BlockHandler: Send + Sync {
-    fn handle_blocks(&mut self, blocks: &Vec<Arc<StatementBlock>>) -> Vec<BaseStatement>;
+    fn handle_blocks(&mut self, blocks: &Vec<Data<StatementBlock>>) -> Vec<BaseStatement>;
 }
 
 // Immediately votes and generates new transactions
@@ -41,7 +42,7 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
-    fn handle_blocks(&mut self, blocks: &Vec<Arc<StatementBlock>>) -> Vec<BaseStatement> {
+    fn handle_blocks(&mut self, blocks: &Vec<Data<StatementBlock>>) -> Vec<BaseStatement> {
         let mut response = vec![];
         self.last_transaction += 1;
         response.push(BaseStatement::Share(

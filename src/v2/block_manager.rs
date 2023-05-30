@@ -1,26 +1,26 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::v2::data::Data;
 use crate::v2::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
 #[derive(Default)]
 pub struct BlockManager {
-    blocks_pending: HashMap<BlockReference, Arc<StatementBlock>>,
+    blocks_pending: HashMap<BlockReference, Data<StatementBlock>>,
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
-    blocks_processed: HashMap<BlockReference, Arc<StatementBlock>>,
+    blocks_processed: HashMap<BlockReference, Data<StatementBlock>>,
     // Maintain an index of blocks by round as well.
     blocks_processed_by_round: HashMap<RoundNumber, Vec<BlockReference>>,
 }
 
 impl BlockManager {
     #[allow(dead_code)]
-    pub fn add_blocks(&mut self, blocks: Vec<Arc<StatementBlock>>) -> Vec<Arc<StatementBlock>> {
-        let mut blocks: VecDeque<Arc<StatementBlock>> = blocks.into();
-        let mut newly_blocks_processed: Vec<Arc<StatementBlock>> = vec![];
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+        let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
+        let mut newly_blocks_processed: Vec<Data<StatementBlock>> = vec![];
         while let Some(block) = blocks.pop_front() {
             let block_reference = block.reference();
 
@@ -83,9 +83,9 @@ impl BlockManager {
         newly_blocks_processed
     }
 
-    pub fn add_own_block(&mut self, block: StatementBlock) -> Arc<StatementBlock> {
+    pub fn add_own_block(&mut self, block: StatementBlock) -> Data<StatementBlock> {
         let block_ref = *block.reference();
-        let block = Arc::new(block);
+        let block = Data::new(block);
         self.blocks_processed.insert(block_ref, block.clone());
         self.blocks_processed_by_round
             .entry(block_ref.round)
@@ -94,7 +94,7 @@ impl BlockManager {
         block
     }
 
-    pub fn get_processed_block(&self, reference: &BlockReference) -> Option<&Arc<StatementBlock>> {
+    pub fn get_processed_block(&self, reference: &BlockReference) -> Option<&Data<StatementBlock>> {
         self.blocks_processed.get(reference)
     }
 

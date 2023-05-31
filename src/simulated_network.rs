@@ -16,7 +16,7 @@ pub struct SimulatedNetwork {
 }
 
 impl SimulatedNetwork {
-    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(10)..Duration::from_millis(20);
+    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(200);
 
     pub fn new(committee: &Committee) -> (SimulatedNetwork, Vec<Network>) {
         let (networks, senders): (Vec<_>, Vec<_>) = committee
@@ -36,6 +36,17 @@ impl SimulatedNetwork {
         for a in 0..self.senders.len() {
             for b in a + 1..self.senders.len() {
                 self.connect(a, b).await
+            }
+        }
+    }
+
+    /// Connects some peers, for which given should_connect function returns true
+    pub async fn connect_some<F: Fn(usize, usize) -> bool>(&self, should_connect: F) {
+        for a in 0..self.senders.len() {
+            for b in a + 1..self.senders.len() {
+                if should_connect(a, b) {
+                    self.connect(a, b).await
+                }
             }
         }
     }

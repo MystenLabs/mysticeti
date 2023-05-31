@@ -238,4 +238,26 @@ mod sim_tests {
 
         check_commits(&syncers);
     }
+
+    #[test]
+    fn test_network_sync_sim_one_down() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_one_down_async());
+    }
+
+    // All peers except for peer A are connected in this test
+    // Peer A is disconnected from everything
+    async fn test_network_sync_sim_one_down_async() {
+        let (simulated_network, network_syncers) = simulated_network_syncers(10);
+        simulated_network.connect_some(|a, _b| a != 0).await;
+        println!("Started");
+        runtime::sleep(Duration::from_secs(10)).await;
+        println!("Done");
+        let mut syncers = vec![];
+        for network_syncer in network_syncers {
+            let syncer = network_syncer.shutdown().await;
+            syncers.push(syncer);
+        }
+
+        check_commits(&syncers);
+    }
 }

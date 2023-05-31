@@ -1,6 +1,9 @@
 use crate::v2::block_handler::BlockHandler;
 use crate::v2::core::Core;
 use crate::v2::network::{Connection, Network, NetworkMessage};
+use crate::v2::runtime;
+use crate::v2::runtime::Handle;
+use crate::v2::runtime::JoinHandle;
 use crate::v2::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::v2::types::{AuthorityIndex, RoundNumber};
 use futures::future::join_all;
@@ -8,10 +11,8 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
 use tokio::select;
 use tokio::sync::{mpsc, Notify};
-use tokio::task::JoinHandle;
 
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
@@ -96,7 +97,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
-                    eprintln!("sub({round})");
+                    eprintln!("{}: sub({round})", inner.syncer.read().core().authority());
                     if let Some(send_blocks_handler) = subscribe_handler.take() {
                         send_blocks_handler.abort();
                         send_blocks_handler.await.ok();
@@ -108,7 +109,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     )));
                 }
                 NetworkMessage::Block(block) => {
-                    eprintln!("block({block})");
+                    eprintln!("{}: block({block})", inner.syncer.read().core().authority());
                     inner.syncer.write().add_blocks(vec![block]);
                 }
             }
@@ -147,8 +148,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .map(|b| b.round())
                 .unwrap_or_default();
             select! {
-                _sleep = tokio::time::sleep(leader_timeout) => {
-                    println!("Timeout");
+                _sleep = runtime::sleep(leader_timeout) => {
+                    println!("Timeout {round}");
+                    // todo - more then one round timeout can happen, need to fix this
                     inner.syncer.write().force_new_block(round);
                 }
                 _notified = notified => {
@@ -190,7 +192,11 @@ impl SyncerSignals for Arc<Notify> {
 
 #[cfg(test)]
 mod tests {
-    use crate::v2::test_util::{check_commits, network_syncers};
+    use crate::v2::future_simulator::SimulatedExecutorState;
+    use crate::v2::runtime;
+    use crate::v2::test_util::{
+        check_commits, network_syncers, rng_at_seed, simulated_network_syncers,
+    };
     use std::time::Duration;
 
     #[tokio::test]
@@ -198,6 +204,28 @@ mod tests {
         let network_syncers = network_syncers(4).await;
         println!("Started");
         tokio::time::sleep(Duration::from_secs(3)).await;
+        println!("Done");
+        let mut syncers = vec![];
+        for network_syncer in network_syncers {
+            let syncer = network_syncer.shutdown().await;
+            syncers.push(syncer);
+        }
+
+        check_commits(&syncers);
+    }
+
+    #[test]
+    #[cfg(feature = "simulator")]
+    fn test_network_sync_sim() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_async());
+    }
+
+    #[cfg(feature = "simulator")]
+    async fn test_network_sync_sim_async() {
+        let (simulated_network, network_syncers) = simulated_network_syncers(4);
+        simulated_network.connect_all().await;
+        println!("Started");
+        runtime::sleep(Duration::from_secs(5)).await;
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {

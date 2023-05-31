@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rand::prelude::StdRng;
+use rand::SeedableRng;
 use std::any::Any;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::time::Duration;
 
-pub struct Simulator<S: SimulatorState> {
+pub struct Simulator<S: SimulatorState>
+where
+    S::Event: 'static,
+{
     states: Vec<S>,
     time: Duration,
     events: BinaryHeap<ScheduledEvent<S::Event>>,
@@ -61,6 +65,10 @@ where
         &self.states
     }
 
+    pub fn states_mut(&mut self) -> &mut [S] {
+        &mut self.states
+    }
+
     pub fn time(&self) -> Duration {
         self.time
     }
@@ -74,23 +82,26 @@ where
         self.events.extend(events);
     }
 }
+
 thread_local! {
     static SCHEDULER: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
 }
 
 impl<E: 'static> Scheduler<E> {
-    pub fn schedule_event(after: Duration, state: usize, event: E) {
+    pub fn schedule_event(after: Duration, state: usize, event: E) -> Duration {
         Self::with(|scheduler| {
-            scheduler.events.push(ScheduledEvent {
-                time: scheduler.time + after,
-                state,
-                event,
-            });
-        });
+            let time = scheduler.time + after;
+            scheduler.events.push(ScheduledEvent { time, state, event });
+            time
+        })
     }
 
     pub fn with_rng<R, F: FnOnce(&mut StdRng) -> R>(f: F) -> R {
         Self::with(|scheduler| f(&mut scheduler.rng))
+    }
+
+    pub fn time() -> Duration {
+        Self::with(|scheduler| scheduler.time)
     }
 
     fn with<R, F: FnOnce(&mut Self) -> R>(f: F) -> R {
@@ -125,6 +136,19 @@ impl<E: 'static> Scheduler<E> {
     }
 }
 
+impl<S: SimulatorState> Drop for Simulator<S>
+where
+    S::Event: 'static,
+{
+    /// Drop simulator states in the context of the scheduler
+    /// This is mostly needed for future_simulator because some futures trigger waker while dropping
+    fn drop(&mut self) {
+        Scheduler::<S::Event>::enter(self.time, self.rng.take().unwrap());
+        self.states.clear();
+        Scheduler::<S::Event>::exit(); // all scheduled events are ignored
+    }
+}
+
 struct ScheduledEvent<E> {
     time: Duration,
     state: usize,
@@ -156,7 +180,6 @@ impl<E> Eq for ScheduledEvent<E> {}
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::SeedableRng;
 
     impl SimulatorState for u64 {
         type Event = u64;

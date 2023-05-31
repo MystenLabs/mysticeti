@@ -6,6 +6,7 @@ use crate::v2::committee::Committee;
 use crate::v2::core::Core;
 use crate::v2::net_sync::NetworkSyncer;
 use crate::v2::network::Network;
+use crate::v2::simulated_network::SimulatedNetwork;
 use crate::v2::syncer::{Syncer, SyncerSignals};
 use crate::v2::types::{AuthorityIndex, BlockReference, TransactionId};
 use futures::future::join_all;
@@ -70,6 +71,22 @@ pub async fn networks_and_addresses(n: usize) -> (Vec<Network>, Vec<SocketAddr>)
         .map(|(i, address)| Network::from_socket_addresses(&addresses, i, *address));
     let networks = join_all(networks).await;
     (networks, addresses)
+}
+
+pub fn simulated_network_syncers(
+    n: usize,
+) -> (
+    SimulatedNetwork,
+    Vec<NetworkSyncer<TestBlockHandler, Vec<BlockReference>>>,
+) {
+    let (committee, cores) = committee_and_cores(n);
+    let (simulated_network, networks) = SimulatedNetwork::new(&committee);
+    let mut network_syncers = vec![];
+    for (network, core) in networks.into_iter().zip(cores.into_iter()) {
+        let network_syncer = NetworkSyncer::start(network, core, 3, vec![]);
+        network_syncers.push(network_syncer);
+    }
+    (simulated_network, network_syncers)
 }
 
 pub async fn network_syncers(

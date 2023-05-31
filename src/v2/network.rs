@@ -17,7 +17,7 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
@@ -34,6 +34,12 @@ pub struct Connection {
 }
 
 impl Network {
+    pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
+        Self {
+            connection_receiver,
+        }
+    }
+
     pub async fn load(path: &Path, our_id: usize, local_addr: SocketAddr) -> Self {
         let file = fs::read_to_string(path).unwrap();
         let mut addresses = vec![];

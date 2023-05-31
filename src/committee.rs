@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::data::Data;
-use crate::v2::types::{AuthorityIndex, Stake, StatementBlock};
+use crate::data::Data;
+use crate::types::{AuthorityIndex, Stake, StatementBlock};
 use rand::Rng;
 use std::borrow::Borrow;
 use std::collections::HashSet;

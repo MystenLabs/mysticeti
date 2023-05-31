@@ -1,11 +1,9 @@
-use crate::v2::block_handler::BlockHandler;
-use crate::v2::block_manager::BlockManager;
-use crate::v2::committee::Committee;
-use crate::v2::data::Data;
-use crate::v2::threshold_clock::ThresholdClockAggregator;
-use crate::v2::types::{
-    AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock,
-};
+use crate::block_handler::BlockHandler;
+use crate::block_manager::BlockManager;
+use crate::committee::Committee;
+use crate::data::Data;
+use crate::threshold_clock::ThresholdClockAggregator;
+use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::sync::Arc;
@@ -238,8 +236,8 @@ impl<H: BlockHandler> Core<H> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::v2::test_util::committee_and_cores;
-    use crate::v2::threshold_clock;
+    use crate::test_util::committee_and_cores;
+    use crate::threshold_clock;
     use rand::prelude::StdRng;
     use rand::{Rng, SeedableRng};
     use std::fmt::Write;

@@ -1,11 +1,11 @@
-use crate::v2::block_handler::BlockHandler;
-use crate::v2::core::Core;
-use crate::v2::network::{Connection, Network, NetworkMessage};
-use crate::v2::runtime;
-use crate::v2::runtime::Handle;
-use crate::v2::runtime::JoinHandle;
-use crate::v2::syncer::{CommitObserver, Syncer, SyncerSignals};
-use crate::v2::types::{AuthorityIndex, RoundNumber};
+use crate::block_handler::BlockHandler;
+use crate::core::Core;
+use crate::network::{Connection, Network, NetworkMessage};
+use crate::runtime;
+use crate::runtime::Handle;
+use crate::runtime::JoinHandle;
+use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::types::{AuthorityIndex, RoundNumber};
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -192,11 +192,7 @@ impl SyncerSignals for Arc<Notify> {
 
 #[cfg(test)]
 mod tests {
-    use crate::v2::future_simulator::SimulatedExecutorState;
-    use crate::v2::runtime;
-    use crate::v2::test_util::{
-        check_commits, network_syncers, rng_at_seed, simulated_network_syncers,
-    };
+    use crate::test_util::{check_commits, network_syncers};
     use std::time::Duration;
 
     #[tokio::test]
@@ -213,14 +209,21 @@ mod tests {
 
         check_commits(&syncers);
     }
+}
+
+#[cfg(test)]
+#[cfg(feature = "simulator")]
+mod sim_tests {
+    use crate::future_simulator::SimulatedExecutorState;
+    use crate::runtime;
+    use crate::test_util::{check_commits, rng_at_seed, simulated_network_syncers};
+    use std::time::Duration;
 
     #[test]
-    #[cfg(feature = "simulator")]
     fn test_network_sync_sim() {
         SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_async());
     }
 
-    #[cfg(feature = "simulator")]
     async fn test_network_sync_sim_async() {
         let (simulated_network, network_syncers) = simulated_network_syncers(4);
         simulated_network.connect_all().await;

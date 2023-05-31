@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::simulator::{Scheduler, Simulator, SimulatorState};
+use crate::simulator::{Scheduler, Simulator, SimulatorState};
 use futures::FutureExt;
 use rand::prelude::StdRng;
 use std::cell::RefCell;

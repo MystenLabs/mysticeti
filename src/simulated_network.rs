@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::committee::Committee;
-use crate::v2::future_simulator::SimulatorContext;
-use crate::v2::network::{Connection, Network};
-use crate::v2::runtime;
+use crate::committee::Committee;
+use crate::future_simulator::SimulatorContext;
+use crate::network::{Connection, Network};
+use crate::runtime;
 use rand::Rng;
 use std::fmt::Debug;
 use std::ops::Range;

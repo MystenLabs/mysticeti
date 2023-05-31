@@ -1,20 +1,35 @@
-use std::{borrow::Borrow, collections::HashSet, fmt::Formatter, hash::Hasher, sync::Arc};
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
 
-pub type Authority = RichAuthority;
+pub type AuthorityIndex = u64;
 pub type Transaction = u64;
 pub type TransactionId = u64;
 pub type RoundNumber = u64;
 pub type BlockDigest = u64;
-pub type BlockReference = (Authority, RoundNumber, BlockDigest);
-pub type Signature = u64;
+pub type Stake = u64;
 
-#[derive(Clone, PartialEq)]
+use crate::data::Data;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+#[cfg(test)]
+pub use test::Dag;
+
+#[allow(dead_code)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
     Accept,
     Reject(Option<TransactionId>),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct BlockReference {
+    pub authority: AuthorityIndex,
+    pub round: RoundNumber,
+    pub digest: BlockDigest,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
     Share(TransactionId, Transaction),
@@ -22,16 +37,9 @@ pub enum BaseStatement {
     Vote(TransactionId, Vote),
 }
 
-#[derive(Clone, PartialEq)]
-pub enum MetaStatement {
-    /// State a base statement
-    Base(BaseStatement),
-    // Include statements from another authority, by reference
-    Include(BlockReference),
-}
-
-#[derive(Clone)]
-pub struct MetaStatementBlock {
+#[derive(Clone, Serialize, Deserialize)]
+pub struct StatementBlock {
+    // todo - derive digest instead of storing
     reference: BlockReference,
 
     //  A list of block references to other blocks that this block includes
@@ -40,258 +48,264 @@ pub struct MetaStatementBlock {
     includes: Vec<BlockReference>,
 
     // A list of base statements in order.
-    base_statements: Vec<BaseStatement>,
-    _signature: Signature,
+    #[allow(dead_code)]
+    statements: Vec<BaseStatement>,
 }
 
-impl MetaStatementBlock {
-    #[cfg(test)]
-    pub fn new_for_testing(authority: &Authority, round: RoundNumber) -> Self {
-        MetaStatementBlock::new(authority, round, vec![])
+impl StatementBlock {
+    pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
+        Data::new(Self::new(
+            BlockReference::genesis_test(authority),
+            vec![],
+            vec![],
+        ))
     }
 
-    #[cfg(test)]
-    pub fn set_digest(&mut self, digest: BlockDigest) {
-        self.reference.2 = digest;
-    }
-
-    pub fn new(authority: &Authority, round: RoundNumber, contents: Vec<MetaStatement>) -> Self {
-        let mut includes: Vec<BlockReference> = vec![];
-        let mut base_statements: Vec<BaseStatement> = vec![];
-        contents.into_iter().for_each(|item| match item {
-            MetaStatement::Base(base) => base_statements.push(base),
-            MetaStatement::Include(block_ref) => includes.push(block_ref),
-        });
-
-        MetaStatementBlock {
-            reference: (authority.clone(), round, 0),
+    pub fn new(
+        reference: BlockReference,
+        includes: Vec<BlockReference>,
+        statements: Vec<BaseStatement>,
+    ) -> Self {
+        Self {
+            reference,
             includes,
-            base_statements,
-            _signature: 0,
+            statements,
         }
     }
 
-    pub fn get_authority(&self) -> &Authority {
-        &self.reference.0
-    }
-
-    pub fn get_includes(&self) -> &Vec<BlockReference> {
-        &self.includes
-    }
-
-    pub fn get_reference(&self) -> &BlockReference {
+    pub fn reference(&self) -> &BlockReference {
         &self.reference
     }
 
-    pub fn get_base_statements(&self) -> &Vec<BaseStatement> {
-        &self.base_statements
+    pub fn includes(&self) -> &Vec<BlockReference> {
+        &self.includes
     }
 
-    pub fn into_include(&self) -> MetaStatement {
-        MetaStatement::Include(self.get_reference().clone())
+    pub fn statements(&self) -> &Vec<BaseStatement> {
+        &self.statements
     }
 
-    pub fn extend_with(mut self, item: MetaStatement) -> Self {
-        match item {
-            MetaStatement::Base(base) => self.base_statements.push(base),
-            MetaStatement::Include(block_ref) => self.includes.push(block_ref),
-        }
-        self
+    pub fn author(&self) -> AuthorityIndex {
+        self.reference.authority
     }
 
-    pub fn extend_inplace(&mut self, item: MetaStatement) {
-        match item {
-            MetaStatement::Base(base) => self.base_statements.push(base),
-            MetaStatement::Include(block_ref) => self.includes.push(block_ref),
-        }
+    pub fn round(&self) -> RoundNumber {
+        self.reference.round
     }
 
-    pub fn genesis(committee: &Arc<Committee>) -> Vec<MetaStatementBlock> {
-        // For each authority in the committee, create a block at round 0 from this authority
-        // with no includes.
-        committee
-            .get_authorities()
-            .iter()
-            .enumerate()
-            .map(|(i, _authority)| Self::new(&committee.get_rich_authority(i), 0, Vec::new()))
-            .collect()
-    }
+    // /// Reference to the parent block made by the same authority
+    // pub fn own_parent(&self) -> Option<BlockReference> {
+    //     self.includes.get(0).map(|r| {
+    //         debug_assert_eq!(r.authority, self.author());
+    //         *r
+    //     })
+    // }
 }
 
-pub type Stake = u64;
-pub type CommitteeId = u64;
-
-// clone() is not implemented for Arc, so we need to implement it ourselves
-#[derive(Clone)]
-pub struct RichAuthority {
-    index: usize,              // Index of the authority in the committee
-    committee: Arc<Committee>, // Reference to the committee
-}
-
-impl std::fmt::Debug for RichAuthority {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RichAuthority({})", self.index)
-    }
-}
-
-impl PartialEq for RichAuthority {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index && self.committee.committee_id == other.committee.committee_id
-    }
-}
-
-impl Eq for RichAuthority {}
-
-impl std::hash::Hash for RichAuthority {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
-        self.committee.committee_id.hash(state);
-    }
-}
-
-impl RichAuthority {
-    pub fn get_stake(&self) -> Stake {
-        self.committee.authorities[self.index]
-    }
-
-    // Get a reference to the committee
-    pub fn get_committee(&self) -> &Arc<Committee> {
-        &self.committee
-    }
-}
-
-pub struct Committee {
-    committee_id: CommitteeId, // Unique identifier for the committee
-    authorities: Vec<Stake>,   // List of authorities and their stakes
-    validity_threshold: Stake, // The minimum stake required for validity
-    quorum_threshold: Stake,   // The minimum stake required for quorum
-}
-
-impl Committee {
-    // What this function does:
-    // 1. Creates a new committee with the given committee_id and authorities
-    // 2. Ensures that the list of authorities is not empty
-    // 3. Ensures that all stakes are positive
-    // 4. Calculates the validity threshold and quorum threshold
-    // 5. Returns the committee
-    pub fn new(committee_id: CommitteeId, authorities: Vec<Stake>) -> Arc<Self> {
-        // Ensure the list is not empty
-        assert!(!authorities.is_empty());
-
-        // Ensure all stakes are positive
-        assert!(authorities.iter().all(|stake| *stake > 0));
-
-        let total_stake: Stake = authorities.iter().sum();
-        let validity_threshold = total_stake / 3;
-        let quorum_threshold = 2 * total_stake / 3;
-        Arc::new(Committee {
-            committee_id,
-            authorities,
-            validity_threshold,
-            quorum_threshold,
-        })
-    }
-
-    pub fn get_authorities(&self) -> &Vec<Stake> {
-        &self.authorities
-    }
-
-    pub fn is_valid(&self, amount: Stake) -> bool {
-        amount > *self.get_validity_threshold()
-    }
-
-    pub fn is_quorum(&self, amount: Stake) -> bool {
-        amount > *self.get_quorum_threshold()
-    }
-
-    pub fn get_validity_threshold(&self) -> &Stake {
-        &self.validity_threshold
-    }
-
-    pub fn get_quorum_threshold(&self) -> &Stake {
-        &self.quorum_threshold
-    }
-
-    pub fn get_rich_authority(self: &Arc<Self>, index: usize) -> RichAuthority {
-        RichAuthority {
-            index,
-            committee: self.clone(),
+impl BlockReference {
+    #[cfg(test)]
+    pub fn new_test(authority: AuthorityIndex, round: RoundNumber) -> Self {
+        Self {
+            authority,
+            round,
+            digest: 0,
         }
     }
 
-    /// Take a list of rich authorities and return the total stake to which they
-    /// correspond in the committee.
-    pub fn get_total_stake<A: Borrow<RichAuthority>>(&self, authorities: &HashSet<A>) -> Stake {
-        let mut total_stake = 0;
-        for authority in authorities {
-            total_stake += self.authorities[authority.borrow().index];
+    pub fn genesis_test(authority: AuthorityIndex) -> Self {
+        Self {
+            authority,
+            round: 0,
+            digest: 0,
         }
-        total_stake
+    }
+}
+
+impl fmt::Debug for BlockReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for BlockReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.authority < 26 {
+            write!(
+                f,
+                "{}{}",
+                ('A' as u64 + self.authority) as u8 as char,
+                self.round
+            )
+        } else {
+            write!(f, "[{:02}]{}", self.authority, self.round)
+        }
+    }
+}
+
+impl fmt::Debug for StatementBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for StatementBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:[", self.reference)?;
+        for include in self.includes() {
+            write!(f, "{},", include)?;
+        }
+        write!(f, "](")?;
+        for statement in self.statements() {
+            write!(f, "{},", statement)?;
+        }
+        write!(f, ")")
+    }
+}
+impl fmt::Debug for BaseStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for BaseStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BaseStatement::Share(id, _) => write!(f, "#{id:08}"),
+            BaseStatement::Vote(id, Vote::Accept) => write!(f, "+{id:08}"),
+            BaseStatement::Vote(id, Vote::Reject(_)) => write!(f, "-{id:08}"),
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-
+mod test {
     use super::*;
+    use rand::prelude::SliceRandom;
+    use rand::Rng;
+    use std::collections::{HashMap, HashSet};
 
-    /// Write a test that makes a committee with 4 authorities each with Stake 1
-    #[test]
-    fn test_committee() {
-        let committee = Committee::new(0, vec![1, 1, 1, 1]);
-        assert_eq!(committee.get_authorities().len(), 4);
-        assert_eq!(*committee.get_validity_threshold(), 1);
-        assert_eq!(*committee.get_quorum_threshold(), 2);
+    pub struct Dag(HashMap<BlockReference, Data<StatementBlock>>);
 
-        // Check is_valid and is_quorum
-        assert!(committee.is_valid(2));
-        assert!(committee.is_quorum(3));
-        assert!(!committee.is_valid(1));
-        assert!(!committee.is_quorum(2));
+    #[cfg(test)]
+    impl Dag {
+        /// Takes a string in form "Block:[Dependencies, ...]; ..."
+        /// Where Block is one letter denoting a node and a number denoting a round
+        /// For example B3 is a block for round 3 made by validator index 2
+        /// Note that blocks are separated with semicolon(;) and dependencies within block are separated with coma(,)
+        pub fn draw(s: &str) -> Self {
+            let mut blocks = HashMap::new();
+            for block in s.split(";") {
+                let block = Self::draw_block(block);
+                blocks.insert(*block.reference(), Data::new(block));
+            }
+            Self(blocks)
+        }
+
+        pub fn draw_block(block: &str) -> StatementBlock {
+            let block = block.trim();
+            assert!(block.ends_with(']'), "Invalid block definition: {}", block);
+            let block = &block[..block.len() - 1];
+            let Some((name, includes)) = block.split_once(":[") else {
+                panic!("Invalid block definition: {}", block);
+            };
+            let reference = Self::parse_name(name);
+            let includes = includes.trim();
+            let includes = if includes.len() == 0 {
+                vec![]
+            } else {
+                let includes = includes.split(',');
+                includes.map(Self::parse_name).collect()
+            };
+            StatementBlock {
+                reference,
+                includes,
+                statements: vec![],
+            }
+        }
+
+        fn parse_name(s: &str) -> BlockReference {
+            let s = s.trim();
+            assert!(s.len() >= 2, "Invalid block: {}", s);
+            let authority = s.as_bytes()[0];
+            let authority = authority.wrapping_sub('A' as u8);
+            assert!(authority < 26, "Invalid block: {}", s);
+            let Ok(round): Result<u64, _> = s[1..].parse() else {
+                panic!("Invalid block: {}", s);
+            };
+            BlockReference {
+                authority: authority as u64,
+                round,
+                digest: 0,
+            }
+        }
+
+        /// For each authority add a 0 round block if not present
+        pub fn add_genesis_blocks(mut self) -> Self {
+            for authority in self.authorities() {
+                let reference = BlockReference::genesis_test(authority);
+                let entry = self.0.entry(reference);
+                entry.or_insert_with(|| {
+                    Data::new(StatementBlock {
+                        reference,
+                        includes: vec![],
+                        statements: vec![],
+                    })
+                });
+            }
+            self
+        }
+
+        pub fn random_iter(&self, rng: &mut impl Rng) -> RandomDagIter {
+            let mut v: Vec<_> = self.0.keys().cloned().collect();
+            v.shuffle(rng);
+            RandomDagIter(self, v.into_iter())
+        }
+
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        fn authorities(&self) -> HashSet<AuthorityIndex> {
+            let mut authorities = HashSet::new();
+            for (k, v) in &self.0 {
+                authorities.insert(k.authority);
+                for include in v.includes() {
+                    authorities.insert(include.authority);
+                }
+            }
+            authorities
+        }
     }
 
-    /// Make a committee of 4 authorities, each with Stake 1, and check that you get authority 1
-    /// and equality when you clone it holds.
-    #[test]
-    fn test_rich_authority() {
-        let committee = Committee::new(0, vec![1, 1, 1, 1]);
-        let rich_authority = committee.get_rich_authority(1);
-        let rich_authority_clone = rich_authority.clone();
-        assert!(rich_authority == rich_authority_clone);
+    pub struct RandomDagIter<'a>(&'a Dag, std::vec::IntoIter<BlockReference>);
+
+    impl<'a> Iterator for RandomDagIter<'a> {
+        type Item = &'a Data<StatementBlock>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let next = self.1.next()?;
+            Some(self.0 .0.get(&next).unwrap())
+        }
     }
 
-    // Test get_total_stake: make a committee of 4 authorities, each with Stake 1. Then get a list of them, with repetitions. And calculate the total stake. Check that the result is the same without repetitions.
     #[test]
-    fn test_get_total_stake() {
-        let committee = Committee::new(0, vec![1, 1, 1, 1]);
-        let rich_authority = committee.get_rich_authority(0);
-        let rich_authority_clone = rich_authority.clone();
-        let rich_authority2 = committee.get_rich_authority(1);
-        let rich_authority3 = committee.get_rich_authority(2);
-        let rich_authority4 = committee.get_rich_authority(3);
-        let authorities = vec![
-            rich_authority,
-            rich_authority_clone,
-            rich_authority2,
-            rich_authority3,
-            rich_authority4,
-        ];
-        let authorities = authorities.into_iter().collect();
-        assert_eq!(committee.get_total_stake(&authorities), 4);
-    }
-
-    // Make two different committees and check that the equality of rich authorities does not hold.
-    #[test]
-    fn test_rich_authority_equality() {
-        let committee = Committee::new(0, vec![1, 1, 1, 1]);
-        let committee2 = Committee::new(1, vec![1, 1, 1, 1]);
-        let rich_authority = committee.get_rich_authority(0);
-        let rich_authority2 = committee2.get_rich_authority(0);
-        assert!(rich_authority != rich_authority2);
-
-        // But for a new committee with the same committee id, the equality should hold.
-        let committee3 = Committee::new(0, vec![1, 1, 1, 1]);
-        let rich_authority3 = committee3.get_rich_authority(0);
-        assert!(rich_authority == rich_authority3);
+    fn test_draw_dag() {
+        let d = Dag::draw("A1:[A0, B1]; B2:[B1]").0;
+        assert_eq!(d.len(), 2);
+        let a0: BlockReference = BlockReference::new_test(0, 1);
+        let b2: BlockReference = BlockReference::new_test(1, 2);
+        assert_eq!(&d.get(&a0).unwrap().reference, &a0);
+        assert_eq!(
+            &d.get(&a0).unwrap().includes,
+            &vec![
+                BlockReference::new_test(0, 0),
+                BlockReference::new_test(1, 1)
+            ]
+        );
+        assert_eq!(&d.get(&b2).unwrap().reference, &b2);
+        assert_eq!(
+            &d.get(&b2).unwrap().includes,
+            &vec![BlockReference::new_test(1, 1)]
+        );
     }
 }

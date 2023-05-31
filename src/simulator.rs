@@ -65,6 +65,7 @@ where
         &self.states
     }
 
+    #[allow(dead_code)]
     pub fn states_mut(&mut self) -> &mut [S] {
         &mut self.states
     }
@@ -100,6 +101,7 @@ impl<E: 'static> Scheduler<E> {
         Self::with(|scheduler| f(&mut scheduler.rng))
     }
 
+    #[allow(dead_code)]
     pub fn time() -> Duration {
         Self::with(|scheduler| scheduler.time)
     }

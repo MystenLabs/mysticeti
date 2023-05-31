@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::block_handler::BlockHandler;
-use crate::v2::core::Core;
-use crate::v2::data::Data;
-use crate::v2::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
+use crate::block_handler::BlockHandler;
+use crate::core::Core;
+use crate::data::Data;
+use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use std::collections::BTreeMap;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -129,10 +129,10 @@ impl CommitObserver for Vec<BlockReference> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::block_handler::TestBlockHandler;
-    use crate::v2::data::Data;
-    use crate::v2::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::v2::test_util::{
+    use crate::block_handler::TestBlockHandler;
+    use crate::data::Data;
+    use crate::simulator::{Scheduler, Simulator, SimulatorState};
+    use crate::test_util::{
         check_commits, committee_and_syncers, first_n_transactions, rng_at_seed,
     };
     use rand::Rng;

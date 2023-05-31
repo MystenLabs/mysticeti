@@ -1,15 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-pub use crate::v2::future_simulator::JoinError;
-pub use crate::v2::future_simulator::JoinHandle;
-use crate::v2::future_simulator::Sleep;
+pub use crate::future_simulator::JoinError;
+pub use crate::future_simulator::JoinHandle;
+use crate::future_simulator::Sleep;
 use std::future::Future;
 use std::time::Duration;
 
 pub struct Handle;
 
-use crate::v2::future_simulator::simulator_spawn;
+use crate::future_simulator::simulator_spawn;
 
 impl Handle {
     pub fn current() -> Self {

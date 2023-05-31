@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::committee::{Committee, QuorumThreshold, StakeAggregator};
-use crate::v2::data::Data;
-use crate::v2::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId, Vote};
+use crate::committee::{Committee, QuorumThreshold, StakeAggregator};
+use crate::data::Data;
+use crate::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId, Vote};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

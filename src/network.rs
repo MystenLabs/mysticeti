@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::data::Data;
-use crate::v2::types::{RoundNumber, StatementBlock};
+use crate::data::Data;
+use crate::types::{RoundNumber, StatementBlock};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -34,12 +34,14 @@ pub struct Connection {
 }
 
 impl Network {
+    #[cfg(feature = "simulator")]
     pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
         Self {
             connection_receiver,
         }
     }
 
+    #[allow(dead_code)]
     pub async fn load(path: &Path, our_id: usize, local_addr: SocketAddr) -> Self {
         let file = fs::read_to_string(path).unwrap();
         let mut addresses = vec![];
@@ -300,7 +302,7 @@ impl Worker {
 
 #[cfg(test)]
 mod test {
-    use crate::v2::test_util::networks_and_addresses;
+    use crate::test_util::networks_and_addresses;
     use std::collections::HashSet;
 
     #[tokio::test]

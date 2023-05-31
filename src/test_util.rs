@@ -1,14 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::v2::block_handler::{BlockHandler, TestBlockHandler};
-use crate::v2::committee::Committee;
-use crate::v2::core::Core;
-use crate::v2::net_sync::NetworkSyncer;
-use crate::v2::network::Network;
-use crate::v2::simulated_network::SimulatedNetwork;
-use crate::v2::syncer::{Syncer, SyncerSignals};
-use crate::v2::types::{AuthorityIndex, BlockReference, TransactionId};
+use crate::block_handler::{BlockHandler, TestBlockHandler};
+use crate::committee::Committee;
+use crate::core::Core;
+use crate::net_sync::NetworkSyncer;
+use crate::network::Network;
+#[cfg(feature = "simulator")]
+use crate::simulated_network::SimulatedNetwork;
+use crate::syncer::{Syncer, SyncerSignals};
+use crate::types::{AuthorityIndex, BlockReference, TransactionId};
 use futures::future::join_all;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -73,6 +74,7 @@ pub async fn networks_and_addresses(n: usize) -> (Vec<Network>, Vec<SocketAddr>)
     (networks, addresses)
 }
 
+#[cfg(feature = "simulator")]
 pub fn simulated_network_syncers(
     n: usize,
 ) -> (

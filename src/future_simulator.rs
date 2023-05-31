@@ -297,7 +297,7 @@ impl Future for Sleep {
                 Poll::Pending
             }
             Sleep::WaitingUntil(deadline) => {
-                if *deadline >= Scheduler::<ExecutorStateEvent>::time() {
+                if Scheduler::<ExecutorStateEvent>::time() >= *deadline {
                     Poll::Ready(())
                 } else {
                     Poll::Pending

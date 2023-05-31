@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use crate::block_manager::{AddBlocksResult, BlockManager, TransactionStatus};
 use crate::threshold_clock::*;
 use crate::types::{
-    Authority, BaseStatement, BlockReference, Committee, MetaStatementBlock, RichAuthority,
-    RoundNumber, TransactionId,
+    Authority, BaseStatement, BlockReference, MetaStatementBlock, RichAuthority, RoundNumber,
+    TransactionId,
 };
 
 // In this file we define a node that combines a block manager with the constraints
@@ -18,25 +17,12 @@ pub struct Node {
     pub last_commit_round: RoundNumber,
 }
 
-pub fn genesis(committee: &Arc<Committee>) -> Vec<MetaStatementBlock> {
-    // For each authority in the committee, create a block at round 0 from this authority
-    // with no includes.
-    committee
-        .get_authorities()
-        .iter()
-        .enumerate()
-        .map(|(i, _authority)| {
-            MetaStatementBlock::new(&committee.get_rich_authority(i), 0, Vec::new())
-        })
-        .collect()
-}
-
 impl Node {
     pub fn new(auth: Authority) -> Self {
         // Create a default block manager
         let mut block_manager = BlockManager::default();
         // Get the genesis blocks for this committee
-        let genesis_blocks = genesis(auth.get_committee());
+        let genesis_blocks = MetaStatementBlock::genesis(auth.get_committee());
         // Add the genesis blocks to the block manager
         block_manager.add_blocks(genesis_blocks.into());
         block_manager.set_next_round_number(1);
@@ -224,7 +210,7 @@ impl Node {
 #[cfg(test)]
 mod tests {
 
-    use crate::types::{MetaStatement, Vote};
+    use crate::types::{Committee, MetaStatement, Vote};
 
     use super::*;
     use std::sync::Arc;

@@ -105,6 +105,17 @@ impl MetaStatementBlock {
             MetaStatement::Include(block_ref) => self.includes.push(block_ref),
         }
     }
+
+    pub fn genesis(committee: &Arc<Committee>) -> Vec<MetaStatementBlock> {
+        // For each authority in the committee, create a block at round 0 from this authority
+        // with no includes.
+        committee
+            .get_authorities()
+            .iter()
+            .enumerate()
+            .map(|(i, _authority)| Self::new(&committee.get_rich_authority(i), 0, Vec::new()))
+            .collect()
+    }
 }
 
 pub type Stake = u64;

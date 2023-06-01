@@ -14,8 +14,6 @@ use crate::{
     types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
 };
 
-type WaveNumber = u64;
-
 pub struct CommittedSubDag {
     /// A reference to the leader of the sub-dag
     pub leader: BlockReference,
@@ -39,6 +37,8 @@ impl CommittedSubDag {
         self.blocks.sort_by_key(|x| x.round());
     }
 }
+
+type WaveNumber = u64;
 
 pub struct Committer {
     committee: Arc<Committee>,
@@ -167,7 +167,7 @@ impl Committer {
             // Get the block proposed by the previous leader(s). There could be more than one
             // leader block (produced by a Byzantine leader).
             let leader_round = self.leader_round(w);
-            let leader = self.leader_at_round(leader_round);
+            let leader = self.committee.elect_leader(leader_round);
             let leader_blocks = block_manager.get_blocks_at_authority_round(leader, leader_round);
 
             //
@@ -280,7 +280,7 @@ impl Committer {
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
-        let leader = self.leader_at_round(leader_round);
+        let leader = self.committee.elect_leader(leader_round);
         let leader_blocks = block_manager.get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .iter()
@@ -299,11 +299,5 @@ impl Committer {
             // Something very wrong happened: we have more than f Byzantine nodes.
             std::cmp::Ordering::Greater => panic!("More than one certified leader"),
         }
-    }
-
-    // TODO: Move to committee.rs
-    fn leader_at_round(&self, round: RoundNumber) -> AuthorityIndex {
-        assert!(round % self.wave_length == 0);
-        round % self.committee.len() as u64
     }
 }

@@ -69,7 +69,7 @@ impl Committee {
     }
 
     // TODO: fix to select by stake
-    pub fn pick_authority(&self, r: u64) -> AuthorityIndex {
+    pub fn elect_leader(&self, r: u64) -> AuthorityIndex {
         (r % self.stake.len() as u64) as AuthorityIndex
     }
 

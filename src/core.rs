@@ -229,7 +229,7 @@ impl<H: BlockHandler> Core<H> {
     fn leader_at_round(&self, round: RoundNumber, period: u64) -> AuthorityIndex {
         assert!(round == 0 || round % period == 0);
 
-        self.committee.pick_authority(round / period)
+        self.committee.elect_leader(round / period)
     }
 }
 

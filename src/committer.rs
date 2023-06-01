@@ -243,12 +243,12 @@ impl Committer {
         while let Some(x) = buffer.pop() {
             sub_dag.add(x.clone());
             for reference in x.includes() {
-                //
                 let block = block_manager
                     .get_processed_block(reference)
                     .expect("We should have the complete sub-dag");
 
-                //
+                // Skip the block if we already committed it (either as part of this sub-dag or
+                // a previous one).
                 let mut skip = already_processed.contains(&reference);
                 skip |= self
                     .last_committed_rounds

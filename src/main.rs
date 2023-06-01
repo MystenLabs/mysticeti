@@ -1,8 +1,9 @@
-mod block_handler;
-mod block_manager;
-mod committee;
-mod core;
-mod data;
+pub mod block_manager;
+pub mod committer;
+pub mod node;
+pub mod threshold_clock;
+pub mod types;
+
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod future_simulator;

@@ -25,16 +25,8 @@ pub struct CommittedSubDag {
 
 impl CommittedSubDag {
     /// Create new (empty) sub-dag.
-    pub fn new(anchor: BlockReference) -> Self {
-        Self {
-            anchor,
-            blocks: Vec::new(),
-        }
-    }
-
-    /// Add a block to the sub-dag.
-    pub fn add(&mut self, block: Data<StatementBlock>) {
-        self.blocks.push(block)
+    pub fn new(anchor: BlockReference, blocks: Vec<Data<StatementBlock>>) -> Self {
+        Self { anchor, blocks }
     }
 
     /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
@@ -51,8 +43,8 @@ type WaveNumber = u64;
 /// be called at any time and any number of times (it is idempotent) to return extension to the commit
 /// sequence. This structure is parametrized with a `wave length`, which must be at least 3 rounds: we
 /// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
-/// certificates for the leader. A longer wave_length increases the chance of committing the leader under
-/// asynchrony at the cost of latency in the common case.
+/// certificates for the leader. A longer wave_length increases the chance of committing the leader
+/// under asynchrony at the cost of latency in the common case.
 pub struct Committer {
     /// The committee information
     committee: Arc<Committee>,
@@ -237,12 +229,12 @@ impl Committer {
         leader_block: &Data<StatementBlock>,
         block_manager: &BlockManager,
     ) -> CommittedSubDag {
-        let mut sub_dag = CommittedSubDag::new(*leader_block.reference());
+        let mut to_commit = Vec::new();
 
         let mut already_processed = HashSet::new();
         let mut buffer = vec![leader_block];
         while let Some(x) = buffer.pop() {
-            sub_dag.add(x.clone());
+            to_commit.push(x.clone());
             for reference in x.includes() {
                 let block = block_manager
                     .get_processed_block(reference)
@@ -261,7 +253,7 @@ impl Committer {
                 }
             }
         }
-        sub_dag
+        CommittedSubDag::new(*leader_block.reference(), to_commit)
     }
 
     /// Commit the specified leader block as well as any eligible past leader (recursively)

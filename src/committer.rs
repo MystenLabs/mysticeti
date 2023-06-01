@@ -14,43 +14,57 @@ use crate::{
     types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
 };
 
+/// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
+/// sort the blocks within each sub-dag (but using a deterministic algorithm).
 pub struct CommittedSubDag {
-    /// A reference to the leader of the sub-dag
-    pub leader: BlockReference,
+    /// A reference to the anchor of the sub-dag
+    pub anchor: BlockReference,
     /// All the committed blocks that are part of this sub-dag
     pub blocks: Vec<Data<StatementBlock>>,
 }
 
 impl CommittedSubDag {
-    pub fn new(leader: BlockReference) -> Self {
+    /// Create new (empty) sub-dag.
+    pub fn new(anchor: BlockReference) -> Self {
         Self {
-            leader,
+            anchor,
             blocks: Vec::new(),
         }
     }
 
+    /// Add a block to the sub-dag.
     pub fn add(&mut self, block: Data<StatementBlock>) {
         self.blocks.push(block)
     }
 
+    /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
     pub fn sort(&mut self) {
         self.blocks.sort_by_key(|x| x.round());
     }
 }
 
+/// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
+/// voting round, and one decision round.
 type WaveNumber = u64;
 
+/// The [`Committer`] contains all the commit logic. Once instantiated, the method [`try_commit`] can
+/// be called at any time and any number of times (it is idempotent) to return extension to the commit
+/// sequence. This structure is parametrized with a `wave length`, which must be at least 3 rounds: we
+/// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
+/// certificates for the leader. A longer wave_length increases the chance of committing the leader under
+/// asynchrony at the cost of latency in the common case.
 pub struct Committer {
+    /// The committee information
     committee: Arc<Committee>,
+    /// The length of a wave (minimum 3)
     wave_length: u64,
+    /// Keep track of the latest committed round for each authority; avoid committing a block more
+    /// than once
     last_committed_rounds: HashMap<AuthorityIndex, RoundNumber>,
 }
 
 impl Committer {
-    /// Create a new [`Committer`] interpreting the dag using the provided 'wave length'. The wave
-    /// length must be at least 3: we need one leader round, at least one round to vote for the leader,
-    /// and one round to collect 2f+1 certificates for the leader. A longer wave_length increases the
-    /// chance of committing the leader under asynchrony at the cost of latency in the common case.
+    /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
     pub fn new(committee: Arc<Committee>, wave_length: u64) -> Self {
         assert!(wave_length >= 3);
 
@@ -61,23 +75,30 @@ impl Committer {
         }
     }
 
+    /// Return the last committed wave; that is, the wave including the latest committed leader.
     fn last_committed_wave(&self) -> WaveNumber {
         let round = self.last_committed_rounds.values().max().map_or(0, |r| *r);
         self.wave_number(round)
     }
 
+    /// Return the wave in which the specified round belongs.
     fn wave_number(&self, round: RoundNumber) -> WaveNumber {
         round / self.wave_length
     }
 
+    /// Return the leader round of the specified wave number. The leader round is always the first
+    /// round of the wave.
     fn leader_round(&self, wave: WaveNumber) -> RoundNumber {
         wave
     }
 
+    /// Return the decision round of the specified wave. The decision round is always the last
+    /// round of the wave.
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
         wave + self.wave_length - 1
     }
 
+    /// Update the last committed rounds. We must call this method after committing each sub-dag.
     fn update_last_committed_rounds(&mut self, sub_dag: &CommittedSubDag) {
         for block in &sub_dag.blocks {
             let authority = block.author();
@@ -153,24 +174,26 @@ impl Committer {
         false
     }
 
+    /// Output an ordered list of leader blocks (that we should commit in order).
     fn order_leaders<'a>(
         &self,
-        latest_wave: WaveNumber,
         latest_leader_block: &'a Data<StatementBlock>,
         block_manager: &'a BlockManager,
     ) -> Vec<&'a Data<StatementBlock>> {
         let mut to_commit = vec![latest_leader_block];
         let mut current_leader_block = latest_leader_block;
+        let latest_wave = self.wave_number(latest_leader_block.round());
 
         let earliest_wave = self.last_committed_wave() + 1;
         for w in (earliest_wave..latest_wave).rev() {
-            // Get the block proposed by the previous leader(s). There could be more than one
-            // leader block (produced by a Byzantine leader).
+            // Get the block(s) proposed by the previous leader. There could be more than one
+            // leader block per round (produced by a Byzantine leader).
             let leader_round = self.leader_round(w);
             let leader = self.committee.elect_leader(leader_round);
             let leader_blocks = block_manager.get_blocks_at_authority_round(leader, leader_round);
 
-            //
+            // Get all blocks that could be potential certificates for these leader blocks, if
+            // they are ancestors of the current leader.
             let decision_round = self.decision_round(w);
             let decision_blocks = block_manager.get_blocks_by_round(decision_round);
             let potential_certificates: Vec<_> = decision_blocks
@@ -178,7 +201,8 @@ impl Committer {
                 .filter(|block| self.linked(block, current_leader_block, block_manager))
                 .collect();
 
-            //
+            // Use those potential certificates to determine which (if any) of the previous leader
+            // blocks can be committed.
             let mut certified_leader_blocks: Vec<_> = leader_blocks
                 .iter()
                 .filter(|leader_block| {
@@ -189,7 +213,10 @@ impl Committer {
                 .collect();
 
             match certified_leader_blocks.len().cmp(&1) {
+                // We skip the previous leader if it has no certificates that are ancestors of current
+                // leader.
                 std::cmp::Ordering::Less => continue,
+                // Proceed to the next iteration using the previous leader as anchor.
                 std::cmp::Ordering::Equal => {
                     let certified_leader_block = certified_leader_blocks.pop().unwrap();
                     to_commit.push(certified_leader_block);
@@ -202,6 +229,8 @@ impl Committer {
         to_commit
     }
 
+    /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
+    /// have already been committed (within previous sub-dags).
     fn collect_sub_dag(
         &self,
         leader_block: &Data<StatementBlock>,
@@ -234,25 +263,25 @@ impl Committer {
         sub_dag
     }
 
+    /// Commit the specified leader block as well as any eligible past leader (recursively)
+    /// that we did not already commit.
     fn commit(
         &mut self,
-        wave: WaveNumber,
         leader_block: &Data<StatementBlock>,
         block_manager: &BlockManager,
     ) -> Vec<CommittedSubDag> {
         let mut commit_sequence = Vec::new();
-        for leader_block in self
-            .order_leaders(wave, leader_block, block_manager)
-            .iter()
-            .rev()
-        {
-            //
+
+        // Derive a sequence of (ordered) leaders.
+        for leader_block in self.order_leaders(leader_block, block_manager).iter().rev() {
+            // Collect the sub-dag generated using each of these leaders as anchor.
             let mut sub_dag = self.collect_sub_dag(leader_block, block_manager);
 
-            //
+            // Update the last committed round for each authority. This avoid committing
+            // twice the same blocks (within different sub-dags).
             self.update_last_committed_rounds(&sub_dag);
 
-            //
+            // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();
             commit_sequence.push(sub_dag);
         }
@@ -294,7 +323,7 @@ impl Committer {
             // We can now commit the leader as well as all its linked predecessors (recursively).
             std::cmp::Ordering::Equal => {
                 let leader_block = leaders_with_enough_support.pop().unwrap();
-                self.commit(wave, leader_block, block_manager)
+                self.commit(leader_block, block_manager)
             }
             // Something very wrong happened: we have more than f Byzantine nodes.
             std::cmp::Ordering::Greater => panic!("More than one certified leader"),

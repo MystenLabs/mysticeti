@@ -117,45 +117,44 @@ impl Committer {
         quorum_round: RoundNumber,
         block_manager: &BlockManager,
     ) -> Vec<CommittedSubDag> {
-        // We only act upon decision rounds.
-        if !self.is_decision_round(quorum_round) {
+        // We only act upon decision rounds (except the first).
+        if !self.is_decision_round(quorum_round) || quorum_round < self.period {
             return vec![];
         }
 
-        // We do not commit past leaders or the genesis.
-        if quorum_round <= self.last_committed_round || quorum_round < self.period {
-            return vec![];
-        }
-
-        // There is nothing to commit if we missed the leader. Note that there could be more
-        // than one leader block (Byzantine adversary).
+        // Ensure we commit each leader at most once.
         let leader_round = quorum_round - self.period + 1;
+        if leader_round <= self.last_committed_round {
+            return vec![];
+        }
+
+        // Check whether the leader(s) has enough support. That is, whether there are 2f+1
+        // certificates over the leader. Note that there could be more than one leader block
+        // (created by Byzantine leaders).
         let leader = self.leader_at_round(leader_round);
         let leader_blocks = block_manager.get_block_at_authority_round(leader, leader_round);
-
-        // Check whether the leader(s) has enough support. That is, whether there are
-        // 2f+1 certificates over the leader.
-        let mut leaders_with_support: Vec<_> = leader_blocks
+        let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .iter()
             .filter(|l| self.enough_leader_support(quorum_round, l, block_manager))
             .collect();
 
-        match leaders_with_support.len().cmp(&1) {
+        // Commit the leader. There can be at most one leader with enough for each round.
+        match leaders_with_enough_support.len().cmp(&1) {
             // There is no leader to commit.
             std::cmp::Ordering::Less => return vec![],
             // We can now commit the leader as well as all its linked predecessors (recursively).
             std::cmp::Ordering::Equal => {
-                let leader_block = leaders_with_support.pop().unwrap();
+                let leader_block = leaders_with_enough_support.pop().unwrap();
                 self.commit(leader_block, block_manager)
             }
-            // Something very wrong happened: we have more than f Byzantine validators.
+            // Something very wrong happened: we have more than f Byzantine nodes.
             std::cmp::Ordering::Greater => panic!("More than one certified leader"),
         }
     }
 
     // TODO: Move to committee.rs
     fn leader_at_round(&self, round: RoundNumber) -> AuthorityIndex {
-        assert!(round == 0 || round % self.period == 0);
+        assert!(round % self.period == 0);
         round % self.committee.len() as u64
     }
 }

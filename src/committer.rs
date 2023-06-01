@@ -212,6 +212,7 @@ impl Committer {
                 })
                 .collect();
 
+            // There can be at most one certified leader.
             match certified_leader_blocks.len().cmp(&1) {
                 // We skip the previous leader if it has no certificates that are ancestors of current
                 // leader.

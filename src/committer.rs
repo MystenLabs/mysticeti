@@ -316,7 +316,7 @@ impl Committer {
             .filter(|l| self.enough_leader_support(decision_round, l, block_manager))
             .collect();
 
-        // Commit the leader. There can be at most one leader with enough for each round.
+        // Commit the leader. There can be at most one leader with enough support for each round.
         match leaders_with_enough_support.len().cmp(&1) {
             // There is no leader to commit.
             std::cmp::Ordering::Less => return vec![],

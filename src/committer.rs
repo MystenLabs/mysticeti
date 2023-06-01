@@ -11,7 +11,9 @@ use crate::{
 };
 
 pub struct CommittedSubDag {
+    /// A reference to the leader of the sub-dag
     leader: BlockReference,
+    /// All the committed blocks that are part of this sub-dag
     blocks: Vec<Data<StatementBlock>>,
 }
 
@@ -23,10 +25,11 @@ pub struct Committer {
 }
 
 impl Committer {
+    /// Create a new [`Committer`] interpreting the dag using the provided period. The period
+    /// must be at least 3: we need one leader round, at least one round to vote for the leader,
+    /// and one round to collect 2f+1 certificates for the leader. A longer period increases the
+    /// chance of committing the leader under asynchrony at the cost of latency in the common case.
     pub fn new(authority: AuthorityIndex, committee: Arc<Committee>, period: u64) -> Self {
-        // We need at least one leader round, one round to vote for the leader, and one round
-        // to collect 2f+1 certificates for the leader. A longer period increases the chance
-        // of committing the leader under asynchrony at the cost of latency in the common case.
         assert!(period >= 3);
 
         Self {
@@ -37,6 +40,7 @@ impl Committer {
         }
     }
 
+    /// Check whether the specified round is a 'decision round'.
     fn is_decision_round(&self, round: RoundNumber) -> bool {
         round % self.period == self.period - 1
     }
@@ -63,6 +67,8 @@ impl Committer {
         parents.contains(&earlier_block)
     }
 
+    /// Check whether the specified block (`potential_certificate`) is a certificate for
+    /// the specified leader (`leader_block`).
     fn is_certificate(
         &self,
         leader_block: &Data<StatementBlock>,
@@ -84,13 +90,15 @@ impl Committer {
         false
     }
 
+    /// Check whether the specified leader has enough support (that is, 2f+1 certificates)
+    /// at the specified round.
     fn enough_leader_support(
         &self,
-        quorum_round: RoundNumber,
+        decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
         block_manager: &BlockManager,
     ) -> bool {
-        let decision_blocks = block_manager.get_blocks_by_round(quorum_round);
+        let decision_blocks = block_manager.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
@@ -112,18 +120,17 @@ impl Committer {
         todo!()
     }
 
-    pub fn try_commit(
-        &self,
-        quorum_round: RoundNumber,
-        block_manager: &BlockManager,
-    ) -> Vec<CommittedSubDag> {
+    /// Try to commit part of the dag. This function is idempotent and returns a list of
+    /// ordered committed sub-dags.
+    pub fn try_commit(&self, block_manager: &BlockManager) -> Vec<CommittedSubDag> {
         // We only act upon decision rounds (except the first).
-        if !self.is_decision_round(quorum_round) || quorum_round < self.period {
+        let highest_round = block_manager.highest_round;
+        if !self.is_decision_round(highest_round) || highest_round < self.period {
             return vec![];
         }
 
         // Ensure we commit each leader at most once.
-        let leader_round = quorum_round - self.period + 1;
+        let leader_round = highest_round - self.period + 1;
         if leader_round <= self.last_committed_round {
             return vec![];
         }
@@ -135,7 +142,7 @@ impl Committer {
         let leader_blocks = block_manager.get_block_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .iter()
-            .filter(|l| self.enough_leader_support(quorum_round, l, block_manager))
+            .filter(|l| self.enough_leader_support(highest_round, l, block_manager))
             .collect();
 
         // Commit the leader. There can be at most one leader with enough for each round.

@@ -3,7 +3,10 @@
 
 use crate::data::Data;
 use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    cmp::max,
+    collections::{HashMap, HashSet, VecDeque},
+};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
@@ -14,6 +17,7 @@ pub struct BlockManager {
     blocks_processed: HashMap<BlockReference, Data<StatementBlock>>,
     // Maintain an index of blocks by round as well.
     blocks_processed_by_round: HashMap<RoundNumber, Vec<BlockReference>>,
+    pub highest_round: RoundNumber,
 }
 
 impl BlockManager {
@@ -22,9 +26,11 @@ impl BlockManager {
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
         let mut newly_blocks_processed: Vec<Data<StatementBlock>> = vec![];
         while let Some(block) = blocks.pop_front() {
-            let block_reference = block.reference();
+            // Update the highest known round number.
+            self.highest_round = max(self.highest_round, block.round());
 
             // check whether we have already processed this block and skip it if so.
+            let block_reference = block.reference();
             if self.blocks_processed.contains_key(block_reference)
                 || self.blocks_pending.contains_key(block_reference)
             {
@@ -84,6 +90,9 @@ impl BlockManager {
     }
 
     pub fn add_own_block(&mut self, block: StatementBlock) -> Data<StatementBlock> {
+        // Update the highest known round number.
+        self.highest_round = max(self.highest_round, block.round());
+
         let block_ref = *block.reference();
         let block = Data::new(block);
         self.blocks_processed.insert(block_ref, block.clone());

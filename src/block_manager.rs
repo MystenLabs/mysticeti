@@ -98,12 +98,29 @@ impl BlockManager {
         self.blocks_processed.get(reference)
     }
 
+    pub fn get_blocks_by_round(&self, round: RoundNumber) -> Vec<&Data<StatementBlock>> {
+        let Some(references) = self.blocks_processed_by_round.get(&round) else {return vec![]};
+        references
+            .iter()
+            .filter_map(|reference| self.get_processed_block(reference))
+            .collect()
+    }
+
+    pub fn get_block_at_authority_round(
+        &self,
+        authority: AuthorityIndex,
+        round: RoundNumber,
+    ) -> Vec<&Data<StatementBlock>> {
+        self.get_blocks_by_round(round)
+            .into_iter()
+            .filter(|block| block.reference().authority == authority)
+            .collect()
+    }
+
     pub fn processed_block_exists(&self, authority: AuthorityIndex, round: RoundNumber) -> bool {
-        if let Some(r) = self.blocks_processed_by_round.get(&round) {
-            r.iter().any(|r| r.authority == authority)
-        } else {
-            false
-        }
+        !self
+            .get_block_at_authority_round(authority, round)
+            .is_empty()
     }
 
     /// Apply the consensus decision rule for a given leader round and decision round.

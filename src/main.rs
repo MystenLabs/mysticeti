@@ -1,6 +1,7 @@
 mod block_handler;
 mod block_manager;
 mod committee;
+mod committer;
 mod core;
 mod data;
 #[cfg(test)]

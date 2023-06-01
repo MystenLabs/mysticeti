@@ -71,3 +71,9 @@ impl<T: fmt::Display> fmt::Display for Data<T> {
         self.0.t.fmt(f)
     }
 }
+
+impl<T: PartialEq> PartialEq for Data<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.t == other.0.t
+    }
+}

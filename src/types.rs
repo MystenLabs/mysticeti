@@ -161,6 +161,13 @@ impl fmt::Display for StatementBlock {
         write!(f, ")")
     }
 }
+
+impl PartialEq for StatementBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.reference.digest == other.reference.digest
+    }
+}
+
 impl fmt::Debug for BaseStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)

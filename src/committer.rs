@@ -236,6 +236,7 @@ impl Committer {
         while let Some(x) = buffer.pop() {
             to_commit.push(x.clone());
             for reference in x.includes() {
+                // The block manager may have cleaned up blocks passed the latest committed rounds.
                 let Some(block) = block_manager.get_processed_block(reference) else { continue };
 
                 // Skip the block if we already committed it (either as part of this sub-dag or

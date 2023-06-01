@@ -115,7 +115,7 @@ impl BlockManager {
             .collect()
     }
 
-    pub fn get_block_at_authority_round(
+    pub fn get_blocks_at_authority_round(
         &self,
         authority: AuthorityIndex,
         round: RoundNumber,
@@ -128,7 +128,7 @@ impl BlockManager {
 
     pub fn processed_block_exists(&self, authority: AuthorityIndex, round: RoundNumber) -> bool {
         !self
-            .get_block_at_authority_round(authority, round)
+            .get_blocks_at_authority_round(authority, round)
             .is_empty()
     }
 

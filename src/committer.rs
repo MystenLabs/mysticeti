@@ -211,6 +211,11 @@ impl<'a> Committer<'a> {
     /// ordered committed sub-dags.
     pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<Data<StatementBlock>> {
         let last_committed_wave = self.wave_number(last_committer_round);
+        assert_eq!(
+            last_committer_round,
+            self.leader_round(last_committed_wave),
+            "Last committed round is always a leader round"
+        );
 
         let highest_round = self.block_manager.highest_round;
         let highest_wave = self.hightest_committable_wave(highest_round);
@@ -301,9 +306,9 @@ mod test {
     #[tracing_test::traced_test]
     fn commit_one() {
         let committee = committee(4);
-        let mut block_manager = BlockManager::default();
         let wave_length = 3;
 
+        let mut block_manager = BlockManager::default();
         build_dag(&committee, &mut block_manager, 5);
 
         let committer = Committer::new(committee.clone(), &block_manager, wave_length);
@@ -312,5 +317,86 @@ mod test {
         let sequence = committer.try_commit(last_committed_round);
         assert_eq!(sequence.len(), 1);
         assert_eq!(sequence[0].author(), committee.elect_leader(3))
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn idempotence() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_manager = BlockManager::default();
+        build_dag(&committee, &mut block_manager, 5);
+
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committed_round = 3;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_10() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let n = 10;
+        let enough_blocks = wave_length * (n + 1) - 1;
+        let mut block_manager = BlockManager::default();
+        build_dag(&committee, &mut block_manager, enough_blocks);
+
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert_eq!(sequence.len(), n as usize);
+        for (i, leader_block) in sequence.iter().enumerate() {
+            let leader_round = (i as u64 + 1) * wave_length;
+            assert_eq!(leader_block.author(), committee.elect_leader(leader_round));
+        }
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_none() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let first_commit_round = 2 * wave_length - 1;
+        for r in 0..first_commit_round - 1 {
+            let mut block_manager = BlockManager::default();
+            build_dag(&committee, &mut block_manager, r);
+
+            let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+            let last_committed_round = 0;
+            let sequence = committer.try_commit(last_committed_round);
+            assert!(sequence.is_empty());
+        }
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_incremental() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut last_committed_round = 0;
+        for n in 1..=10 {
+            let enough_blocks = wave_length * (n + 1) - 1;
+            let mut block_manager = BlockManager::default();
+            build_dag(&committee, &mut block_manager, enough_blocks);
+
+            let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+            let sequence = committer.try_commit(last_committed_round);
+            assert_eq!(sequence.len(), 1);
+            for leader_block in sequence {
+                let leader_round = n as u64 * wave_length;
+                assert_eq!(leader_block.author(), committee.elect_leader(leader_round));
+                last_committed_round = leader_round;
+            }
+        }
     }
 }

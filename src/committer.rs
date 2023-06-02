@@ -50,6 +50,16 @@ impl<'a> Committer<'a> {
         round / self.wave_length
     }
 
+    /// Return the highest wave number that can be committed given the highest round number.
+    fn hightest_committable_wave(&self, highest_round: RoundNumber) -> WaveNumber {
+        let wave = self.wave_number(highest_round);
+        if highest_round == self.decision_round(wave) {
+            wave
+        } else {
+            wave.saturating_sub(1)
+        }
+    }
+
     /// Return the leader round of the specified wave number. The leader round is always the first
     /// round of the wave.
     fn leader_round(&self, wave: WaveNumber) -> RoundNumber {
@@ -208,9 +218,9 @@ impl<'a> Committer<'a> {
         let last_committed_wave = self.wave_number(last_committer_round);
 
         let highest_round = self.block_manager.highest_round;
-        let wave = self.wave_number(highest_round);
-        let leader_round = self.leader_round(wave);
-        let decision_round = self.decision_round(wave);
+        let highest_wave = self.hightest_committable_wave(highest_round);
+        let leader_round = self.leader_round(highest_wave);
+        let decision_round = self.decision_round(highest_wave);
 
         tracing::debug!(
             "Trying to commit ( \
@@ -221,12 +231,7 @@ impl<'a> Committer<'a> {
         );
 
         // Ensure we commit each leader at most once (and skip genesis).
-        if wave <= last_committed_wave {
-            return vec![];
-        }
-
-        // We only act during decision rounds (except the first).
-        if highest_round != decision_round {
+        if highest_wave <= last_committed_wave {
             return vec![];
         }
 
@@ -253,7 +258,7 @@ impl<'a> Committer<'a> {
             }
             // Something very wrong happened: we have more than f Byzantine nodes.
             std::cmp::Ordering::Greater => {
-                panic!("More than one certified block at wave {wave} from leader {leader}")
+                panic!("More than one certified block at wave {highest_wave} from leader {leader}")
             }
         }
     }

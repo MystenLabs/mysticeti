@@ -179,20 +179,15 @@ impl<'a> Committer<'a> {
                 .collect();
 
             // There can be at most one certified leader.
-            match certified_leader_blocks.len().cmp(&1) {
-                // We skip the previous leader if it has no certificates that are ancestors of current
-                // leader.
-                std::cmp::Ordering::Less => continue,
-                // Proceed to the next iteration using the previous leader as anchor.
-                std::cmp::Ordering::Equal => {
-                    let certified_leader_block = certified_leader_blocks.pop().unwrap();
-                    to_commit.push(certified_leader_block);
-                    current_leader_block = certified_leader_block;
-                }
-                // Something very wrong happened: we have more than f Byzantine nodes.
-                std::cmp::Ordering::Greater => {
-                    panic!("More than one certified block at wave {w} from leader {leader}")
-                }
+            if certified_leader_blocks.len() > 1 {
+                panic!("More than one certified block at wave {w} from leader {leader}")
+            }
+
+            // We skip the previous leader if it has no certificates that are ancestors of current
+            // leader. Otherwise we proceed to the next iteration using the previous leader as anchor.
+            if let Some(certified_leader_block) = certified_leader_blocks.pop() {
+                to_commit.push(certified_leader_block);
+                current_leader_block = certified_leader_block;
             }
         }
         to_commit
@@ -247,19 +242,15 @@ impl<'a> Committer<'a> {
             .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
 
-        // Commit the leader. There can be at most one leader with enough support for each round.
-        match leaders_with_enough_support.len().cmp(&1) {
-            // There is no leader to commit.
-            std::cmp::Ordering::Less => return vec![],
-            // We can now commit the leader as well as all its linked predecessors (recursively).
-            std::cmp::Ordering::Equal => {
-                let leader_block = leaders_with_enough_support.pop().unwrap();
-                self.commit(last_committed_wave, leader_block)
-            }
-            // Something very wrong happened: we have more than f Byzantine nodes.
-            std::cmp::Ordering::Greater => {
-                panic!("More than one certified block at wave {highest_wave} from leader {leader}")
-            }
+        //  There can be at most one leader with enough support for each round.
+        if leaders_with_enough_support.len() > 1 {
+            panic!("More than one certified block at wave {highest_wave} from leader {leader}")
+        }
+
+        // If a leader has enough support, we commit it along with its linked predecessors.
+        match leaders_with_enough_support.pop() {
+            Some(leader_block) => self.commit(last_committed_wave, leader_block),
+            None => vec![],
         }
     }
 }

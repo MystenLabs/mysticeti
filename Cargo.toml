@@ -12,6 +12,12 @@ tokio = { version = "1.28.1", features = ["full"] }
 bincode = "1.3.3"
 serde = { version = "1.0.163", features = ["derive"] }
 parking_lot = "0.12.1"
+tracing = "0.1.37"
+
+[dev-dependencies]
+tracing-test = "0.2.4"
 
 [features]
 simulator = []
+
+

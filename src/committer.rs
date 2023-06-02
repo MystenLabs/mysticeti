@@ -20,20 +20,27 @@ type WaveNumber = u64;
 /// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
 /// certificates for the leader. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
-pub struct Committer {
+pub struct Committer<'a> {
     /// The committee information
     committee: Arc<Committee>,
+    /// Keep all block data
+    block_manager: &'a BlockManager,
     /// The length of a wave (minimum 3)
     wave_length: u64,
 }
 
-impl Committer {
+impl<'a> Committer<'a> {
     /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
-    pub fn new(committee: Arc<Committee>, wave_length: u64) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        block_manager: &'a BlockManager,
+        wave_length: u64,
+    ) -> Self {
         assert!(wave_length >= 3);
 
         Self {
             committee,
+            block_manager,
             wave_length,
         }
     }
@@ -46,13 +53,13 @@ impl Committer {
     /// Return the leader round of the specified wave number. The leader round is always the first
     /// round of the wave.
     fn leader_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave
+        wave * self.wave_length
     }
 
     /// Return the decision round of the specified wave. The decision round is always the last
     /// round of the wave.
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave + self.wave_length - 1
+        wave * self.wave_length + self.wave_length - 1
     }
 
     /// Check whether `earlier_block` is an ancestor of `later_block`.
@@ -60,11 +67,11 @@ impl Committer {
         &self,
         later_block: &Data<StatementBlock>,
         earlier_block: &Data<StatementBlock>,
-        block_manager: &BlockManager,
     ) -> bool {
         let mut parents = vec![later_block];
         for r in (earlier_block.round()..later_block.round()).rev() {
-            parents = block_manager
+            parents = self
+                .block_manager
                 .get_blocks_by_round(r)
                 .into_iter()
                 .filter(|&block| {
@@ -83,15 +90,15 @@ impl Committer {
         &self,
         leader_block: &Data<StatementBlock>,
         potential_certificate: &Data<StatementBlock>,
-        block_manager: &BlockManager,
     ) -> bool {
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
-            let potential_vote = block_manager
+            let potential_vote = self
+                .block_manager
                 .get_processed_block(reference)
                 .expect("We should have the whole sub-dag by now");
 
-            if self.linked(potential_vote, leader_block, block_manager) {
+            if self.linked(potential_vote, leader_block) {
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -106,14 +113,13 @@ impl Committer {
         &self,
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
-        block_manager: &BlockManager,
     ) -> bool {
-        let decision_blocks = block_manager.get_blocks_by_round(decision_round);
+        let decision_blocks = self.block_manager.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
-            if self.is_certificate(leader_block, &decision_block, block_manager) {
+            if self.is_certificate(leader_block, &decision_block) {
                 if certificate_stake_aggregator.add(authority, &self.committee) {
                     return true;
                 }
@@ -123,11 +129,10 @@ impl Committer {
     }
 
     /// Output an ordered list of leader blocks (that we should commit in order).
-    fn order_leaders<'a>(
+    fn order_leaders(
         &self,
         last_committed_wave: WaveNumber,
         latest_leader_block: &'a Data<StatementBlock>,
-        block_manager: &'a BlockManager,
     ) -> Vec<&'a Data<StatementBlock>> {
         let mut to_commit = vec![latest_leader_block];
         let mut current_leader_block = latest_leader_block;
@@ -139,15 +144,17 @@ impl Committer {
             // leader block per round (produced by a Byzantine leader).
             let leader_round = self.leader_round(w);
             let leader = self.committee.elect_leader(leader_round);
-            let leader_blocks = block_manager.get_blocks_at_authority_round(leader, leader_round);
+            let leader_blocks = self
+                .block_manager
+                .get_blocks_at_authority_round(leader, leader_round);
 
             // Get all blocks that could be potential certificates for these leader blocks, if
             // they are ancestors of the current leader.
             let decision_round = self.decision_round(w);
-            let decision_blocks = block_manager.get_blocks_by_round(decision_round);
+            let decision_blocks = self.block_manager.get_blocks_by_round(decision_round);
             let potential_certificates: Vec<_> = decision_blocks
                 .iter()
-                .filter(|block| self.linked(block, current_leader_block, block_manager))
+                .filter(|block| self.linked(block, current_leader_block))
                 .collect();
 
             // Use those potential certificates to determine which (if any) of the previous leader
@@ -156,7 +163,7 @@ impl Committer {
                 .iter()
                 .filter(|leader_block| {
                     potential_certificates.iter().any(|potential_certificate| {
-                        self.is_certificate(leader_block, potential_certificate, block_manager)
+                        self.is_certificate(leader_block, potential_certificate)
                     })
                 })
                 .collect();
@@ -184,12 +191,11 @@ impl Committer {
     /// Commit the specified leader block as well as any eligible past leader (recursively)
     /// that we did not already commit.
     fn commit(
-        &mut self,
+        &self,
         last_committed_wave: WaveNumber,
         leader_block: &Data<StatementBlock>,
-        block_manager: &BlockManager,
     ) -> Vec<Data<StatementBlock>> {
-        self.order_leaders(last_committed_wave, leader_block, block_manager)
+        self.order_leaders(last_committed_wave, leader_block)
             .into_iter()
             .cloned()
             .rev()
@@ -198,17 +204,21 @@ impl Committer {
 
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed sub-dags.
-    pub fn try_commit(
-        &mut self,
-        last_committer_round: RoundNumber,
-        block_manager: &BlockManager,
-    ) -> Vec<Data<StatementBlock>> {
+    pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<Data<StatementBlock>> {
         let last_committed_wave = self.wave_number(last_committer_round);
 
-        let highest_round = block_manager.highest_round;
+        let highest_round = self.block_manager.highest_round;
         let wave = self.wave_number(highest_round);
         let leader_round = self.leader_round(wave);
         let decision_round = self.decision_round(wave);
+
+        tracing::debug!(
+            "Trying to commit ( \
+                highest_round: {highest_round} \
+                leader_round: {leader_round}, \
+                decision round: {decision_round} \
+            )"
+        );
 
         // Ensure we commit each leader at most once (and skip genesis).
         if wave <= last_committed_wave {
@@ -224,10 +234,12 @@ impl Committer {
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
         let leader = self.committee.elect_leader(leader_round);
-        let leader_blocks = block_manager.get_blocks_at_authority_round(leader, leader_round);
+        let leader_blocks = self
+            .block_manager
+            .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .iter()
-            .filter(|l| self.enough_leader_support(decision_round, l, block_manager))
+            .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
 
         // Commit the leader. There can be at most one leader with enough support for each round.
@@ -237,12 +249,66 @@ impl Committer {
             // We can now commit the leader as well as all its linked predecessors (recursively).
             std::cmp::Ordering::Equal => {
                 let leader_block = leaders_with_enough_support.pop().unwrap();
-                self.commit(last_committed_wave, leader_block, block_manager)
+                self.commit(last_committed_wave, leader_block)
             }
             // Something very wrong happened: we have more than f Byzantine nodes.
             std::cmp::Ordering::Greater => {
                 panic!("More than one certified block at wave {wave} from leader {leader}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        block_manager::BlockManager,
+        committee::Committee,
+        data::Data,
+        test_util::committee,
+        types::{BlockReference, RoundNumber, StatementBlock},
+    };
+
+    use super::Committer;
+
+    fn build_dag(committee: &Committee, block_manager: &mut BlockManager, round: RoundNumber) {
+        let genesis: Vec<_> = committee
+            .authorities()
+            .map(|index| StatementBlock::new_genesis(index))
+            .collect();
+        let mut includes: Vec<_> = genesis.iter().map(|x| *x.reference()).collect();
+        block_manager.add_blocks(genesis);
+
+        for round in 1..=round {
+            let blocks: Vec<_> = committee
+                .authorities()
+                .map(|authority| {
+                    let reference = BlockReference {
+                        authority,
+                        round,
+                        digest: 0,
+                    };
+                    Data::new(StatementBlock::new(reference, includes.clone(), vec![]))
+                })
+                .collect();
+            includes = blocks.iter().map(|x| *x.reference()).collect();
+            block_manager.add_blocks(blocks);
+        }
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit() {
+        let committee = committee(4);
+        let mut block_manager = BlockManager::default();
+        let wave_length = 3;
+
+        build_dag(&committee, &mut block_manager, 6);
+
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committer_round = 0;
+        let sequence = committer.try_commit(last_committer_round);
+        println!("{sequence:?}");
     }
 }

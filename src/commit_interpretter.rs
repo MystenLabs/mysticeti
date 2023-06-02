@@ -34,6 +34,7 @@ impl CommittedSubDag {
     }
 }
 
+/// Expand a committed sequence of leader into a sequence of sub-dags.
 pub struct CommitInterpreter<'a> {
     /// Reference to the block manager holding all block data.
     block_manager: &'a BlockManager,

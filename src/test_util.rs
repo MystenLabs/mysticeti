@@ -19,8 +19,12 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 
+pub fn committee(n: usize) -> Arc<Committee> {
+    Committee::new(vec![1; n])
+}
+
 pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
-    let committee = Committee::new(vec![1; n]);
+    let committee = committee(n);
     let cores: Vec<_> = committee
         .authorities()
         .map(|authority| {

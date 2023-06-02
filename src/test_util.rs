@@ -1,15 +1,18 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_handler::{BlockHandler, TestBlockHandler};
-use crate::committee::Committee;
 use crate::core::Core;
 use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{AuthorityIndex, BlockReference, TransactionId};
+use crate::types::{AuthorityIndex, TransactionId};
+use crate::{
+    block_handler::{BlockHandler, TestBlockHandler},
+    types::StatementBlock,
+};
+use crate::{committee::Committee, data::Data};
 use futures::future::join_all;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -49,7 +52,7 @@ pub fn committee_and_syncers(
     n: usize,
 ) -> (
     Arc<Committee>,
-    Vec<Syncer<TestBlockHandler, bool, Vec<BlockReference>>>,
+    Vec<Syncer<TestBlockHandler, bool, Vec<Data<StatementBlock>>>>,
 ) {
     let (committee, cores) = committee_and_cores(n);
     (
@@ -93,7 +96,7 @@ pub fn simulated_network_syncers(
 
 pub async fn network_syncers(
     n: usize,
-) -> Vec<NetworkSyncer<TestBlockHandler, Vec<BlockReference>>> {
+) -> Vec<NetworkSyncer<TestBlockHandler, Vec<Data<StatementBlock>>>> {
     let (_committee, cores) = committee_and_cores(n);
     let (networks, _) = networks_and_addresses(cores.len()).await;
     let mut network_syncers = vec![];
@@ -112,7 +115,7 @@ pub fn rng_at_seed(seed: u64) -> StdRng {
 }
 
 pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
-    syncers: &[Syncer<H, S, Vec<BlockReference>>],
+    syncers: &[Syncer<H, S, Vec<Data<StatementBlock>>>],
 ) {
     let commits = syncers.iter().map(|state| state.commit_observer());
     let zero_commit = vec![];
@@ -133,7 +136,7 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
     eprintln!("Max commit sequence: {max_commit:?}");
 }
 
-fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {
+fn is_prefix(short: &[Data<StatementBlock>], long: &[Data<StatementBlock>]) -> bool {
     assert!(short.len() <= long.len());
     for (a, b) in short.iter().zip(long.iter().take(short.len())) {
         if a != b {

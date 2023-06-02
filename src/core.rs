@@ -136,7 +136,7 @@ impl<H: BlockHandler> Core<H> {
     }
 
     #[allow(dead_code)]
-    pub fn try_commit(&mut self, period: u64) -> Option<BlockReference> {
+    pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
         // todo - this needs to go to previous leaders
         let quorum_round = self.threshold_clock.get_round();
         if quorum_round > self.last_commit_round.max(period - 1) && quorum_round % period == 0 {
@@ -180,12 +180,16 @@ impl<H: BlockHandler> Core<H> {
                     // Set the last commit round
                     self.last_commit_round = quorum_round - period;
 
-                    return Some(block_ref.clone());
+                    let block = self
+                        .block_manager
+                        .get_processed_block(block_ref)
+                        .expect("We should have committed block");
+                    return vec![block.clone()];
                 }
             }
         }
 
-        return None;
+        return vec![];
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,

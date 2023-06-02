@@ -1,5 +1,6 @@
 mod block_handler;
 mod block_manager;
+pub mod commit_interpretter;
 mod committee;
 pub mod committer;
 mod core;

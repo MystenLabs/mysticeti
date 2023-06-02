@@ -4,7 +4,7 @@
 use crate::block_handler::BlockHandler;
 use crate::core::Core;
 use crate::data::Data;
-use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use std::collections::BTreeMap;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -22,7 +22,9 @@ pub trait SyncerSignals: Send + Sync {
 }
 
 pub trait CommitObserver: Send + Sync {
-    fn handle_commit(&mut self, committed_leader: BlockReference);
+    fn handle_commit<I>(&mut self, committed_leader: I)
+    where
+        I: Iterator<Item = Data<StatementBlock>>;
 }
 
 #[allow(dead_code)]
@@ -70,10 +72,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             assert!(self.own_blocks.insert(block.round(), block).is_none());
             self.signals.new_block_ready();
             self.force_new_block = false;
-            if let Some(commit) = self.core.try_commit(3) {
-                // todo - we need to inspect previous leaders too
-                self.commit_observer.handle_commit(commit);
-            }
+
+            // TODO: Hook up with the new committer.
+            let newly_committed = self.core.try_commit(3).into_iter();
+            self.commit_observer.handle_commit(newly_committed);
         }
     }
 
@@ -120,9 +122,12 @@ impl SyncerSignals for bool {
     }
 }
 
-impl CommitObserver for Vec<BlockReference> {
-    fn handle_commit(&mut self, committed_leader: BlockReference) {
-        self.push(committed_leader);
+impl CommitObserver for Vec<Data<StatementBlock>> {
+    fn handle_commit<I>(&mut self, committed_leader: I)
+    where
+        I: Iterator<Item = Data<StatementBlock>>,
+    {
+        self.extend(committed_leader);
     }
 }
 
@@ -147,7 +152,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, Vec<BlockReference>> {
+    impl SimulatorState for Syncer<TestBlockHandler, bool, Vec<Data<StatementBlock>>> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {

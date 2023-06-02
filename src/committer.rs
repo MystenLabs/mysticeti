@@ -227,6 +227,7 @@ impl<'a> Committer<'a> {
 
         // Ensure we commit each leader at most once (and skip genesis).
         if highest_wave <= last_committed_wave {
+            tracing::debug!("Wave {highest_wave} already committed");
             return vec![];
         }
 
@@ -242,14 +243,17 @@ impl<'a> Committer<'a> {
             .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
 
-        //  There can be at most one leader with enough support for each round.
+        // There can be at most one leader with enough support for each round.
         if leaders_with_enough_support.len() > 1 {
             panic!("More than one certified block at wave {highest_wave} from leader {leader}")
         }
 
         // If a leader has enough support, we commit it along with its linked predecessors.
         match leaders_with_enough_support.pop() {
-            Some(leader_block) => self.commit(last_committed_wave, leader_block),
+            Some(leader_block) => {
+                tracing::debug!("leader {leader} has enough support to be committed");
+                self.commit(last_committed_wave, leader_block)
+            }
             None => vec![],
         }
     }
@@ -267,6 +271,7 @@ mod test {
 
     use super::Committer;
 
+    /// Build a fully interconnected dag starting from genesis and up to the specified round.
     fn build_dag(committee: &Committee, block_manager: &mut BlockManager, round: RoundNumber) {
         let genesis: Vec<_> = committee
             .authorities()
@@ -294,17 +299,18 @@ mod test {
 
     #[test]
     #[tracing_test::traced_test]
-    fn commit() {
+    fn commit_one() {
         let committee = committee(4);
         let mut block_manager = BlockManager::default();
         let wave_length = 3;
 
-        build_dag(&committee, &mut block_manager, 6);
+        build_dag(&committee, &mut block_manager, 5);
 
         let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
-        let last_committer_round = 0;
-        let sequence = committer.try_commit(last_committer_round);
-        println!("{sequence:?}");
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence[0].author(), committee.elect_leader(3))
     }
 }

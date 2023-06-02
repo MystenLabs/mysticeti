@@ -216,7 +216,9 @@ impl Committer {
                     current_leader_block = certified_leader_block;
                 }
                 // Something very wrong happened: we have more than f Byzantine nodes.
-                std::cmp::Ordering::Greater => panic!("More than one certified leader"),
+                std::cmp::Ordering::Greater => {
+                    panic!("More than one certified block at wave {w} from leader {leader}")
+                }
             }
         }
         to_commit
@@ -237,7 +239,9 @@ impl Committer {
             to_commit.push(x.clone());
             for reference in x.includes() {
                 // The block manager may have cleaned up blocks passed the latest committed rounds.
-                let Some(block) = block_manager.get_processed_block(reference) else { continue };
+                let block = block_manager
+                    .get_processed_block(reference)
+                    .expect("We should have the whole sub-dag by now");
 
                 // Skip the block if we already committed it (either as part of this sub-dag or
                 // a previous one).
@@ -318,7 +322,9 @@ impl Committer {
                 self.commit(leader_block, block_manager)
             }
             // Something very wrong happened: we have more than f Byzantine nodes.
-            std::cmp::Ordering::Greater => panic!("More than one certified leader"),
+            std::cmp::Ordering::Greater => {
+                panic!("More than one certified block at wave {wave} from leader {leader}")
+            }
         }
     }
 }

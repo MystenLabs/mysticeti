@@ -1,12 +1,15 @@
-use crate::block_handler::BlockHandler;
 use crate::block_manager::BlockManager;
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::{block_handler::BlockHandler, committer::Committer};
 use std::mem;
 use std::sync::Arc;
+use std::{
+    cmp::max,
+    collections::{HashSet, VecDeque},
+};
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -137,59 +140,15 @@ impl<H: BlockHandler> Core<H> {
 
     #[allow(dead_code)]
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
-        // todo - this needs to go to previous leaders
-        let quorum_round = self.threshold_clock.get_round();
-        if quorum_round > self.last_commit_round.max(period - 1) && quorum_round % period == 0 {
-            // Get the authority that is the leader at this round
-            let target_authority = self.leader_at_round(quorum_round, period);
+        let sequence = Committer::new(self.committee.clone(), &self.block_manager, period)
+            .try_commit(self.last_commit_round);
 
-            println!("Committing round {}", quorum_round);
-            let support = self.block_manager.get_decision_round_certificates(
-                quorum_round - period,
-                &target_authority,
-                quorum_round - 1,
-            );
+        self.last_commit_round = max(
+            self.last_commit_round,
+            sequence.iter().last().map_or(0, |x| x.round()),
+        );
 
-            // iterate over all references in support
-            let mut certificate_votes: HashMap<&BlockReference, HashSet<&AuthorityIndex>> =
-                HashMap::new();
-            for (decision_reference, leader_votes) in support {
-                for (potential_cert, votes) in leader_votes {
-                    if self
-                        .committee
-                        .is_quorum(self.committee.get_total_stake(&votes))
-                    {
-                        let votes = certificate_votes
-                            .entry(potential_cert)
-                            .or_insert(HashSet::new());
-                        votes.insert(&decision_reference.authority);
-                    }
-                }
-            }
-
-            // Assert there is only one entry in certificate_votes, since only one certificate can ever
-            // exist with a quorum of votes.
-            assert!(certificate_votes.len() <= 1);
-
-            // If there is a certificate, then we can commit the block
-            for (block_ref, votes) in certificate_votes {
-                if self
-                    .committee
-                    .is_quorum(self.committee.get_total_stake(&votes))
-                {
-                    // Set the last commit round
-                    self.last_commit_round = quorum_round - period;
-
-                    let block = self
-                        .block_manager
-                        .get_processed_block(block_ref)
-                        .expect("We should have committed block");
-                    return vec![block.clone()];
-                }
-            }
-        }
-
-        return vec![];
+        sequence
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,

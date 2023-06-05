@@ -73,7 +73,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.signals.new_block_ready();
             self.force_new_block = false;
 
-            // TODO: Hook up with the new committer.
             let newly_committed = self.core.try_commit(3).into_iter();
             self.commit_observer.handle_commit(newly_committed);
         }

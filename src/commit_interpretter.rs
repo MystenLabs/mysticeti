@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashSet;
+use std::fmt;
 
 use crate::{
     block_manager::BlockManager,
@@ -53,6 +54,7 @@ impl CommitInterpreter {
         let mut to_commit = Vec::new();
 
         let mut buffer = vec![&leader_block];
+        self.committed.insert(*leader_block.reference());
         while let Some(x) = buffer.pop() {
             to_commit.push(x.clone());
             for reference in x.includes() {
@@ -87,5 +89,15 @@ impl CommitInterpreter {
             committed.push(sub_dag);
         }
         committed
+    }
+}
+
+impl fmt::Debug for CommittedSubDag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}(", self.anchor)?;
+        for block in &self.blocks {
+            write!(f, "{}, ", block.reference())?;
+        }
+        write!(f, ")")
     }
 }

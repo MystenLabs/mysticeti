@@ -125,20 +125,10 @@ impl SyncerSignals for bool {
     }
 }
 
-impl CommitObserver for Vec<Data<StatementBlock>> {
-    fn handle_commit(
-        &mut self,
-        _block_manager: &BlockManager,
-        committed_leaders: Vec<Data<StatementBlock>>,
-    ) {
-        self.extend(committed_leaders);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_handler::TestBlockHandler;
+    use crate::block_handler::{TestBlockHandler, TestCommitHandler};
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
     use crate::test_util::{
@@ -156,7 +146,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, Vec<Data<StatementBlock>>> {
+    impl SimulatorState for Syncer<TestBlockHandler, bool, TestCommitHandler> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {

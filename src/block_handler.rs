@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_manager::BlockManager;
-use crate::commit_interpretter::CommitInterpreter;
+use crate::commit_interpretter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
 use crate::syncer::CommitObserver;
-use crate::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId};
+use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
 use std::sync::Arc;
 
 pub trait BlockHandler: Send + Sync {
@@ -26,6 +26,8 @@ pub struct TestCommitHandler {
     commit_interpreter: CommitInterpreter,
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
     committee: Arc<Committee>,
+    committed_leaders: Vec<BlockReference>,
+    committed_dags: Vec<CommittedSubDag>,
 }
 
 impl TestBlockHandler {
@@ -66,6 +68,22 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
+impl TestCommitHandler {
+    pub fn new(committee: Arc<Committee>) -> Self {
+        Self {
+            commit_interpreter: CommitInterpreter::new(),
+            transaction_votes: Default::default(),
+            committee,
+            committed_leaders: vec![],
+            committed_dags: vec![],
+        }
+    }
+
+    pub fn committed_leaders(&self) -> &Vec<BlockReference> {
+        &self.committed_leaders
+    }
+}
+
 impl CommitObserver for TestCommitHandler {
     fn handle_commit(
         &mut self,
@@ -76,10 +94,12 @@ impl CommitObserver for TestCommitHandler {
             .commit_interpreter
             .handle_commit(block_manager, committed_leaders);
         for commit in committed {
-            for block in commit.blocks {
+            self.committed_leaders.push(commit.anchor);
+            for block in &commit.blocks {
                 self.transaction_votes
-                    .process_block(&block, None, &self.committee);
+                    .process_block(block, None, &self.committee);
             }
+            self.committed_dags.push(commit);
         }
     }
 }

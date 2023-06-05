@@ -18,6 +18,8 @@ pub struct TestBlockHandler {
     authority: AuthorityIndex,
 }
 
+pub struct TestCommitHandler {}
+
 impl TestBlockHandler {
     pub fn new(
         last_transaction: u64,

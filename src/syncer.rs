@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::BlockHandler;
+use crate::block_manager::BlockManager;
 use crate::core::Core;
 use crate::data::Data;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
@@ -22,9 +23,11 @@ pub trait SyncerSignals: Send + Sync {
 }
 
 pub trait CommitObserver: Send + Sync {
-    fn handle_commit<I>(&mut self, committed_leader: I)
-    where
-        I: Iterator<Item = Data<StatementBlock>>;
+    fn handle_commit(
+        &mut self,
+        block_manager: &BlockManager,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    );
 }
 
 #[allow(dead_code)]
@@ -73,8 +76,9 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.signals.new_block_ready();
             self.force_new_block = false;
 
-            let newly_committed = self.core.try_commit(3).into_iter();
-            self.commit_observer.handle_commit(newly_committed);
+            let newly_committed = self.core.try_commit(3);
+            self.commit_observer
+                .handle_commit(self.core.block_manager(), newly_committed);
         }
     }
 
@@ -122,11 +126,12 @@ impl SyncerSignals for bool {
 }
 
 impl CommitObserver for Vec<Data<StatementBlock>> {
-    fn handle_commit<I>(&mut self, committed_leader: I)
-    where
-        I: Iterator<Item = Data<StatementBlock>>,
-    {
-        self.extend(committed_leader);
+    fn handle_commit(
+        &mut self,
+        _block_manager: &BlockManager,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    ) {
+        self.extend(committed_leaders);
     }
 }
 

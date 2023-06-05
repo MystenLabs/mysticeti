@@ -173,6 +173,10 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
+    pub fn block_manager(&self) -> &BlockManager {
+        &self.block_manager
+    }
+
     pub fn last_proposed(&self) -> RoundNumber {
         self.last_proposed
     }

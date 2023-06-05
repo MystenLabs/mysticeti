@@ -32,23 +32,22 @@ impl CommittedSubDag {
 }
 
 /// Expand a committed sequence of leader into a sequence of sub-dags.
-pub struct CommitInterpreter<'a> {
-    /// Reference to the block manager holding all block data.
-    block_manager: &'a BlockManager,
+pub struct CommitInterpreter {
     /// Keep track of all committed blocks to avoid committing the same block twice.
     committed: HashSet<BlockReference>,
     /// Hold the commit sequence.
     commit_sequence: Vec<CommittedSubDag>,
 }
 
-impl<'a> CommitObserver for CommitInterpreter<'a> {
-    fn handle_commit<I>(&mut self, committed_leaders: I)
-    where
-        I: Iterator<Item = Data<StatementBlock>>,
-    {
+impl CommitObserver for CommitInterpreter {
+    fn handle_commit(
+        &mut self,
+        block_manager: &BlockManager,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    ) {
         for leader_block in committed_leaders {
             // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(leader_block);
+            let mut sub_dag = self.collect_sub_dag(block_manager, leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();
@@ -57,10 +56,9 @@ impl<'a> CommitObserver for CommitInterpreter<'a> {
     }
 }
 
-impl<'a> CommitInterpreter<'a> {
-    pub fn new(block_manager: &'a BlockManager) -> Self {
+impl CommitInterpreter {
+    pub fn new() -> Self {
         Self {
-            block_manager,
             committed: HashSet::new(),
             commit_sequence: Vec::new(),
         }
@@ -68,7 +66,11 @@ impl<'a> CommitInterpreter<'a> {
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
     /// have already been committed (within previous sub-dags).
-    fn collect_sub_dag(&mut self, leader_block: Data<StatementBlock>) -> CommittedSubDag {
+    fn collect_sub_dag(
+        &mut self,
+        block_manager: &BlockManager,
+        leader_block: Data<StatementBlock>,
+    ) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
         let mut buffer = vec![&leader_block];
@@ -76,8 +78,7 @@ impl<'a> CommitInterpreter<'a> {
             to_commit.push(x.clone());
             for reference in x.includes() {
                 // The block manager may have cleaned up blocks passed the latest committed rounds.
-                let block = self
-                    .block_manager
+                let block = block_manager
                     .get_processed_block(reference)
                     .expect("We should have the whole sub-dag by now");
 

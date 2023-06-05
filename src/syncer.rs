@@ -144,7 +144,7 @@ mod tests {
     use std::time::Duration;
 
     const ROUND_TIMEOUT: Duration = Duration::from_millis(1000);
-    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(200);
+    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(1800);
 
     pub enum SyncerEvent {
         ForceNewBlock(RoundNumber),
@@ -214,7 +214,7 @@ mod tests {
             );
         }
         // Simulation awaits for first 5 transactions proposed by each authority to certify
-        let num_txn = 20;
+        let num_txn = 200;
         let await_transactions = first_n_transactions(&committee, num_txn);
         assert_eq!(await_transactions.len(), num_txn as usize * committee.len());
 

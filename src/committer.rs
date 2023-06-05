@@ -109,6 +109,7 @@ impl<'a> Committer<'a> {
                 .expect("We should have the whole sub-dag by now");
 
             if self.linked(potential_vote, leader_block) {
+                tracing::debug!("{potential_vote:?} is linked to {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -130,6 +131,7 @@ impl<'a> Committer<'a> {
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
             if self.is_certificate(leader_block, &decision_block) {
+                tracing::debug!("{decision_block:?} is a certificate for leader {leader_block:?}");
                 if certificate_stake_aggregator.add(authority, &self.committee) {
                     return true;
                 }
@@ -266,42 +268,74 @@ impl<'a> Committer<'a> {
 
 #[cfg(test)]
 mod test {
+    use rand::RngCore;
+
     use crate::{
         block_manager::BlockManager,
         committee::Committee,
         data::Data,
         test_util::committee,
-        types::{BlockReference, RoundNumber, StatementBlock},
+        types::{BlockDigest, BlockReference, RoundNumber, StatementBlock},
     };
 
     use super::Committer;
 
-    /// Build a fully interconnected dag starting from genesis and up to the specified round.
-    fn build_dag(committee: &Committee, block_manager: &mut BlockManager, round: RoundNumber) {
-        let genesis: Vec<_> = committee
-            .authorities()
-            .map(|index| StatementBlock::new_genesis(index))
-            .collect();
-        let mut includes: Vec<_> = genesis.iter().map(|x| *x.reference()).collect();
-        block_manager.add_blocks(genesis);
+    /// Generate a random digest. It is essential that each block has its own digest.
+    fn random_digest() -> BlockDigest {
+        let mut rng = rand::thread_rng();
+        rng.next_u64()
+    }
 
-        for round in 1..=round {
-            let blocks: Vec<_> = committee
+    /// Build a fully interconnected dag up to the specified round. This function starts building the
+    /// dag from the specified [`start`] references or from genesis if none are specified.
+    fn build_dag(
+        committee: &Committee,
+        block_manager: &mut BlockManager,
+        start: Option<Vec<BlockReference>>,
+        stop: RoundNumber,
+    ) -> Vec<BlockReference> {
+        let mut includes = match start {
+            Some(start) => {
+                assert!(!start.is_empty());
+                assert_eq!(
+                    start.iter().map(|x| x.round).max(),
+                    start.iter().map(|x| x.round).min()
+                );
+                start
+            }
+            None => {
+                let (references, genesis): (Vec<_>, Vec<_>) = committee
+                    .authorities()
+                    .map(|index| StatementBlock::new_genesis(index))
+                    .map(|block| (*block.reference(), block))
+                    .unzip();
+                block_manager.add_blocks(genesis);
+                references
+            }
+        };
+
+        let starting_round = includes.first().unwrap().round + 1;
+        for round in starting_round..=stop {
+            let (references, blocks): (Vec<_>, Vec<_>) = committee
                 .authorities()
                 .map(|authority| {
                     let reference = BlockReference {
                         authority,
                         round,
-                        digest: 0,
+                        digest: random_digest(),
                     };
-                    Data::new(StatementBlock::new(reference, includes.clone(), vec![]))
+                    let block = Data::new(StatementBlock::new(reference, includes.clone(), vec![]));
+                    (reference, block)
                 })
-                .collect();
-            includes = blocks.iter().map(|x| *x.reference()).collect();
+                .unzip();
             block_manager.add_blocks(blocks);
+            includes = references;
         }
+
+        includes
     }
 
+    /// Commit one leader.
     #[test]
     #[tracing_test::traced_test]
     fn commit_one() {
@@ -309,7 +343,7 @@ mod test {
         let wave_length = 3;
 
         let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, 5);
+        build_dag(&committee, &mut block_manager, None, 5);
 
         let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
@@ -319,6 +353,7 @@ mod test {
         assert_eq!(sequence[0].author(), committee.elect_leader(3))
     }
 
+    /// Ensure idempotent replies.
     #[test]
     #[tracing_test::traced_test]
     fn idempotence() {
@@ -326,7 +361,7 @@ mod test {
         let wave_length = 3;
 
         let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, 5);
+        build_dag(&committee, &mut block_manager, None, 5);
 
         let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
@@ -335,6 +370,7 @@ mod test {
         assert!(sequence.is_empty());
     }
 
+    /// Commit 10 leaders in a row (9 of them are committed recursively).
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
@@ -344,7 +380,7 @@ mod test {
         let n = 10;
         let enough_blocks = wave_length * (n + 1) - 1;
         let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, enough_blocks);
+        build_dag(&committee, &mut block_manager, None, enough_blocks);
 
         let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
@@ -357,6 +393,7 @@ mod test {
         }
     }
 
+    /// Do not commit anything if we are still in the first wave.
     #[test]
     #[tracing_test::traced_test]
     fn commit_none() {
@@ -366,7 +403,7 @@ mod test {
         let first_commit_round = 2 * wave_length - 1;
         for r in 0..first_commit_round - 1 {
             let mut block_manager = BlockManager::default();
-            build_dag(&committee, &mut block_manager, r);
+            build_dag(&committee, &mut block_manager, None, r);
 
             let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
@@ -376,6 +413,7 @@ mod test {
         }
     }
 
+    /// Commit one by one each leader as the dag progresses in ideal conditions.
     #[test]
     #[tracing_test::traced_test]
     fn commit_incremental() {
@@ -386,7 +424,7 @@ mod test {
         for n in 1..=10 {
             let enough_blocks = wave_length * (n + 1) - 1;
             let mut block_manager = BlockManager::default();
-            build_dag(&committee, &mut block_manager, enough_blocks);
+            build_dag(&committee, &mut block_manager, None, enough_blocks);
 
             let committer = Committer::new(committee.clone(), &block_manager, wave_length);
 
@@ -398,5 +436,90 @@ mod test {
                 last_committed_round = leader_round;
             }
         }
+    }
+
+    /// We do not commit anything if there is no leader.
+    #[test]
+    #[tracing_test::traced_test]
+    fn no_leader() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_manager = BlockManager::default();
+
+        // Add enough blocks to finish the first wave.
+        let decision_round_1 = wave_length - 1;
+        let references = build_dag(&committee, &mut block_manager, None, decision_round_1);
+
+        // Add enough blocks to reach the second decision round (but without the second leader).
+        let leader_round_2 = wave_length;
+        let leader_2 = committee.elect_leader(leader_round_2);
+
+        let (references, blocks): (Vec<_>, Vec<_>) = committee
+            .authorities()
+            .filter(|&authority| authority != leader_2)
+            .map(|authority| {
+                let reference = BlockReference {
+                    authority,
+                    round: leader_round_2,
+                    digest: random_digest(),
+                };
+                let block = Data::new(StatementBlock::new(reference, references.clone(), vec![]));
+                (reference, block)
+            })
+            .unzip();
+
+        block_manager.add_blocks(blocks);
+
+        let decision_round_2 = 2 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_manager,
+            Some(references),
+            decision_round_2,
+        );
+
+        // Ensure no blocks are committed.
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
+    }
+
+    /// If there is no leader with enough support, we commit nothing.
+    #[test]
+    #[tracing_test::traced_test]
+    fn not_enough_support() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_manager = BlockManager::default();
+
+        // Add enough blocks to reach the first leader.
+        let leader_round_2 = wave_length;
+        let references_2 = build_dag(&committee, &mut block_manager, None, leader_round_2);
+
+        // Filter out the leader.
+        let references_2_without_leader: Vec<_> = references_2
+            .into_iter()
+            .filter(|x| x.authority != committee.elect_leader(leader_round_2))
+            .collect();
+
+        // Add enough blocks to reach the second decision round.
+        let decision_round_2 = 2 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_manager,
+            Some(references_2_without_leader),
+            decision_round_2,
+        );
+
+        // Ensure no blocks are committed.
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
     }
 }

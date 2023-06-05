@@ -86,7 +86,7 @@ pub fn simulated_network_syncers(
     n: usize,
 ) -> (
     SimulatedNetwork,
-    Vec<NetworkSyncer<TestBlockHandler, Vec<BlockReference>>>,
+    Vec<NetworkSyncer<TestBlockHandler, Vec<Data<StatementBlock>>>>,
 ) {
     let (committee, cores) = committee_and_cores(n);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);

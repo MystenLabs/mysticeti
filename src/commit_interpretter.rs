@@ -54,7 +54,7 @@ impl CommitInterpreter {
         let mut to_commit = Vec::new();
 
         let mut buffer = vec![&leader_block];
-        self.committed.insert(*leader_block.reference());
+        assert!(self.committed.insert(*leader_block.reference()));
         while let Some(x) = buffer.pop() {
             to_commit.push(x.clone());
             for reference in x.includes() {
@@ -65,9 +65,8 @@ impl CommitInterpreter {
 
                 // Skip the block if we already committed it (either as part of this sub-dag or
                 // a previous one).
-                if !self.committed.contains(&reference) {
+                if self.committed.insert(*reference) {
                     buffer.push(block);
-                    self.committed.insert(*reference);
                 }
             }
         }

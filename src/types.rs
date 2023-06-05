@@ -164,7 +164,7 @@ impl fmt::Display for StatementBlock {
 
 impl PartialEq for StatementBlock {
     fn eq(&self, other: &Self) -> bool {
-        self.reference.digest == other.reference.digest
+        self.reference == other.reference
     }
 }
 

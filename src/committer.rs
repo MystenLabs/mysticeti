@@ -109,7 +109,7 @@ impl<'a> Committer<'a> {
                 .expect("We should have the whole sub-dag by now");
 
             if self.linked(potential_vote, leader_block) {
-                tracing::debug!("{potential_vote:?} is linked to {leader_block:?}");
+                tracing::debug!("{potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -166,7 +166,7 @@ impl<'a> Committer<'a> {
             let decision_blocks = self.block_manager.get_blocks_by_round(decision_round);
             let potential_certificates: Vec<_> = decision_blocks
                 .iter()
-                .filter(|block| self.linked(block, current_leader_block))
+                .filter(|block| self.linked(current_leader_block, block))
                 .collect();
 
             // Use those potential certificates to determine which (if any) of the previous leader
@@ -258,7 +258,7 @@ impl<'a> Committer<'a> {
         // If a leader has enough support, we commit it along with its linked predecessors.
         match leaders_with_enough_support.pop() {
             Some(leader_block) => {
-                tracing::debug!("leader {leader} has enough support to be committed");
+                tracing::debug!("leader {leader_block} has enough support to be committed");
                 self.commit(last_committed_wave, leader_block)
             }
             None => vec![],
@@ -496,7 +496,8 @@ mod test {
 
         let mut block_manager = BlockManager::default();
 
-        // Add enough blocks to reach the first leader.
+        // Add enough blocks to reach the second leader. Remember that he second leader is part of
+        // the genesis.
         let leader_round_2 = wave_length;
         let references_2 = build_dag(&committee, &mut block_manager, None, leader_round_2);
 
@@ -521,5 +522,47 @@ mod test {
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         assert!(sequence.is_empty());
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn skip_leader() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_manager = BlockManager::default();
+
+        // Add enough blocks to reach the third leader.
+        let leader_round_3 = 2 * wave_length;
+        let references_3 = build_dag(&committee, &mut block_manager, None, leader_round_3);
+
+        // Filter out the third leader.
+        let references_3_without_leader: Vec<_> = references_3
+            .into_iter()
+            .filter(|x| x.authority != committee.elect_leader(leader_round_3))
+            .collect();
+
+        // Add enough blocks to reach the fourth decision round.
+        let decision_round_4 = 4 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_manager,
+            Some(references_3_without_leader),
+            decision_round_4,
+        );
+
+        // Ensure we commit the second and fourth leaders.
+        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        println!("{:?}", sequence);
+        assert_eq!(sequence.len(), 2);
+        let leader_round_2 = wave_length;
+        let leader_2 = committee.elect_leader(leader_round_2);
+        assert_eq!(sequence[0].author(), leader_2);
+        let leader_round_4 = 3 * wave_length;
+        let leader_4 = committee.elect_leader(leader_round_4);
+        assert_eq!(sequence[1].author(), leader_4);
     }
 }

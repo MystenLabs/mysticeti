@@ -1,16 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    cmp::max,
-    collections::{HashMap, HashSet},
-};
+use std::collections::HashSet;
 
 use crate::{
     block_manager::BlockManager,
     data::Data,
     syncer::CommitObserver,
-    types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
+    types::{BlockReference, StatementBlock},
 };
 
 /// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
@@ -38,9 +35,8 @@ impl CommittedSubDag {
 pub struct CommitInterpreter<'a> {
     /// Reference to the block manager holding all block data.
     block_manager: &'a BlockManager,
-    /// Keep track of the latest committed round for each authority; avoid committing a block more
-    /// than once
-    last_committed_rounds: HashMap<AuthorityIndex, RoundNumber>,
+    /// Keep track of all committed blocks to avoid committing the same block twice.
+    committed: HashSet<BlockReference>,
     /// Hold the commit sequence.
     commit_sequence: Vec<CommittedSubDag>,
 }
@@ -52,11 +48,7 @@ impl<'a> CommitObserver for CommitInterpreter<'a> {
     {
         for leader_block in committed_leaders {
             // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(&leader_block);
-
-            // Update the last committed round for each authority. This avoid committing
-            // twice the same blocks (within different sub-dags).
-            self.update_last_committed_rounds(&sub_dag);
+            let mut sub_dag = self.collect_sub_dag(leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();
@@ -69,27 +61,17 @@ impl<'a> CommitInterpreter<'a> {
     pub fn new(block_manager: &'a BlockManager) -> Self {
         Self {
             block_manager,
-            last_committed_rounds: HashMap::new(),
+            committed: HashSet::new(),
             commit_sequence: Vec::new(),
-        }
-    }
-
-    /// Update the last committed rounds. We must call this method after committing each sub-dag.
-    fn update_last_committed_rounds(&mut self, sub_dag: &CommittedSubDag) {
-        for block in &sub_dag.blocks {
-            let authority = block.author();
-            let r = self.last_committed_rounds.entry(authority).or_insert(0);
-            *r = max(*r, block.round());
         }
     }
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
     /// have already been committed (within previous sub-dags).
-    fn collect_sub_dag(&self, leader_block: &'a Data<StatementBlock>) -> CommittedSubDag {
+    fn collect_sub_dag(&mut self, leader_block: Data<StatementBlock>) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
-        let mut already_processed = HashSet::new();
-        let mut buffer = vec![leader_block];
+        let mut buffer = vec![&leader_block];
         while let Some(x) = buffer.pop() {
             to_commit.push(x.clone());
             for reference in x.includes() {
@@ -101,14 +83,9 @@ impl<'a> CommitInterpreter<'a> {
 
                 // Skip the block if we already committed it (either as part of this sub-dag or
                 // a previous one).
-                let mut skip = already_processed.contains(&reference);
-                skip |= self
-                    .last_committed_rounds
-                    .get(&reference.authority)
-                    .map_or_else(|| false, |r| r >= &block.round());
-                if !skip {
+                if !self.committed.contains(&reference) {
                     buffer.push(block);
-                    already_processed.insert(reference);
+                    self.committed.insert(*reference);
                 }
             }
         }

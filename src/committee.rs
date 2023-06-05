@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::Data;
-use crate::types::{AuthorityIndex, Stake, StatementBlock};
+use crate::types::{AuthorityIndex, BaseStatement, Stake, StatementBlock, TransactionId, Vote};
 use rand::Rng;
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
@@ -187,6 +187,36 @@ impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
 
     pub fn is_processed(&self, k: &K) -> bool {
         self.processed.contains(k)
+    }
+}
+
+impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
+    pub fn process_block(
+        &mut self,
+        block: &Data<StatementBlock>,
+        mut response: Option<&mut Vec<BaseStatement>>,
+        committee: &Committee,
+    ) {
+        for statement in block.statements() {
+            match statement {
+                BaseStatement::Share(id, _transaction) => {
+                    if self.register(*id, block.author(), &committee).is_err() {
+                        panic!("Duplicate transaction: {id} from {}", block.author());
+                    }
+                    if let Some(ref mut response) = response {
+                        response.push(BaseStatement::Vote(*id, Vote::Accept));
+                    }
+                }
+                BaseStatement::Vote(id, vote) => match vote {
+                    Vote::Accept => {
+                        if self.vote(*id, block.author(), &committee).is_err() {
+                            panic!("Unexpected - got vote for unknown transaction {}", id);
+                        }
+                    }
+                    Vote::Reject(_) => unimplemented!(),
+                },
+            }
+        }
     }
 }
 

@@ -1,9 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::block_manager::BlockManager;
+use crate::commit_interpretter::CommitInterpreter;
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
-use crate::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId, Vote};
+use crate::syncer::CommitObserver;
+use crate::types::{AuthorityIndex, BaseStatement, StatementBlock, TransactionId};
 use std::sync::Arc;
 
 pub trait BlockHandler: Send + Sync {
@@ -18,7 +21,12 @@ pub struct TestBlockHandler {
     authority: AuthorityIndex,
 }
 
-pub struct TestCommitHandler {}
+#[allow(dead_code)]
+pub struct TestCommitHandler {
+    commit_interpreter: CommitInterpreter,
+    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    committee: Arc<Committee>,
+}
 
 impl TestBlockHandler {
     pub fn new(
@@ -51,33 +59,27 @@ impl BlockHandler for TestBlockHandler {
             .register(self.last_transaction, self.authority, &self.committee)
             .ok();
         for block in blocks {
-            for statement in block.statements() {
-                match statement {
-                    BaseStatement::Share(id, _transaction) => {
-                        if self
-                            .transaction_votes
-                            .register(*id, block.author(), &self.committee)
-                            .is_err()
-                        {
-                            panic!("Duplicate transaction: {id} from {}", block.author());
-                        }
-                        response.push(BaseStatement::Vote(*id, Vote::Accept));
-                    }
-                    BaseStatement::Vote(id, vote) => match vote {
-                        Vote::Accept => {
-                            if self
-                                .transaction_votes
-                                .vote(*id, block.author(), &self.committee)
-                                .is_err()
-                            {
-                                panic!("Unexpected - got vote for unknown transaction {}", id);
-                            }
-                        }
-                        Vote::Reject(_) => unimplemented!(),
-                    },
-                }
-            }
+            self.transaction_votes
+                .process_block(block, Some(&mut response), &self.committee);
         }
         response
+    }
+}
+
+impl CommitObserver for TestCommitHandler {
+    fn handle_commit(
+        &mut self,
+        block_manager: &BlockManager,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    ) {
+        let committed = self
+            .commit_interpreter
+            .handle_commit(block_manager, committed_leaders);
+        for commit in committed {
+            for block in commit.blocks {
+                self.transaction_votes
+                    .process_block(&block, None, &self.committee);
+            }
+        }
     }
 }

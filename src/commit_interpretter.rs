@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use crate::{
     block_manager::BlockManager,
     data::Data,
-    syncer::CommitObserver,
     types::{BlockReference, StatementBlock},
 };
 
@@ -35,32 +34,12 @@ impl CommittedSubDag {
 pub struct CommitInterpreter {
     /// Keep track of all committed blocks to avoid committing the same block twice.
     committed: HashSet<BlockReference>,
-    /// Hold the commit sequence.
-    commit_sequence: Vec<CommittedSubDag>,
-}
-
-impl CommitObserver for CommitInterpreter {
-    fn handle_commit(
-        &mut self,
-        block_manager: &BlockManager,
-        committed_leaders: Vec<Data<StatementBlock>>,
-    ) {
-        for leader_block in committed_leaders {
-            // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(block_manager, leader_block);
-
-            // [Optional] sort the sub-dag using a deterministic algorithm.
-            sub_dag.sort();
-            self.commit_sequence.push(sub_dag);
-        }
-    }
 }
 
 impl CommitInterpreter {
     pub fn new() -> Self {
         Self {
             committed: HashSet::new(),
-            commit_sequence: Vec::new(),
         }
     }
 
@@ -91,5 +70,22 @@ impl CommitInterpreter {
             }
         }
         CommittedSubDag::new(*leader_block.reference(), to_commit)
+    }
+
+    pub fn handle_commit(
+        &mut self,
+        block_manager: &BlockManager,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    ) -> Vec<CommittedSubDag> {
+        let mut committed = vec![];
+        for leader_block in committed_leaders {
+            // Collect the sub-dag generated using each of these leaders as anchor.
+            let mut sub_dag = self.collect_sub_dag(block_manager, leader_block);
+
+            // [Optional] sort the sub-dag using a deterministic algorithm.
+            sub_dag.sort();
+            committed.push(sub_dag);
+        }
+        committed
     }
 }

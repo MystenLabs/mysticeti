@@ -5,7 +5,9 @@ use crate::data::Data;
 use crate::types::{AuthorityIndex, Stake, StatementBlock};
 use rand::Rng;
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
@@ -107,6 +109,12 @@ pub struct StakeAggregator<TH> {
     _phantom: PhantomData<TH>,
 }
 
+/// Tracks votes for pending transactions and set of certified transactions
+pub struct TransactionAggregator<K, TH> {
+    pending: HashMap<K, StakeAggregator<TH>>,
+    processed: HashSet<K>,
+}
+
 impl<TH: CommitteeThreshold> StakeAggregator<TH> {
     pub fn new() -> Self {
         Self {
@@ -127,5 +135,69 @@ impl<TH: CommitteeThreshold> StakeAggregator<TH> {
     pub fn clear(&mut self) {
         self.votes.clear();
         self.stake = 0;
+    }
+}
+
+impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
+    pub fn new() -> Self {
+        Self {
+            pending: Default::default(),
+            processed: Default::default(),
+        }
+    }
+
+    /// Returns Ok(()) if this is first time we see transaction and Err otherwise
+    /// When Err is returned transaction is ignored (todo - is this what we want?)
+    pub fn register(
+        &mut self,
+        k: K,
+        vote: AuthorityIndex,
+        committee: &Committee,
+    ) -> Result<(), ()> {
+        if self.processed.contains(&k) {
+            return Err(());
+        }
+        match self.pending.entry(k) {
+            Entry::Occupied(_) => Err(()),
+            Entry::Vacant(va) => {
+                let mut aggregator = StakeAggregator::<TH>::new();
+                aggregator.add(vote, committee);
+                va.insert(aggregator);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn vote(&mut self, k: K, vote: AuthorityIndex, committee: &Committee) -> Result<(), ()> {
+        if self.processed.contains(&k) {
+            return Ok(());
+        }
+        if let Some(aggregator) = self.pending.get_mut(&k) {
+            if aggregator.add(vote, committee) {
+                // todo - reuse entry and remove Copy constraint when "entry_insert" is stable
+                self.pending.remove(&k).unwrap();
+                self.processed.insert(k);
+            }
+            Ok(())
+        } else {
+            // Unknown transaction
+            Err(())
+        }
+    }
+
+    pub fn is_processed(&self, k: &K) -> bool {
+        self.processed.contains(k)
+    }
+}
+
+impl<TH: CommitteeThreshold> Default for StakeAggregator<TH> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> Default for TransactionAggregator<K, TH> {
+    fn default() -> Self {
+        Self::new()
     }
 }

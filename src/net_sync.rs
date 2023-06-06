@@ -228,7 +228,7 @@ mod sim_tests {
         let (simulated_network, network_syncers) = simulated_network_syncers(4);
         simulated_network.connect_all().await;
         println!("Started");
-        runtime::sleep(Duration::from_secs(5)).await;
+        runtime::sleep(Duration::from_secs(20)).await;
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {
@@ -250,7 +250,7 @@ mod sim_tests {
         let (simulated_network, network_syncers) = simulated_network_syncers(10);
         simulated_network.connect_some(|a, _b| a != 0).await;
         println!("Started");
-        runtime::sleep(Duration::from_secs(10)).await;
+        runtime::sleep(Duration::from_secs(40)).await;
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {

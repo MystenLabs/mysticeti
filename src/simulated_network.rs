@@ -16,7 +16,7 @@ pub struct SimulatedNetwork {
 }
 
 impl SimulatedNetwork {
-    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(200);
+    const LATENCY_RANGE: Range<Duration> = Duration::from_millis(100)..Duration::from_millis(1500);
 
     pub fn new(committee: &Committee) -> (SimulatedNetwork, Vec<Network>) {
         let (networks, senders): (Vec<_>, Vec<_>) = committee

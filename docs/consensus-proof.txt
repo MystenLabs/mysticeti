@@ -103,7 +103,7 @@ the leader at the leader round k (ie round k*p). If so the block ("X") is commit
 
 When a leader at k is committed, the node goes back and checks for each leader Lk round
 after the last commit: If the leader Lk is in the causal graph of the committed leader, and 
-and the decision round for Lk contains at least one certified block for the leader Lk
+and the decision round for Lk contains at least one block certifying the leader Lk
 we first commit leader Lk. This continues until the last leader (that does have support) 
 is committed.
 
@@ -142,13 +142,15 @@ By lemma 5 since this included block certifies A all blocks at round x+1 will
 also certify A. The argument applies recursivelly for round x+1, which also has 2f+1
 certified blocks for A, and so on for ever.
 
-Lemma 7: By lemma 6 if a correct node commits a leader at round k then all subsequent blocks
-will contain a certificate for this leader (and also contain this leader in its causal graph).
-If a future leader is committed by a correct node,
-it will check this previous leader, and whether it is certified by at least one block in
-its corresponding decision round. If any correct node has committed this leader, the condition
-is always true, and therefore any other correct node committing will also comit this leader
-before committing future leaders. 
+Lemma 7: For the sake of contradiction, assume that if some correct node commits a leader
+at round k, then there exists another correct node X that commits leader at round >k
+without first committing the leader at round k.
+Consider the immediately next leader k' (>k) committed by X. In X's view, either (i) the
+committed leader k' does not contain the leader at round k in its causal graph, or (ii) none
+of the blocks in the decision round for k certify the leader Lk.
+(i) is a contradiction due to Lemma 6 and the fact that a block can not certify another block
+without containing it in its causal graph. (ii) is also a contradiction because by definition
+f+1 correct nodes certify Lk in its corresponding decision round.
 
 Theorem 8 (safety): consider two correct nodes with sequences that are not consistent. 
 Then consider the first leader on which they diverge in their commits. By lemma 7 if 

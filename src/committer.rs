@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::types::{AuthorityIndex, BlockReference};
 use crate::{
     block_manager::BlockManager,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -94,6 +95,46 @@ impl<'a> Committer<'a> {
         parents.contains(&earlier_block)
     }
 
+    /// Check if potential_vote 'supports' leader_block
+    /// See consensus proofs for definition of block support
+    fn supports(
+        &self,
+        potential_vote: &Data<StatementBlock>,
+        leader_block: &Data<StatementBlock>,
+    ) -> bool {
+        let (author, round) = leader_block.author_round();
+        self.find_support((author, round), potential_vote) == Some(*leader_block.reference())
+    }
+
+    /// Find which block is supported at (author, round) by the given block.
+    /// Block can indirectly reference multiple blocks at (author, round), but only one block at (author, round) will be supported by the given block.
+    /// If block A supports B at (author, round), it is guaranteed that any processed block by the same author that directly or indirectly includes A will also support B at (author, round).
+    fn find_support(
+        &self,
+        (author, round): (AuthorityIndex, RoundNumber),
+        from: &Data<StatementBlock>,
+    ) -> Option<BlockReference> {
+        if from.round() < round {
+            return None;
+        }
+        for include in from.includes() {
+            if include.round() < round {
+                continue;
+            }
+            if include.author_round() == (author, round) {
+                return Some(*include);
+            }
+            let include = self
+                .block_manager
+                .get_processed_block(include)
+                .expect("Should have all blocks");
+            if let Some(support) = self.find_support((author, round), include) {
+                return Some(support);
+            }
+        }
+        None
+    }
+
     /// Check whether the specified block (`potential_certificate`) is a certificate for
     /// the specified leader (`leader_block`).
     fn is_certificate(
@@ -108,7 +149,7 @@ impl<'a> Committer<'a> {
                 .get_processed_block(reference)
                 .expect("We should have the whole sub-dag by now");
 
-            if self.linked(potential_vote, leader_block) {
+            if self.supports(potential_vote, leader_block) {
                 tracing::debug!("{potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;

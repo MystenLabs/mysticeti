@@ -93,6 +93,10 @@ impl StatementBlock {
         self.reference.round
     }
 
+    pub fn author_round(&self) -> (AuthorityIndex, RoundNumber) {
+        self.reference.author_round()
+    }
+
     // /// Reference to the parent block made by the same authority
     // pub fn own_parent(&self) -> Option<BlockReference> {
     //     self.includes.get(0).map(|r| {
@@ -118,6 +122,14 @@ impl BlockReference {
             round: 0,
             digest: 0,
         }
+    }
+
+    pub fn round(&self) -> RoundNumber {
+        self.round
+    }
+
+    pub fn author_round(&self) -> (AuthorityIndex, RoundNumber) {
+        (self.authority, self.round)
     }
 }
 

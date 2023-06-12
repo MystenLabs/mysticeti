@@ -20,6 +20,7 @@ mod data;
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod future_simulator;
+mod metrics;
 mod net_sync;
 mod network;
 mod prometheus;

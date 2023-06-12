@@ -11,12 +11,18 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{AuthorityIndex, KeyPair};
+use crate::types::{AuthorityIndex, KeyPair, RoundNumber};
 
 pub trait Print: Serialize + DeserializeOwned {
     fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), std::io::Error> {
         let content = serde_json::to_string_pretty(self)?;
         fs::write(&path, content)
+    }
+
+    fn load<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+        let content = fs::read_to_string(&path)?;
+        let object = serde_json::from_str(&content)?;
+        Ok(object)
     }
 }
 
@@ -24,16 +30,18 @@ pub trait Print: Serialize + DeserializeOwned {
 pub struct Parameters {
     network_address: HashMap<AuthorityIndex, SocketAddr>,
     metrics_address: HashMap<AuthorityIndex, SocketAddr>,
+    wave_length: RoundNumber,
     leader_timeout: Duration,
 }
 
 impl Parameters {
     pub const DEFAULT_FILENAME: &'static str = "parameters.json";
 
+    pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
+    pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
+
     pub const BENCHMARK_PORT_OFFSET: u16 = 10_000;
     pub const BENCHMARK_METRICS_PORT_OFFSET: u16 = 1000;
-
-    pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let mut network_address = HashMap::new();
@@ -50,8 +58,21 @@ impl Parameters {
         Self {
             network_address,
             metrics_address,
+            wave_length: Self::DEFAULT_WAVE_LENGTH,
             leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
         }
+    }
+
+    pub fn all_network_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
+        self.network_address.values().copied()
+    }
+
+    pub fn network_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {
+        self.network_address.get(&authority).copied()
+    }
+
+    pub fn metrics_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {
+        self.metrics_address.get(&authority).copied()
     }
 }
 

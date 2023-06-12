@@ -1,16 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::data::Data;
-use crate::types::{RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
+use crate::{config::Parameters, data::Data};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::time::Duration;
-use std::{fs, io};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -42,17 +41,16 @@ impl Network {
     }
 
     #[allow(dead_code)]
-    pub async fn load(path: &Path, our_id: usize, local_addr: SocketAddr) -> Self {
-        let file = fs::read_to_string(path).unwrap();
+    pub async fn load(
+        parameters: &Parameters,
+        our_id: AuthorityIndex,
+        local_addr: SocketAddr,
+    ) -> Self {
         let mut addresses = vec![];
-        for line in file.split('n') {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            addresses.push(line.parse::<SocketAddr>().unwrap());
+        for address in parameters.all_network_addresses() {
+            addresses.push(address);
         }
-        Self::from_socket_addresses(&addresses, our_id, local_addr).await
+        Self::from_socket_addresses(&addresses, our_id as usize, local_addr).await
     }
 
     pub fn connection_receiver(&mut self) -> &mut mpsc::Receiver<Connection> {

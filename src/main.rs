@@ -1,6 +1,13 @@
-use std::net::SocketAddr;
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 
 use clap::{command, Parser};
+use committee::Committee;
+use config::{Parameters, Print, PrivateConfig};
+use eyre::Result;
+use types::AuthorityIndex;
 
 mod block_handler;
 mod block_manager;
@@ -41,7 +48,7 @@ enum Operation {
     /// from a list of initial peers. This is only suitable for benchmarks as it exposes all keys.
     BenchmarkGenesis {
         #[clap(long, value_name = "[ADDR]", value_delimiter = ',', num_args(4..))]
-        ips: Vec<SocketAddr>,
+        ips: Vec<IpAddr>,
     },
     /// Run a validator node.
     Run {
@@ -59,6 +66,34 @@ enum Operation {
     },
 }
 
-fn main() {
-    println!("Hello, world!");
+fn main() -> Result<()> {
+    // Nice colored error messages.
+    color_eyre::install()?;
+
+    // Parse the command line arguments.
+    match Args::parse().operation {
+        Operation::BenchmarkGenesis { ips } => {
+            let committee_size = ips.len();
+            let committee_path = Committee::DEFAULT_FILENAME;
+            Committee::new_for_benchmarks(committee_size).print(committee_path)?;
+
+            let parameters_path = Parameters::DEFAULT_FILENAME;
+            Parameters::new_for_benchmarks(ips).print(parameters_path)?;
+
+            for i in 0..committee_size {
+                let path = PrivateConfig::DEFAULT_FILENAME;
+                let filename = [path, &i.to_string()].iter().collect::<PathBuf>();
+                PrivateConfig::new_for_benchmarks(i as AuthorityIndex).print(filename)?;
+            }
+        }
+        Operation::Run {
+            committee_path,
+            parameters_path,
+            config_path,
+        } => {
+            todo!("Run a validator node")
+        }
+    }
+
+    Ok(())
 }

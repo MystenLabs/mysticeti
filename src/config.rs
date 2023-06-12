@@ -3,14 +3,22 @@
 
 use std::{
     collections::HashMap,
+    fs,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::types::{AuthorityIndex, KeyPair};
+
+pub trait Print: Serialize + DeserializeOwned {
+    fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), std::io::Error> {
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write(&path, content)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Parameters {
@@ -20,6 +28,8 @@ pub struct Parameters {
 }
 
 impl Parameters {
+    pub const DEFAULT_FILENAME: &'static str = "parameters.json";
+
     pub const BENCHMARK_PORT_OFFSET: u16 = 10_000;
     pub const BENCHMARK_METRICS_PORT_OFFSET: u16 = 1000;
 
@@ -45,6 +55,8 @@ impl Parameters {
     }
 }
 
+impl Print for Parameters {}
+
 #[derive(Serialize, Deserialize)]
 pub struct PrivateConfig {
     authority_index: AuthorityIndex,
@@ -53,13 +65,17 @@ pub struct PrivateConfig {
 }
 
 impl PrivateConfig {
+    pub const DEFAULT_FILENAME: &'static str = "private.json";
+
     pub fn new_for_benchmarks(authority_index: AuthorityIndex) -> Self {
         // TODO: Once we have a crypto library, generate a keypair from a fixed seed.
         tracing::warn!("Generating a predictable keypair for benchmarking");
         Self {
             authority_index,
             keypair: 0,
-            storage_path: ["storage", &format!("{authority_index}")].iter().collect(),
+            storage_path: ["storage", &authority_index.to_string()].iter().collect(),
         }
     }
 }
+
+impl Print for PrivateConfig {}

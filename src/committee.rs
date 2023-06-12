@@ -1,9 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::data::Data;
 use crate::types::{AuthorityIndex, BaseStatement, Stake, StatementBlock, TransactionId, Vote};
+use crate::{config::Print, data::Data};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -12,6 +13,7 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
 
+#[derive(Serialize, Deserialize)]
 pub struct Committee {
     stake: Vec<Stake>,
     validity_threshold: Stake, // The minimum stake required for validity
@@ -19,6 +21,8 @@ pub struct Committee {
 }
 
 impl Committee {
+    pub const DEFAULT_FILENAME: &'static str = "committee.json";
+
     pub fn new(stake: Vec<Stake>) -> Arc<Self> {
         // Ensure the list is not empty
         assert!(!stake.is_empty());
@@ -88,6 +92,8 @@ impl Committee {
         Self::new(stake)
     }
 }
+
+impl Print for Committee {}
 
 pub trait CommitteeThreshold {
     fn is_threshold(committee: &Committee, amount: Stake) -> bool;

@@ -35,6 +35,8 @@ mod syncer;
 mod test_util;
 mod threshold_clock;
 mod types;
+#[allow(dead_code)]
+mod wal;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

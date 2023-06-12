@@ -20,10 +20,8 @@ clap = { version = "4.3.3", features = ["derive"] }
 eyre = "0.6.8"
 color-eyre = "0.6.2"
 serde_json = "1.0.96"
-memmap2 = "0.5.10"
-# This crate takes a lot fo time to load first time, because underlyning git repo is huge.
-# But this is only one time cost per build environment.
-minibytes = { git="https://github.com/facebook/sapling.git?rev=f98f3e94e6687e831dcc27bf52fabd5eb96f5bba/eden/scm/lib", feautres=["frommmap"] }
+memmap2 = "0.7.0"
+minibytes = {path="../minibytes", default_features=false, features=["frommmap"]}
 libc = "0.2.146"
 
 [dev-dependencies]

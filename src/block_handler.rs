@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_manager::BlockManager;
-use crate::commit_interpretter::{CommitInterpreter, CommittedSubDag};
+use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
 use crate::syncer::CommitObserver;

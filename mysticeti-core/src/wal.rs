@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crc::{Crc, CRC_64_MS};
 use memmap2::{Mmap, MmapOptions};
 use minibytes::Bytes;
 use parking_lot::Mutex;
@@ -20,7 +21,6 @@ pub struct WalWriter {
 
 // todo(andrey)
 // - iteration
-// - crc
 #[derive(Clone)]
 pub struct WalReader {
     fd: RawFd,
@@ -60,6 +60,11 @@ const MAP_MASK: u64 = !0xffff;
 const ZERO_MAP: [u8; MAP_SIZE as usize] = [0u8; MAP_SIZE as usize];
 const _: () = assert_constants();
 
+const CRC: Crc<u64> = Crc::<u64>::new(
+    &CRC_64_MS, /*selection of algorithm here is mostly random*/
+);
+const CRC_LEN_BYTES: u64 = 8;
+
 const fn assert_constants() {
     if u64::MAX - MAP_MASK != MAP_SIZE - 1 {
         panic!("MAP_MASK and MAP_SIZE do not match");
@@ -72,8 +77,8 @@ fn align_map_size(p: u64) -> u64 {
 
 impl WalWriter {
     pub fn write(&mut self, b: &[u8]) -> io::Result<WalPosition> {
-        assert!(b.len() as u64 <= MAP_SIZE);
-        let len = b.len() as u64;
+        let len = b.len() as u64 + CRC_LEN_BYTES;
+        assert!(len <= MAP_SIZE);
         let mut buffs = vec![];
         let mut written_expected = 0usize;
         eprintln!(
@@ -94,8 +99,10 @@ impl WalWriter {
             debug_assert_eq!(align_map_size(self.pos), self.pos);
             debug_assert_eq!(align_map_size(self.pos), align_map_size(self.pos + len - 1));
         }
+        let crc = CRC.checksum(b).to_le_bytes();
+        buffs.push(IoSlice::new(&crc));
         buffs.push(IoSlice::new(b));
-        written_expected += b.len();
+        written_expected += len as usize;
         let written = self.file.write_vectored(&buffs)?;
         assert_eq!(written, written_expected);
         let position = WalPosition {
@@ -126,7 +133,20 @@ impl WalReader {
             Entry::Occupied(oc) => oc.into_mut(),
         };
         let buf_offset = (position.start - offset) as usize;
-        Ok(bytes.slice(buf_offset..buf_offset + (position.len as usize)))
+        let mut crc = [0u8; 8];
+        crc.copy_from_slice(&bytes[buf_offset..buf_offset + (CRC_LEN_BYTES as usize)]);
+        let expected_crc = u64::from_le_bytes(crc);
+        let bytes = bytes
+            .slice(buf_offset + (CRC_LEN_BYTES as usize)..buf_offset + (position.len as usize));
+        let actual_crc = CRC.checksum(bytes.as_ref());
+        if actual_crc != expected_crc {
+            // todo - return error
+            panic!(
+                "Crc mismatch, expected {}, found {} at position {}:{}",
+                expected_crc, actual_crc, position.start, position.len
+            );
+        }
+        Ok(bytes)
     }
 
     // Attempts cleaning internal mem maps, returning number of retained maps
@@ -158,7 +178,7 @@ mod tests {
         let file = temp.path().join("wal");
         let (mut writer, reader) = wal(&file).unwrap();
         let one = [1u8; 1024];
-        let two = [2u8; MAP_SIZE as usize];
+        let two = [2u8; (MAP_SIZE - CRC_LEN_BYTES) as usize];
         let three = [3u8; 15];
         let four = [4u8; 18];
         let one_pos = writer.write(&one).unwrap();

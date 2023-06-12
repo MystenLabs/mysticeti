@@ -1,9 +1,6 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{net::IpAddr, path::PathBuf, sync::Arc};
 
+use ::prometheus::default_registry;
 use clap::{command, Parser};
 use committee::Committee;
 use config::{Parameters, Print, PrivateConfig};
@@ -119,13 +116,15 @@ fn main() -> Result<()> {
                 .ok_or(eyre!("No metrics address for authority {authority}"))
                 .wrap_err("Unknown authority")?;
 
+            // Boot the prometheus server.
+            let registry = default_registry();
+            let _handle = prometheus::start_prometheus_server(metrics_address, registry);
+
+            // Boot the validator node.
             // let core = Core::new(block_handler, authority, committee);
-
-            let network = Network::load(&parameters, authority, network_address);
-
+            // let network = Network::load(&parameters, authority, network_address);
             // let network_synchronizer =
             //     NetworkSyncer::start(network, core, wave_length, TestCommitHandler::new(committee.clone()));
-
             todo!("Run a validator node")
         }
     }

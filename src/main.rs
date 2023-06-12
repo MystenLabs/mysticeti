@@ -7,6 +7,7 @@ mod block_manager;
 pub mod commit_interpreter;
 mod committee;
 pub mod committer;
+mod config;
 mod core;
 mod data;
 #[cfg(test)]
@@ -36,8 +37,8 @@ struct Args {
 
 #[derive(Parser)]
 enum Operation {
-    /// Generate a committee file and the config files of all validators from a list of initial peers.
-    /// This is only suitable for benchmarks as it exposes all keys.
+    /// Generate a committee file, parameters files and the private config files of all validators
+    /// from a list of initial peers. This is only suitable for benchmarks as it exposes all keys.
     BenchmarkGenesis {
         #[clap(long, value_name = "[ADDR]", value_delimiter = ',', num_args(4..))]
         ips: Vec<SocketAddr>,
@@ -47,6 +48,10 @@ enum Operation {
         /// Path to the file holding the public committee information.
         #[clap(long, value_name = "FILE", global = true)]
         committee_path: String,
+
+        /// Path to the file holding the public validator parameters (such as network addresses).
+        #[clap(long, value_name = "FILE", global = true)]
+        parameters_path: String,
 
         /// Path to the file holding the private validator configurations (including keys).
         #[clap(long, value_name = "FILE", global = true)]

@@ -7,6 +7,7 @@ pub type TransactionId = u64;
 pub type RoundNumber = u64;
 pub type BlockDigest = u64;
 pub type Stake = u64;
+pub type KeyPair = u64;
 
 use crate::data::Data;
 use serde::{Deserialize, Serialize};

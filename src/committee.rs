@@ -82,6 +82,11 @@ impl Committee {
     pub fn len(&self) -> usize {
         self.stake.len()
     }
+
+    pub fn new_for_benchmarks(committee_size: usize) -> Arc<Self> {
+        let stake = vec![1; committee_size];
+        Self::new(stake)
+    }
 }
 
 pub trait CommitteeThreshold {

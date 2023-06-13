@@ -5,9 +5,14 @@ use crate::block_manager::BlockManager;
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
+use crate::runtime::TimeInstant;
+use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
+use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &Vec<Data<StatementBlock>>) -> Vec<BaseStatement>;
@@ -17,8 +22,11 @@ pub trait BlockHandler: Send + Sync {
 pub struct TestBlockHandler {
     pub last_transaction: u64,
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
+
+    pub transaction_certified_latency: PreciseHistogram<Duration>,
 }
 
 #[allow(dead_code)]
@@ -28,6 +36,9 @@ pub struct TestCommitHandler {
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
     committed_dags: Vec<CommittedSubDag>,
+
+    transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    pub transaction_committed_latency: PreciseHistogram<Duration>,
 }
 
 impl TestBlockHandler {
@@ -39,8 +50,11 @@ impl TestBlockHandler {
         Self {
             last_transaction,
             transaction_votes: Default::default(),
+            transaction_time: Default::default(),
             committee,
             authority,
+
+            transaction_certified_latency: Default::default(),
         }
     }
 
@@ -57,25 +71,40 @@ impl BlockHandler for TestBlockHandler {
             self.last_transaction,
             self.last_transaction,
         ));
+        let mut transaction_time = self.transaction_time.lock();
+        transaction_time.insert(self.last_transaction, TimeInstant::now());
         self.transaction_votes
             .register(self.last_transaction, self.authority, &self.committee)
             .ok();
         for block in blocks {
-            self.transaction_votes
-                .process_block(block, Some(&mut response), &self.committee);
+            let processed =
+                self.transaction_votes
+                    .process_block(block, Some(&mut response), &self.committee);
+            for processed_id in processed {
+                if let Some(instant) = transaction_time.get(&processed_id) {
+                    self.transaction_certified_latency
+                        .observe(instant.elapsed());
+                }
+            }
         }
         response
     }
 }
 
 impl TestCommitHandler {
-    pub fn new(committee: Arc<Committee>) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    ) -> Self {
         Self {
             commit_interpreter: CommitInterpreter::new(),
             transaction_votes: Default::default(),
             committee,
             committed_leaders: vec![],
             committed_dags: vec![],
+
+            transaction_time,
+            transaction_committed_latency: Default::default(),
         }
     }
 
@@ -93,11 +122,19 @@ impl CommitObserver for TestCommitHandler {
         let committed = self
             .commit_interpreter
             .handle_commit(block_manager, committed_leaders);
+        let transaction_time = self.transaction_time.lock();
         for commit in committed {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
-                self.transaction_votes
+                let processed = self
+                    .transaction_votes
                     .process_block(block, None, &self.committee);
+                for processed_id in processed {
+                    if let Some(instant) = transaction_time.get(&processed_id) {
+                        self.transaction_committed_latency
+                            .observe(instant.elapsed());
+                    }
+                }
             }
             self.committed_dags.push(commit);
         }

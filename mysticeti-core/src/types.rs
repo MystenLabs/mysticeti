@@ -146,13 +146,17 @@ impl fmt::Display for BlockReference {
             write!(
                 f,
                 "{}{}",
-                ('A' as u64 + self.authority) as u8 as char,
+                format_authority_index(self.authority),
                 self.round
             )
         } else {
             write!(f, "[{:02}]{}", self.authority, self.round)
         }
     }
+}
+
+pub fn format_authority_index(i: AuthorityIndex) -> char {
+    ('A' as u64 + i) as u8 as char
 }
 
 impl fmt::Debug for StatementBlock {

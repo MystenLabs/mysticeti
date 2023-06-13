@@ -10,7 +10,7 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{AuthorityIndex, BlockReference, TransactionId};
+use crate::types::{format_authority_index, AuthorityIndex, BlockReference, TransactionId};
 use futures::future::join_all;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -62,12 +62,11 @@ pub fn committee_and_syncers(
         cores
             .into_iter()
             .map(|core| {
-                Syncer::new(
-                    core,
-                    3,
-                    Default::default(),
-                    TestCommitHandler::new(committee.clone()),
-                )
+                let commit_handler = TestCommitHandler::new(
+                    committee.clone(),
+                    core.block_handler().transaction_time.clone(),
+                );
+                Syncer::new(core, 3, Default::default(), commit_handler)
             })
             .collect(),
     )
@@ -97,8 +96,11 @@ pub fn simulated_network_syncers(
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
-        let network_syncer =
-            NetworkSyncer::start(network, core, 3, TestCommitHandler::new(committee.clone()));
+        let commit_handler = TestCommitHandler::new(
+            committee.clone(),
+            core.block_handler().transaction_time.clone(),
+        );
+        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler);
         network_syncers.push(network_syncer);
     }
     (simulated_network, network_syncers)
@@ -109,8 +111,11 @@ pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, Te
     let (networks, _) = networks_and_addresses(cores.len()).await;
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
-        let network_syncer =
-            NetworkSyncer::start(network, core, 3, TestCommitHandler::new(committee.clone()));
+        let commit_handler = TestCommitHandler::new(
+            committee.clone(),
+            core.block_handler().transaction_time.clone(),
+        );
+        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler);
         network_syncers.push(network_syncer);
     }
     network_syncers
@@ -145,6 +150,35 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
         }
     }
     eprintln!("Max commit sequence: {max_commit:?}");
+}
+
+pub fn print_stats<S: SyncerSignals>(syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>]) {
+    eprintln!("val ||    cert(ms)   ||   commit(ms)  ");
+    eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ");
+    syncers.iter().for_each(|s| {
+        let b = s.core().block_handler();
+        let c = s.commit_observer();
+        eprintln!(
+            "  {} || {:05} | {:05} || {:05} | {:05} |",
+            format_authority_index(s.core().authority()),
+            b.transaction_certified_latency
+                .pct(900)
+                .unwrap_or_default()
+                .as_millis(),
+            b.transaction_certified_latency
+                .avg()
+                .unwrap_or_default()
+                .as_millis(),
+            c.transaction_committed_latency
+                .pct(900)
+                .unwrap_or_default()
+                .as_millis(),
+            c.transaction_committed_latency
+                .avg()
+                .unwrap_or_default()
+                .as_millis(),
+        )
+    });
 }
 
 fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {

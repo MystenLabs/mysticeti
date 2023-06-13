@@ -97,7 +97,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
-                    eprintln!("{}: sub({round})", inner.syncer.read().core().authority());
+                    // eprintln!("{}: sub({round})", inner.syncer.read().core().authority());
                     if let Some(send_blocks_handler) = subscribe_handler.take() {
                         send_blocks_handler.abort();
                         send_blocks_handler.await.ok();
@@ -109,7 +109,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     )));
                 }
                 NetworkMessage::Block(block) => {
-                    eprintln!("{}: block({block})", inner.syncer.read().core().authority());
+                    // eprintln!("{}: block({block})", inner.syncer.read().core().authority());
                     inner.syncer.write().add_blocks(vec![block]);
                 }
             }
@@ -216,7 +216,7 @@ mod tests {
 mod sim_tests {
     use crate::future_simulator::SimulatedExecutorState;
     use crate::runtime;
-    use crate::test_util::{check_commits, rng_at_seed, simulated_network_syncers};
+    use crate::test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers};
     use std::time::Duration;
 
     #[test]
@@ -225,7 +225,7 @@ mod sim_tests {
     }
 
     async fn test_network_sync_sim_async() {
-        let (simulated_network, network_syncers) = simulated_network_syncers(4);
+        let (simulated_network, network_syncers) = simulated_network_syncers(10);
         simulated_network.connect_all().await;
         println!("Started");
         runtime::sleep(Duration::from_secs(20)).await;
@@ -237,6 +237,7 @@ mod sim_tests {
         }
 
         check_commits(&syncers);
+        print_stats(&syncers);
     }
 
     #[test]
@@ -259,5 +260,6 @@ mod sim_tests {
         }
 
         check_commits(&syncers);
+        print_stats(&syncers);
     }
 }

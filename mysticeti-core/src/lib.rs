@@ -26,3 +26,5 @@ mod threshold_clock;
 pub mod types;
 #[allow(dead_code)]
 mod wal;
+
+mod stat;

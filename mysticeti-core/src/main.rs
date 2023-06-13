@@ -171,13 +171,14 @@ async fn run(
     // Boot the validator node.
     let last_transaction = 0;
     let block_handler = TestBlockHandler::new(last_transaction, committee.clone(), authority);
+    let commit_handler = TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
     let core = Core::new(block_handler, authority, committee.clone()).with_metrics(metrics);
     let network = Network::load(&parameters, authority, binding_network_address).await;
     let _network_synchronizer = NetworkSyncer::start(
         network,
         core,
         parameters.wave_length(),
-        TestCommitHandler::new(committee),
+        commit_handler,
     );
 
     tracing::info!("Validator {authority} listening on {network_address}");

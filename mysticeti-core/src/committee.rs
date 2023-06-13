@@ -179,17 +179,24 @@ impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
         }
     }
 
-    pub fn vote(&mut self, k: K, vote: AuthorityIndex, committee: &Committee) -> Result<(), ()> {
+    pub fn vote(
+        &mut self,
+        k: K,
+        vote: AuthorityIndex,
+        committee: &Committee,
+    ) -> Result<TransactionVoteResult, ()> {
         if self.processed.contains(&k) {
-            return Ok(());
+            return Ok(TransactionVoteResult::AlreadyProcessed);
         }
         if let Some(aggregator) = self.pending.get_mut(&k) {
             if aggregator.add(vote, committee) {
                 // todo - reuse entry and remove Copy constraint when "entry_insert" is stable
                 self.pending.remove(&k).unwrap();
                 self.processed.insert(k);
+                Ok(TransactionVoteResult::Processed)
+            } else {
+                Ok(TransactionVoteResult::VoteAccepted)
             }
-            Ok(())
         } else {
             // Unknown transaction
             Err(())
@@ -201,13 +208,20 @@ impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
     }
 }
 
+pub enum TransactionVoteResult {
+    Processed,
+    VoteAccepted,
+    AlreadyProcessed,
+}
+
 impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
     pub fn process_block(
         &mut self,
         block: &Data<StatementBlock>,
         mut response: Option<&mut Vec<BaseStatement>>,
         committee: &Committee,
-    ) {
+    ) -> Vec<TransactionId> {
+        let mut processed = vec![];
         for statement in block.statements() {
             match statement {
                 BaseStatement::Share(id, _transaction) => {
@@ -219,15 +233,20 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
                     }
                 }
                 BaseStatement::Vote(id, vote) => match vote {
-                    Vote::Accept => {
-                        if self.vote(*id, block.author(), &committee).is_err() {
+                    Vote::Accept => match self.vote(*id, block.author(), &committee) {
+                        Ok(TransactionVoteResult::Processed) => {
+                            processed.push(*id);
+                        }
+                        Ok(_) => {}
+                        Err(()) => {
                             panic!("Unexpected - got vote for unknown transaction {}", id);
                         }
-                    }
+                    },
                     Vote::Reject(_) => unimplemented!(),
                 },
             }
         }
+        processed
     }
 }
 

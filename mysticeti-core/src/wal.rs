@@ -116,7 +116,7 @@ impl WalWriter {
 
 impl WalReader {
     pub fn read(&self, position: WalPosition) -> io::Result<Bytes> {
-        assert!(position.len as u64 <= MAP_SIZE);
+        assert!(position.len <= MAP_SIZE);
         let mut maps = self.maps.lock();
         let offset = align_map_size(position.start);
         println!("offset={offset}");

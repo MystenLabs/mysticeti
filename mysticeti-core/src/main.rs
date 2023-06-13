@@ -145,7 +145,7 @@ fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()>
         let mut path = working_directory.clone();
         path.push(PrivateConfig::default_filename(i as AuthorityIndex));
         let parent_directory = path.parent().unwrap();
-        fs::create_dir_all(&parent_directory).wrap_err(format!(
+        fs::create_dir_all(parent_directory).wrap_err(format!(
             "Failed to create directory '{}'",
             parent_directory.display()
         ))?;
@@ -194,7 +194,7 @@ async fn run(
 
     // Boot the prometheus server.
     let registry = default_registry();
-    let metrics = Arc::new(Metrics::new(&registry));
+    let metrics = Arc::new(Metrics::new(registry));
     let _handle = prometheus::start_prometheus_server(binding_metrics_address, registry);
 
     // Boot the validator node.

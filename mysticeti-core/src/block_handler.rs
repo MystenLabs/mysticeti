@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub trait BlockHandler: Send + Sync {
-    fn handle_blocks(&mut self, blocks: &Vec<Data<StatementBlock>>) -> Vec<BaseStatement>;
+    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
 }
 
 // Immediately votes and generates new transactions
@@ -65,7 +65,7 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
-    fn handle_blocks(&mut self, blocks: &Vec<Data<StatementBlock>>) -> Vec<BaseStatement> {
+    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
         self.last_transaction += 1;
         response.push(BaseStatement::Share(

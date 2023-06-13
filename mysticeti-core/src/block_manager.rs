@@ -43,15 +43,15 @@ impl BlockManager {
                 if !self.blocks_processed.contains_key(included_reference) {
                     processed = false;
                     self.block_references_waiting
-                        .entry(included_reference.clone())
+                        .entry(*included_reference)
                         .or_default()
-                        .insert(block_reference.clone());
+                        .insert(*block_reference);
                 }
             }
             if !processed {
-                self.blocks_pending.insert(block_reference.clone(), block);
+                self.blocks_pending.insert(*block_reference, block);
             } else {
-                let block_reference = block_reference.clone();
+                let block_reference = *block_reference;
 
                 // Block can be processed. So need to update indexes etc
                 newly_blocks_processed.push(block.clone());

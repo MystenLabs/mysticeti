@@ -6,6 +6,7 @@ use crate::types::{BlockReference, RoundNumber, StatementBlock};
 // A block is threshold clock valid if:
 // - all included blocks have a round number lower than the block round number.
 // - the set of authorities with blocks included has a quorum in the current committee.
+#[allow(dead_code)]
 pub fn threshold_clock_valid(block: &StatementBlock, committee: &Committee) -> bool {
     // get a committee from the creator of the block
     let round_number = block.reference().round;
@@ -22,7 +23,7 @@ pub fn threshold_clock_valid(block: &StatementBlock, committee: &Committee) -> b
     // Collect the authorities with included blocks at round_number  - 1
     for include in block.includes() {
         if include.round == round_number - 1 {
-            is_quorum = aggregator.add(include.authority.clone(), &committee);
+            is_quorum = aggregator.add(include.authority, committee);
         }
     }
 

@@ -225,7 +225,7 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
         for statement in block.statements() {
             match statement {
                 BaseStatement::Share(id, _transaction) => {
-                    if self.register(*id, block.author(), &committee).is_err() {
+                    if self.register(*id, block.author(), committee).is_err() {
                         panic!("Duplicate transaction: {id} from {}", block.author());
                     }
                     if let Some(ref mut response) = response {
@@ -233,7 +233,7 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
                     }
                 }
                 BaseStatement::Vote(id, vote) => match vote {
-                    Vote::Accept => match self.vote(*id, block.author(), &committee) {
+                    Vote::Accept => match self.vote(*id, block.author(), committee) {
                         Ok(TransactionVoteResult::Processed) => {
                             processed.push(*id);
                         }

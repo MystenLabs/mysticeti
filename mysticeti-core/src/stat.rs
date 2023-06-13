@@ -16,7 +16,7 @@ impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy> PreciseHistogram<T> {
     }
 
     pub fn avg(&self) -> Option<T> {
-        if self.points.len() == 0 {
+        if self.points.is_empty() {
             return None;
         }
         Some(self.sum / self.points.len() as u32)

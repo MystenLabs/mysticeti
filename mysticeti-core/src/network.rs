@@ -249,7 +249,8 @@ impl Worker {
         while let Some(message) = receiver.recv().await {
             let serialized = bincode::serialize(&message).expect("Serialization should not fail");
             writer.write_u32(serialized.len() as u32).await?;
-            writer.write(&serialized).await?;
+            let written = writer.write(&serialized).await?;
+            assert_eq!(written, serialized.len());
         }
         Ok(())
     }
@@ -266,7 +267,8 @@ impl Worker {
                 return Ok(());
             }
             let buf = &mut buf[..size as usize];
-            stream.read(buf).await?;
+            let read = stream.read(buf).await?;
+            assert_eq!(read, buf.len());
             match bincode::deserialize::<NetworkMessage>(buf) {
                 Ok(message) => {
                     if sender.send(message).await.is_err() {

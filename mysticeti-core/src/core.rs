@@ -91,7 +91,7 @@ impl<H: BlockHandler> Core<H> {
         mem::swap(&mut taken, &mut self.pending);
         // At least one include statement should always be present - when creating new block
         // we immediately insert an include reference to it to self.pending
-        assert!(taken.len() > 0);
+        assert!(!taken.is_empty());
         let our_authority = self.authority;
         // The first statement should always be Include(our_previous_block)
         assert!(
@@ -103,7 +103,7 @@ impl<H: BlockHandler> Core<H> {
         for statement in &taken {
             if let MetaStatement::Include(block_ref) = statement {
                 // for all the includes in the block, add the references in the block to the set
-                if let Some(block) = self.block_manager.get_processed_block(&block_ref) {
+                if let Some(block) = self.block_manager.get_processed_block(block_ref) {
                     references_in_block.extend(block.includes());
                 }
             }
@@ -128,7 +128,7 @@ impl<H: BlockHandler> Core<H> {
             round: clock_round,
             digest: 0,
         };
-        assert!(includes.len() > 0);
+        assert!(!includes.is_empty());
         let block = StatementBlock::new(block_ref, includes, statements);
         assert_eq!(
             block.includes().get(0).unwrap().authority,

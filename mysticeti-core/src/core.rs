@@ -1,9 +1,9 @@
-use crate::block_manager::BlockManager;
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, committer::Committer};
+use crate::{block_manager::BlockManager, metrics::Metrics};
 use std::mem;
 use std::sync::Arc;
 use std::{
@@ -20,6 +20,7 @@ pub struct Core<H: BlockHandler> {
     committee: Arc<Committee>,
     last_proposed: RoundNumber,
     last_commit_round: RoundNumber,
+    metrics: Option<Arc<Metrics>>,
 }
 
 #[derive(Debug)]
@@ -45,7 +46,13 @@ impl<H: BlockHandler> Core<H> {
             committee,
             last_proposed,
             last_commit_round,
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
@@ -140,8 +147,11 @@ impl<H: BlockHandler> Core<H> {
 
     #[allow(dead_code)]
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
-        let sequence = Committer::new(self.committee.clone(), &self.block_manager, period)
-            .try_commit(self.last_commit_round);
+        let mut committer = Committer::new(self.committee.clone(), &self.block_manager, period);
+        if let Some(metrics) = &self.metrics {
+            committer = committer.with_metrics(metrics.clone());
+        }
+        let sequence = committer.try_commit(self.last_commit_round);
 
         self.last_commit_round = max(
             self.last_commit_round,

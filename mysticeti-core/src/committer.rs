@@ -3,12 +3,15 @@
 
 use std::sync::Arc;
 
-use crate::types::{AuthorityIndex, BlockReference};
 use crate::{
     block_manager::BlockManager,
     committee::{Committee, QuorumThreshold, StakeAggregator},
     data::Data,
     types::{RoundNumber, StatementBlock},
+};
+use crate::{
+    metrics::Metrics,
+    types::{AuthorityIndex, BlockReference},
 };
 
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
@@ -28,6 +31,8 @@ pub struct Committer<'a> {
     block_manager: &'a BlockManager,
     /// The length of a wave (minimum 3)
     wave_length: u64,
+    /// Metrics information
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl<'a> Committer<'a> {
@@ -43,7 +48,14 @@ impl<'a> Committer<'a> {
             committee,
             block_manager,
             wave_length,
+            metrics: None,
         }
+    }
+
+    /// Enable metrics collection.
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Return the wave in which the specified round belongs.
@@ -243,11 +255,20 @@ impl<'a> Committer<'a> {
         last_committed_wave: WaveNumber,
         leader_block: &Data<StatementBlock>,
     ) -> Vec<Data<StatementBlock>> {
-        self.order_leaders(last_committed_wave, leader_block)
+        let sequence: Vec<_> = self
+            .order_leaders(last_committed_wave, leader_block)
             .into_iter()
             .cloned()
             .rev()
-            .collect()
+            .collect();
+
+        if let Some(metrics) = &self.metrics {
+            metrics
+                .committed_leaders_total
+                .inc_by(sequence.len() as u64);
+        }
+
+        sequence
     }
 
     /// Try to commit part of the dag. This function is idempotent and returns a list of
@@ -290,6 +311,18 @@ impl<'a> Committer<'a> {
             .iter()
             .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
+
+        if let Some(metrics) = self.metrics.as_ref() {
+            let support = if leaders_with_enough_support.is_empty() {
+                "not_enough_support"
+            } else {
+                "enough_support"
+            };
+            metrics
+                .leaders_with_enough_support_total
+                .with_label_values(&[support])
+                .inc();
+        }
 
         // There can be at most one leader with enough support for each round.
         if leaders_with_enough_support.len() > 1 {

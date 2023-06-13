@@ -9,7 +9,7 @@ mod data;
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod future_simulator;
-mod metrics;
+pub mod metrics;
 pub mod net_sync;
 pub mod network;
 pub mod prometheus;

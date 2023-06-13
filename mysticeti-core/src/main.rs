@@ -9,6 +9,7 @@ use mysticeti::{
     committee::Committee,
     config::{Parameters, Print, PrivateConfig},
     core::Core,
+    metrics::Metrics,
     net_sync::NetworkSyncer,
     network::Network,
     prometheus,
@@ -136,12 +137,13 @@ async fn run(
 
     // Boot the prometheus server.
     let registry = default_registry();
+    let metrics = Arc::new(Metrics::new(&registry));
     let _handle = prometheus::start_prometheus_server(binding_metrics_address, registry);
 
     // Boot the validator node.
     let last_transaction = 0;
     let block_handler = TestBlockHandler::new(last_transaction, committee.clone(), authority);
-    let core = Core::new(block_handler, authority, committee.clone());
+    let core = Core::new(block_handler, authority, committee.clone()).with_metrics(metrics);
     let network = Network::load(&parameters, authority, binding_network_address).await;
     let _network_synchronizer = NetworkSyncer::start(
         network,

@@ -7,8 +7,10 @@ pub use tokio::task::JoinError;
 pub use tokio::task::JoinHandle;
 pub use tokio::time::sleep;
 
+#[allow(dead_code)]
 pub struct TimeInstant(Instant);
 
+#[allow(dead_code)]
 impl TimeInstant {
     pub fn now() -> Self {
         Self(Instant::now())

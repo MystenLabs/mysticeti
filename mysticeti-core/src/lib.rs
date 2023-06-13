@@ -6,7 +6,6 @@ mod committer;
 pub mod config;
 pub mod core;
 mod data;
-#[cfg(test)]
 #[cfg(feature = "simulator")]
 mod future_simulator;
 pub mod metrics;
@@ -14,10 +13,8 @@ pub mod net_sync;
 pub mod network;
 pub mod prometheus;
 mod runtime;
-#[cfg(test)]
 #[cfg(feature = "simulator")]
 mod simulated_network;
-#[cfg(test)]
 mod simulator;
 mod syncer;
 #[cfg(test)]

@@ -153,19 +153,27 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
 }
 
 pub fn print_stats<S: SyncerSignals>(syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>]) {
-    eprintln!("val ||    cert(ms)   ||   commit(ms)  ");
-    eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ");
+    eprintln!("val ||    cert(ms)   ||cert commit(ms)|| tx commit(ms) |");
+    eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ||  p90  |  avg  |");
     syncers.iter().for_each(|s| {
         let b = s.core().block_handler();
         let c = s.commit_observer();
         eprintln!(
-            "  {} || {:05} | {:05} || {:05} | {:05} |",
+            "  {} || {:05} | {:05} || {:05} | {:05} || {:05} | {:05} |",
             format_authority_index(s.core().authority()),
             b.transaction_certified_latency
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
             b.transaction_certified_latency
+                .avg()
+                .unwrap_or_default()
+                .as_millis(),
+            c.certificate_committed_latency
+                .pct(900)
+                .unwrap_or_default()
+                .as_millis(),
+            c.certificate_committed_latency
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),

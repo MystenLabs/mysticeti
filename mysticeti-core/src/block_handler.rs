@@ -38,6 +38,7 @@ pub struct TestCommitHandler {
     committed_dags: Vec<CommittedSubDag>,
 
     transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    pub certificate_committed_latency: PreciseHistogram<Duration>,
     pub transaction_committed_latency: PreciseHistogram<Duration>,
 }
 
@@ -104,6 +105,7 @@ impl TestCommitHandler {
             committed_dags: vec![],
 
             transaction_time,
+            certificate_committed_latency: Default::default(),
             transaction_committed_latency: Default::default(),
         }
     }
@@ -131,8 +133,16 @@ impl CommitObserver for TestCommitHandler {
                     .process_block(block, None, &self.committee);
                 for processed_id in processed {
                     if let Some(instant) = transaction_time.get(&processed_id) {
-                        self.transaction_committed_latency
+                        self.certificate_committed_latency
                             .observe(instant.elapsed());
+                    }
+                }
+                for statement in block.statements() {
+                    if let BaseStatement::Share(id, _) = statement {
+                        if let Some(instant) = transaction_time.get(id) {
+                            self.transaction_committed_latency
+                                .observe(instant.elapsed());
+                        }
                     }
                 }
             }

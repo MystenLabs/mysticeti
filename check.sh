@@ -12,5 +12,5 @@ cargo test -p mysticeti --features simulator test_network_sync_sim || { echo -e 
 echo -e "${BLUE}Running cargo fmt --check...${NC}"
 cargo fmt --check || { echo -e "${RED}Formatting failed${NC}"; exit 1; }
 echo -e "${BLUE}Running clippy...${NC}"
-cargo clippy -- -D warnings -A clippy::len-without-is-empty -A clippy::result-unit-err
+cargo clippy -- -D warnings -A clippy::len-without-is-empty -A clippy::result-unit-err || { echo -e "${RED}Clippy failed${NC}"; exit 1; }
 echo -e "${GREEN}All checks passed!${NC}"

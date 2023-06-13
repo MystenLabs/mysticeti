@@ -74,6 +74,10 @@ impl Parameters {
     pub fn metrics_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {
         self.metrics_address.get(&authority).copied()
     }
+
+    pub fn wave_length(&self) -> RoundNumber {
+        self.wave_length
+    }
 }
 
 impl Print for Parameters {}

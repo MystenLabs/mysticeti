@@ -103,7 +103,7 @@ impl<H: BlockHandler> Core<H> {
         for statement in &taken {
             if let MetaStatement::Include(block_ref) = statement {
                 // for all the includes in the block, add the references in the block to the set
-                if let Some(block) = self.block_manager.get_processed_block(block_ref) {
+                if let Some(block) = self.block_manager.block_store().get_block(*block_ref) {
                     references_in_block.extend(block.includes());
                 }
             }
@@ -147,7 +147,12 @@ impl<H: BlockHandler> Core<H> {
 
     #[allow(dead_code)]
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
-        let mut committer = Committer::new(self.committee.clone(), &self.block_manager, period);
+        // todo only create committer once
+        let mut committer = Committer::new(
+            self.committee.clone(),
+            self.block_manager.block_store().clone(),
+            period,
+        );
         if let Some(metrics) = &self.metrics {
             committer = committer.with_metrics(metrics.clone());
         }
@@ -176,7 +181,8 @@ impl<H: BlockHandler> Core<H> {
                 let leader_round = quorum_round - period;
                 let leader = self.leader_at_round(leader_round, period);
                 self.block_manager
-                    .processed_block_exists(leader, leader_round)
+                    .block_store()
+                    .block_exists_at_authority_round(leader, leader_round)
             } else {
                 false
             }

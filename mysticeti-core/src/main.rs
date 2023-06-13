@@ -33,7 +33,9 @@ pub mod types;
 #[allow(dead_code)]
 mod wal;
 
+mod block_store;
 mod stat;
+
 use crate::{
     block_handler::{TestBlockHandler, TestCommitHandler},
     committee::Committee,

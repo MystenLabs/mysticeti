@@ -53,14 +53,16 @@ impl CommitInterpreter {
     ) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
-        let mut buffer = vec![&leader_block];
-        assert!(self.committed.insert(*leader_block.reference()));
+        let leader_block_ref = *leader_block.reference();
+        let mut buffer = vec![leader_block];
+        assert!(self.committed.insert(leader_block_ref));
         while let Some(x) = buffer.pop() {
             to_commit.push(x.clone());
             for reference in x.includes() {
                 // The block manager may have cleaned up blocks passed the latest committed rounds.
                 let block = block_manager
-                    .get_processed_block(reference)
+                    .block_store()
+                    .get_block(*reference)
                     .expect("We should have the whole sub-dag by now");
 
                 // Skip the block if we already committed it (either as part of this sub-dag or
@@ -70,7 +72,7 @@ impl CommitInterpreter {
                 }
             }
         }
-        CommittedSubDag::new(*leader_block.reference(), to_commit)
+        CommittedSubDag::new(leader_block_ref, to_commit)
     }
 
     pub fn handle_commit(

@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
+use crate::block_store::BlockStore;
 use crate::{
-    block_manager::BlockManager,
     committee::{Committee, QuorumThreshold, StakeAggregator},
     data::Data,
     types::{RoundNumber, StatementBlock},
@@ -24,29 +24,25 @@ type WaveNumber = u64;
 /// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
 /// certificates for the leader. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
-pub struct Committer<'a> {
+pub struct Committer {
     /// The committee information
     committee: Arc<Committee>,
     /// Keep all block data
-    block_manager: &'a BlockManager,
+    block_store: BlockStore,
     /// The length of a wave (minimum 3)
     wave_length: u64,
     /// Metrics information
     metrics: Option<Arc<Metrics>>,
 }
 
-impl<'a> Committer<'a> {
+impl Committer {
     /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
-    pub fn new(
-        committee: Arc<Committee>,
-        block_manager: &'a BlockManager,
-        wave_length: u64,
-    ) -> Self {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, wave_length: u64) -> Self {
         assert!(wave_length >= 3);
 
         Self {
             committee,
-            block_manager,
+            block_store,
             wave_length,
             metrics: None,
         }
@@ -91,20 +87,20 @@ impl<'a> Committer<'a> {
         later_block: &Data<StatementBlock>,
         earlier_block: &Data<StatementBlock>,
     ) -> bool {
-        let mut parents = vec![later_block];
+        let mut parents = vec![later_block.clone()];
         for r in (earlier_block.round()..later_block.round()).rev() {
             parents = self
-                .block_manager
+                .block_store
                 .get_blocks_by_round(r)
                 .into_iter()
-                .filter(|&block| {
+                .filter(|block| {
                     parents
                         .iter()
                         .any(|x| x.includes().contains(block.reference()))
                 })
                 .collect();
         }
-        parents.contains(&earlier_block)
+        parents.contains(earlier_block)
     }
 
     /// Check if potential_vote 'supports' leader_block
@@ -137,10 +133,10 @@ impl<'a> Committer<'a> {
                 return Some(*include);
             }
             let include = self
-                .block_manager
-                .get_processed_block(include)
+                .block_store
+                .get_block(*include)
                 .expect("Should have all blocks");
-            if let Some(support) = self.find_support((author, round), include) {
+            if let Some(support) = self.find_support((author, round), &include) {
                 return Some(support);
             }
         }
@@ -157,11 +153,11 @@ impl<'a> Committer<'a> {
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
             let potential_vote = self
-                .block_manager
-                .get_processed_block(reference)
+                .block_store
+                .get_block(*reference)
                 .expect("We should have the whole sub-dag by now");
 
-            if self.supports(potential_vote, leader_block) {
+            if self.supports(&potential_vote, leader_block) {
                 tracing::debug!("{potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
@@ -178,7 +174,7 @@ impl<'a> Committer<'a> {
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
     ) -> bool {
-        let decision_blocks = self.block_manager.get_blocks_by_round(decision_round);
+        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
@@ -197,11 +193,11 @@ impl<'a> Committer<'a> {
     fn order_leaders(
         &self,
         last_committed_wave: WaveNumber,
-        latest_leader_block: &'a Data<StatementBlock>,
-    ) -> Vec<&'a Data<StatementBlock>> {
-        let mut to_commit = vec![latest_leader_block];
-        let mut current_leader_block = latest_leader_block;
+        latest_leader_block: Data<StatementBlock>,
+    ) -> Vec<Data<StatementBlock>> {
         let latest_wave = self.wave_number(latest_leader_block.round());
+        let mut to_commit = vec![latest_leader_block.clone()];
+        let mut current_leader_block = latest_leader_block;
 
         let earliest_wave = last_committed_wave + 1;
         for w in (earliest_wave..latest_wave).rev() {
@@ -210,22 +206,22 @@ impl<'a> Committer<'a> {
             let leader_round = self.leader_round(w);
             let leader = self.committee.elect_leader(leader_round);
             let leader_blocks = self
-                .block_manager
+                .block_store
                 .get_blocks_at_authority_round(leader, leader_round);
 
             // Get all blocks that could be potential certificates for these leader blocks, if
             // they are ancestors of the current leader.
             let decision_round = self.decision_round(w);
-            let decision_blocks = self.block_manager.get_blocks_by_round(decision_round);
+            let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
             let potential_certificates: Vec<_> = decision_blocks
                 .iter()
-                .filter(|block| self.linked(current_leader_block, block))
+                .filter(|block| self.linked(&current_leader_block, block))
                 .collect();
 
             // Use those potential certificates to determine which (if any) of the previous leader
             // blocks can be committed.
             let mut certified_leader_blocks: Vec<_> = leader_blocks
-                .iter()
+                .into_iter()
                 .filter(|leader_block| {
                     potential_certificates.iter().any(|potential_certificate| {
                         self.is_certificate(leader_block, potential_certificate)
@@ -241,7 +237,7 @@ impl<'a> Committer<'a> {
             // We skip the previous leader if it has no certificates that are ancestors of current
             // leader. Otherwise we proceed to the next iteration using the previous leader as anchor.
             if let Some(certified_leader_block) = certified_leader_blocks.pop() {
-                to_commit.push(certified_leader_block);
+                to_commit.push(certified_leader_block.clone());
                 current_leader_block = certified_leader_block;
             }
         }
@@ -253,12 +249,11 @@ impl<'a> Committer<'a> {
     fn commit(
         &self,
         last_committed_wave: WaveNumber,
-        leader_block: &Data<StatementBlock>,
+        leader_block: Data<StatementBlock>,
     ) -> Vec<Data<StatementBlock>> {
         let sequence: Vec<_> = self
             .order_leaders(last_committed_wave, leader_block)
             .into_iter()
-            .cloned()
             .rev()
             .collect();
 
@@ -281,7 +276,7 @@ impl<'a> Committer<'a> {
             "Last committed round is always a leader round"
         );
 
-        let highest_round = self.block_manager.highest_round;
+        let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
         let leader_round = self.leader_round(highest_wave);
         let decision_round = self.decision_round(highest_wave);
@@ -305,10 +300,10 @@ impl<'a> Committer<'a> {
         // (created by Byzantine leaders).
         let leader = self.committee.elect_leader(leader_round);
         let leader_blocks = self
-            .block_manager
+            .block_store
             .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
-            .iter()
+            .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
 
@@ -419,7 +414,11 @@ mod test {
         let mut block_manager = BlockManager::default();
         build_dag(&committee, &mut block_manager, None, 5);
 
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -437,7 +436,11 @@ mod test {
         let mut block_manager = BlockManager::default();
         build_dag(&committee, &mut block_manager, None, 5);
 
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 3;
         let sequence = committer.try_commit(last_committed_round);
@@ -456,7 +459,11 @@ mod test {
         let mut block_manager = BlockManager::default();
         build_dag(&committee, &mut block_manager, None, enough_blocks);
 
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -479,7 +486,11 @@ mod test {
             let mut block_manager = BlockManager::default();
             build_dag(&committee, &mut block_manager, None, r);
 
-            let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+            let committer = Committer::new(
+                committee.clone(),
+                block_manager.block_store().clone(),
+                wave_length,
+            );
 
             let last_committed_round = 0;
             let sequence = committer.try_commit(last_committed_round);
@@ -500,7 +511,11 @@ mod test {
             let mut block_manager = BlockManager::default();
             build_dag(&committee, &mut block_manager, None, enough_blocks);
 
-            let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+            let committer = Committer::new(
+                committee.clone(),
+                block_manager.block_store().clone(),
+                wave_length,
+            );
 
             let sequence = committer.try_commit(last_committed_round);
             assert_eq!(sequence.len(), 1);
@@ -554,7 +569,11 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -591,7 +610,11 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -627,7 +650,11 @@ mod test {
         );
 
         // Ensure we commit the second and fourth leaders.
-        let committer = Committer::new(committee.clone(), &block_manager, wave_length);
+        let committer = Committer::new(
+            committee.clone(),
+            block_manager.block_store().clone(),
+            wave_length,
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);

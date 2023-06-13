@@ -1,12 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::block_store::BlockStore;
 use crate::data::Data;
-use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
-use std::{
-    cmp::max,
-    collections::{HashMap, HashSet, VecDeque},
-};
+use crate::types::{BlockReference, StatementBlock};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
@@ -14,10 +12,7 @@ use std::{
 pub struct BlockManager {
     blocks_pending: HashMap<BlockReference, Data<StatementBlock>>,
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
-    blocks_processed: HashMap<BlockReference, Data<StatementBlock>>,
-    // Maintain an index of blocks by round as well.
-    blocks_processed_by_round: HashMap<RoundNumber, Vec<BlockReference>>,
-    pub highest_round: RoundNumber,
+    block_store: BlockStore,
 }
 
 impl BlockManager {
@@ -27,11 +22,10 @@ impl BlockManager {
         let mut newly_blocks_processed: Vec<Data<StatementBlock>> = vec![];
         while let Some(block) = blocks.pop_front() {
             // Update the highest known round number.
-            self.highest_round = max(self.highest_round, block.round());
 
             // check whether we have already processed this block and skip it if so.
             let block_reference = block.reference();
-            if self.blocks_processed.contains_key(block_reference)
+            if self.block_store.block_exists(*block_reference)
                 || self.blocks_pending.contains_key(block_reference)
             {
                 continue;
@@ -40,7 +34,7 @@ impl BlockManager {
             let mut processed = true;
             for included_reference in block.includes() {
                 // If we are missing a reference then we insert into pending and update the waiting index
-                if !self.blocks_processed.contains_key(included_reference) {
+                if !self.block_store.block_exists(*included_reference) {
                     processed = false;
                     self.block_references_waiting
                         .entry(*included_reference)
@@ -55,13 +49,7 @@ impl BlockManager {
 
                 // Block can be processed. So need to update indexes etc
                 newly_blocks_processed.push(block.clone());
-                self.blocks_processed.insert(block_reference, block);
-
-                // Update the index of blocks by round
-                self.blocks_processed_by_round
-                    .entry(block_reference.round)
-                    .or_default()
-                    .push(block_reference);
+                self.block_store.insert_block(block);
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -91,45 +79,13 @@ impl BlockManager {
 
     pub fn add_own_block(&mut self, block: StatementBlock) -> Data<StatementBlock> {
         // Update the highest known round number.
-        self.highest_round = max(self.highest_round, block.round());
-
-        let block_ref = *block.reference();
         let block = Data::new(block);
-        self.blocks_processed.insert(block_ref, block.clone());
-        self.blocks_processed_by_round
-            .entry(block_ref.round)
-            .or_default()
-            .push(block_ref);
+        self.block_store.insert_block(block.clone());
         block
     }
 
-    pub fn get_processed_block(&self, reference: &BlockReference) -> Option<&Data<StatementBlock>> {
-        self.blocks_processed.get(reference)
-    }
-
-    pub fn get_blocks_by_round(&self, round: RoundNumber) -> Vec<&Data<StatementBlock>> {
-        let Some(references) = self.blocks_processed_by_round.get(&round) else {return vec![]};
-        references
-            .iter()
-            .filter_map(|reference| self.get_processed_block(reference))
-            .collect()
-    }
-
-    pub fn get_blocks_at_authority_round(
-        &self,
-        authority: AuthorityIndex,
-        round: RoundNumber,
-    ) -> Vec<&Data<StatementBlock>> {
-        self.get_blocks_by_round(round)
-            .into_iter()
-            .filter(|block| block.reference().authority == authority)
-            .collect()
-    }
-
-    pub fn processed_block_exists(&self, authority: AuthorityIndex, round: RoundNumber) -> bool {
-        !self
-            .get_blocks_at_authority_round(authority, round)
-            .is_empty()
+    pub fn block_store(&self) -> &BlockStore {
+        &self.block_store
     }
 }
 
@@ -164,7 +120,7 @@ mod tests {
             assert_eq!(bm.block_references_waiting.len(), 0);
             assert_eq!(bm.blocks_pending.len(), 0);
             assert_eq!(processed_blocks.len(), dag.len());
-            assert_eq!(bm.blocks_processed.len(), dag.len());
+            assert_eq!(bm.block_store.len_expensive(), dag.len());
             println!("======");
         }
     }

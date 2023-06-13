@@ -94,6 +94,10 @@ impl StatementBlock {
         self.reference.round
     }
 
+    pub fn digest(&self) -> BlockDigest {
+        self.reference.digest
+    }
+
     pub fn author_round(&self) -> (AuthorityIndex, RoundNumber) {
         self.reference.author_round()
     }

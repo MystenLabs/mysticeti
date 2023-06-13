@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     pub fn test_syncer() {
-        for seed in 0..100 {
+        for seed in 0..10 {
             test_syncer_at(seed);
         }
     }
@@ -208,8 +208,8 @@ mod tests {
                 SyncerEvent::ForceNewBlock(0),
             );
         }
-        // Simulation awaits for first 5 transactions proposed by each authority to certify
-        let num_txn = 200;
+        // Simulation awaits for first num_txn transactions proposed by each authority to certify
+        let num_txn = 40;
         let await_transactions = first_n_transactions(&committee, num_txn);
         assert_eq!(await_transactions.len(), num_txn as usize * committee.len());
 

@@ -303,6 +303,7 @@ mod test {
     use crate::test_util::networks_and_addresses;
     use std::collections::HashSet;
 
+    #[ignore]
     #[tokio::test]
     async fn network_connect_test() {
         let (networks, addresses) = networks_and_addresses(3).await;

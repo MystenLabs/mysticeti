@@ -152,6 +152,7 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
     eprintln!("Max commit sequence: {max_commit:?}");
 }
 
+#[allow(dead_code)]
 pub fn print_stats<S: SyncerSignals>(syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>]) {
     eprintln!("val ||    cert(ms)   ||cert commit(ms)|| tx commit(ms) |");
     eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ||  p90  |  avg  |");

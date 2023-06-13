@@ -1,4 +1,4 @@
-use std::{net::IpAddr, path::PathBuf, sync::Arc};
+use std::{fs, net::IpAddr, path::PathBuf, sync::Arc};
 
 use ::prometheus::default_registry;
 use clap::{command, Parser};
@@ -28,25 +28,30 @@ enum Operation {
     /// Generate a committee file, parameters files and the private config files of all validators
     /// from a list of initial peers. This is only suitable for benchmarks as it exposes all keys.
     BenchmarkGenesis {
-        #[clap(long, value_name = "[ADDR]", value_delimiter = ',', num_args(4..))]
+        /// The list of ip addresses of the all validators.
+        #[clap(long, value_name = "ADDR", value_delimiter = ' ', num_args(4..))]
         ips: Vec<IpAddr>,
+
+        /// The working directory where the files will be generated.
+        #[clap(long, value_name = "FILE", default_value = "genesis")]
+        working_directory: PathBuf,
     },
     /// Run a validator node.
     Run {
         /// The authority index of this node.
-        #[clap(long, value_name = "INT", global = true)]
+        #[clap(long, value_name = "INT")]
         authority: AuthorityIndex,
 
         /// Path to the file holding the public committee information.
-        #[clap(long, value_name = "FILE", global = true)]
+        #[clap(long, value_name = "FILE")]
         committee_path: String,
 
         /// Path to the file holding the public validator parameters (such as network addresses).
-        #[clap(long, value_name = "FILE", global = true)]
+        #[clap(long, value_name = "FILE")]
         parameters_path: String,
 
         /// Path to the file holding the private validator configurations (including keys).
-        #[clap(long, value_name = "FILE", global = true)]
+        #[clap(long, value_name = "FILE")]
         private_configs_path: String,
     },
 }
@@ -58,7 +63,10 @@ async fn main() -> Result<()> {
 
     // Parse the command line arguments.
     match Args::parse().operation {
-        Operation::BenchmarkGenesis { ips } => benchmark_genesis(ips)?,
+        Operation::BenchmarkGenesis {
+            ips,
+            working_directory,
+        } => benchmark_genesis(ips, working_directory)?,
         Operation::Run {
             authority,
             committee_path,
@@ -79,23 +87,43 @@ async fn main() -> Result<()> {
 }
 
 /// Generate all the genesis files required for benchmarks.
-fn benchmark_genesis(ips: Vec<IpAddr>) -> Result<()> {
+fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()> {
     tracing::info!("Generating benchmark genesis files");
+    fs::create_dir_all(&working_directory).wrap_err(format!(
+        "Failed to create directory '{}'",
+        working_directory.display()
+    ))?;
 
     let committee_size = ips.len();
-    let committee_path = Committee::DEFAULT_FILENAME;
-    Committee::new_for_benchmarks(committee_size).print(committee_path)?;
-    tracing::info!("Generated committee file: {committee_path}");
+    let mut committee_path = working_directory.clone();
+    committee_path.push(Committee::DEFAULT_FILENAME);
+    Committee::new_for_benchmarks(committee_size)
+        .print(&committee_path)
+        .wrap_err("Failed to print committee file")?;
+    tracing::info!("Generated committee file: {}", committee_path.display());
 
-    let parameters_path = Parameters::DEFAULT_FILENAME;
-    Parameters::new_for_benchmarks(ips).print(parameters_path)?;
-    tracing::info!("Generated (public) parameters file: {parameters_path}");
+    let mut parameters_path = working_directory.clone();
+    parameters_path.push(Parameters::DEFAULT_FILENAME);
+    Parameters::new_for_benchmarks(ips)
+        .print(&parameters_path)
+        .wrap_err("Failed to print parameters file")?;
+    tracing::info!(
+        "Generated (public) parameters file: {}",
+        parameters_path.display()
+    );
 
     for i in 0..committee_size {
-        let path = PrivateConfig::DEFAULT_FILENAME;
-        let filename = [path, &i.to_string()].iter().collect::<PathBuf>();
-        PrivateConfig::new_for_benchmarks(i as AuthorityIndex).print(filename.clone())?;
-        tracing::info!("Generated private config file: {}", filename.display());
+        let mut path = working_directory.clone();
+        path.push(PrivateConfig::default_filename(i as AuthorityIndex));
+        let parent_directory = path.parent().unwrap();
+        fs::create_dir_all(&parent_directory).wrap_err(format!(
+            "Failed to create directory '{}'",
+            parent_directory.display()
+        ))?;
+        PrivateConfig::new_for_benchmarks(i as AuthorityIndex)
+            .print(&path)
+            .wrap_err("Failed to print private config file")?;
+        tracing::info!("Generated private config file: {}", path.display());
     }
 
     Ok(())

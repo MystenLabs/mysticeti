@@ -90,8 +90,6 @@ pub struct PrivateConfig {
 }
 
 impl PrivateConfig {
-    pub const DEFAULT_FILENAME: &'static str = "private.json";
-
     pub fn new_for_benchmarks(authority_index: AuthorityIndex) -> Self {
         // TODO: Once we have a crypto library, generate a keypair from a fixed seed.
         tracing::warn!("Generating a predictable keypair for benchmarking");
@@ -100,6 +98,10 @@ impl PrivateConfig {
             keypair: 0,
             storage_path: ["storage", &authority_index.to_string()].iter().collect(),
         }
+    }
+
+    pub fn default_filename(authority: AuthorityIndex) -> PathBuf {
+        ["private", &format!("{authority}.json")].iter().collect()
     }
 }
 

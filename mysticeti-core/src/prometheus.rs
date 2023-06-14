@@ -6,7 +6,7 @@ use prometheus::{Registry, TextEncoder};
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;
 
-const METRICS_ROUTE: &str = "/metrics";
+pub const METRICS_ROUTE: &str = "/metrics";
 
 pub fn start_prometheus_server(
     address: SocketAddr,

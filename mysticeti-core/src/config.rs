@@ -27,14 +27,14 @@ pub trait Print: Serialize + DeserializeOwned {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Identifier {
     pub public_key: PublicKey,
     pub network_address: SocketAddr,
     pub metrics_address: SocketAddr,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Parameters {
     identifiers: Vec<Identifier>,
     wave_length: RoundNumber,
@@ -74,6 +74,12 @@ impl Parameters {
     /// Return all network addresses (including our own) in the order of the authority index.
     pub fn all_network_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
         self.identifiers.iter().map(|id| id.network_address)
+    }
+
+    /// Return all metric addresses (including our own) in the order of the authority index.
+    #[cfg(test)]
+    pub fn all_metric_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
+        self.identifiers.iter().map(|id| id.metrics_address)
     }
 
     pub fn network_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {

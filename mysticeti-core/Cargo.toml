@@ -28,6 +28,7 @@ crc = "3.0.1"
 [dev-dependencies]
 tracing-test = "0.2.4"
 tempdir = "0.3.7"
+reqwest = { version = "0.11.18", features = ["json"] }
 
 [features]
 simulator = []

@@ -1,6 +1,6 @@
 [package]
-name = "sui-orchestrator"
-version = "0.0.0"
+name = "orchestrator"
+version = "0.0.1"
 authors = ["Mysten Labs <build@mystenlabs.com>"]
 license = "Apache-2.0"
 publish = false
@@ -28,6 +28,8 @@ plotters = "0.3.4"
 glob = "0.3.1"
 
 prometheus-parse = { git = "https://github.com/asonnino/prometheus-parser.git", rev = "75334db" }
+
+mysticeti = { path = "../mysticeti-core" }
 
 [dev-dependencies]
 tempfile = "3.4.0"

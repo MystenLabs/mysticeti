@@ -1937,6 +1937,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchestrator"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-ec2",
+ "clap 3.2.25",
+ "color-eyre",
+ "crossterm",
+ "futures",
+ "glob",
+ "multiaddr",
+ "mysticeti",
+ "plotters",
+ "prettytable-rs",
+ "prometheus-parse",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "ssh2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "os_str_bytes"
 version = "6.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2789,33 +2817,6 @@ name = "subtle"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
-
-[[package]]
-name = "sui-orchestrator"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "aws-config",
- "aws-sdk-ec2",
- "clap 3.2.25",
- "color-eyre",
- "crossterm",
- "futures",
- "glob",
- "multiaddr",
- "plotters",
- "prettytable-rs",
- "prometheus-parse",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "ssh2",
- "tempfile",
- "thiserror",
- "tokio",
-]
 
 [[package]]
 name = "syn"

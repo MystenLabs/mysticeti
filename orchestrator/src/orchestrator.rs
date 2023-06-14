@@ -292,7 +292,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         // Wait until the command finished running.
         self.ssh_manager
-            .wait_for_command(active, &id, CommandStatus::Terminated)
+            .wait_for_command(active, id, CommandStatus::Terminated)
             .await?;
 
         display::done();

@@ -50,6 +50,11 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
+    pub fn with_genesis(mut self) -> Self {
+        self.add_blocks(self.committee.genesis_blocks(self.authority()));
+        self
+    }
+
     pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
         self.metrics = Some(metrics);
         self

@@ -209,7 +209,9 @@ async fn run(
     let block_handler = TestBlockHandler::new(last_transaction, committee.clone(), authority);
     let commit_handler =
         TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
-    let core = Core::new(block_handler, authority, committee.clone()).with_metrics(metrics);
+    let core = Core::new(block_handler, authority, committee.clone())
+        .with_metrics(metrics)
+        .with_genesis();
     let network = Network::load(&parameters, authority, binding_network_address).await;
     let network_synchronizer =
         NetworkSyncer::start(network, core, parameters.wave_length(), commit_handler);

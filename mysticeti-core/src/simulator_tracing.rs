@@ -3,6 +3,7 @@
 
 use crate::future_simulator::SimulatorContext;
 use crate::types::format_authority_index;
+use std::env;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::{Compact, Format, Writer};
 use tracing_subscriber::fmt::time::FormatTime;
@@ -11,8 +12,13 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::FmtSubscriber;
 
 pub fn setup_simulator_tracing() {
+    let env_log = env::var("RUST_LOG");
+    let env_log = env_log
+        .as_ref()
+        .map(String::as_str)
+        .unwrap_or("mysticeti=info");
     let subscriber = FmtSubscriber::builder()
-        .with_env_filter("mysticeti=info")
+        .with_env_filter(env_log)
         .event_format(SimulatorFormat(
             format().with_timer(SimulatorTime).compact(),
         ))

@@ -16,7 +16,7 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     commit_period: u64,
     signals: S,
     commit_observer: C,
-    metrics: Option<Arc<Metrics>>,
+    metrics: Arc<Metrics>,
 }
 
 pub trait SyncerSignals: Send + Sync {
@@ -33,7 +33,13 @@ pub trait CommitObserver: Send + Sync {
 
 #[allow(dead_code)]
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
-    pub fn new(core: Core<H>, commit_period: u64, signals: S, commit_observer: C) -> Self {
+    pub fn new(
+        core: Core<H>,
+        commit_period: u64,
+        signals: S,
+        commit_observer: C,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
@@ -43,13 +49,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             signals,
             commit_observer,
             last_seen_by_authority,
-            metrics: None,
+            metrics,
         }
-    }
-
-    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
-        self.metrics = Some(metrics);
-        self
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
@@ -68,10 +69,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
 
     pub fn force_new_block(&mut self, round: RoundNumber) -> bool {
         if self.core.last_proposed() == round {
-            if let Some(metrics) = &self.metrics {
-                metrics.leader_timeout_total.inc();
-            }
-
+            self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
             self.try_new_block();
             true

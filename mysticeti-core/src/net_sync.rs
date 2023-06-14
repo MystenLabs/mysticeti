@@ -1,4 +1,3 @@
-use crate::block_handler::BlockHandler;
 use crate::core::Core;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
@@ -6,6 +5,7 @@ use crate::runtime::Handle;
 use crate::runtime::JoinHandle;
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{AuthorityIndex, RoundNumber};
+use crate::{block_handler::BlockHandler, metrics::Metrics};
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -27,10 +27,22 @@ struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
-    pub fn start(network: Network, core: Core<H>, commit_period: u64, commit_observer: C) -> Self {
+    pub fn start(
+        network: Network,
+        core: Core<H>,
+        commit_period: u64,
+        commit_observer: C,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
-        let mut syncer = Syncer::new(core, commit_period, notify.clone(), commit_observer);
+        let mut syncer = Syncer::new(
+            core,
+            commit_period,
+            notify.clone(),
+            commit_observer,
+            metrics,
+        );
         syncer.force_new_block(0);
         let syncer = RwLock::new(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);

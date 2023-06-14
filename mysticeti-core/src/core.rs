@@ -20,7 +20,7 @@ pub struct Core<H: BlockHandler> {
     committee: Arc<Committee>,
     last_proposed: RoundNumber,
     last_commit_round: RoundNumber,
-    metrics: Option<Arc<Metrics>>,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug)]
@@ -30,7 +30,12 @@ enum MetaStatement {
 }
 
 impl<H: BlockHandler> Core<H> {
-    pub fn new(block_handler: H, authority: AuthorityIndex, committee: Arc<Committee>) -> Self {
+    pub fn new(
+        block_handler: H,
+        authority: AuthorityIndex,
+        committee: Arc<Committee>,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         let block_manager = BlockManager::default();
         let pending = Default::default();
         let last_proposed = 0;
@@ -46,17 +51,12 @@ impl<H: BlockHandler> Core<H> {
             committee,
             last_proposed,
             last_commit_round,
-            metrics: None,
+            metrics,
         }
     }
 
     pub fn with_genesis(mut self) -> Self {
         self.add_blocks(self.committee.genesis_blocks(self.authority()));
-        self
-    }
-
-    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
-        self.metrics = Some(metrics);
         self
     }
 
@@ -153,15 +153,13 @@ impl<H: BlockHandler> Core<H> {
     #[allow(dead_code)]
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
         // todo only create committer once
-        let mut committer = Committer::new(
+        let sequence = Committer::new(
             self.committee.clone(),
             self.block_manager.block_store().clone(),
             period,
-        );
-        if let Some(metrics) = &self.metrics {
-            committer = committer.with_metrics(metrics.clone());
-        }
-        let sequence = committer.try_commit(self.last_commit_round);
+            self.metrics.clone(),
+        )
+        .try_commit(self.last_commit_round);
 
         self.last_commit_round = max(
             self.last_commit_round,

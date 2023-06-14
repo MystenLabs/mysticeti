@@ -32,26 +32,25 @@ pub struct Committer {
     /// The length of a wave (minimum 3)
     wave_length: u64,
     /// Metrics information
-    metrics: Option<Arc<Metrics>>,
+    metrics: Arc<Metrics>,
 }
 
 impl Committer {
     /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore, wave_length: u64) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        block_store: BlockStore,
+        wave_length: u64,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         assert!(wave_length >= 3);
 
         Self {
             committee,
             block_store,
             wave_length,
-            metrics: None,
+            metrics,
         }
-    }
-
-    /// Enable metrics collection.
-    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
-        self.metrics = Some(metrics);
-        self
     }
 
     /// Return the wave in which the specified round belongs.
@@ -320,27 +319,29 @@ impl Committer {
 
     /// Update metrics.
     fn update_metrics(&self, sequence: &[Data<StatementBlock>]) {
-        if let Some(metrics) = &self.metrics {
-            for (i, block) in sequence.iter().rev().enumerate() {
-                let commit_type = if i == 0 { "direct" } else { "indirect" };
-                metrics
-                    .committed_leaders_total
-                    .with_label_values(&[&block.author().to_string(), commit_type])
-                    .inc();
-            }
+        for (i, block) in sequence.iter().rev().enumerate() {
+            let commit_type = if i == 0 { "direct" } else { "indirect" };
+            self.metrics
+                .committed_leaders_total
+                .with_label_values(&[&block.author().to_string(), commit_type])
+                .inc();
         }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
+    use prometheus::default_registry;
     use rand::RngCore;
 
     use crate::{
         block_manager::BlockManager,
         committee::Committee,
         data::Data,
-        test_util::committee,
+        metrics::Metrics,
+        test_util::{committee, test_metrics},
         types::{BlockDigest, BlockReference, RoundNumber, StatementBlock},
     };
 
@@ -415,6 +416,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            test_metrics(),
         );
 
         let last_committed_round = 0;
@@ -437,6 +439,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            test_metrics(),
         );
 
         let last_committed_round = 3;
@@ -448,6 +451,7 @@ mod test {
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
+        let metrics = Arc::new(Metrics::new(default_registry()));
         let committee = committee(4);
         let wave_length = 3;
 
@@ -460,6 +464,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            metrics,
         );
 
         let last_committed_round = 0;
@@ -487,6 +492,7 @@ mod test {
                 committee.clone(),
                 block_manager.block_store().clone(),
                 wave_length,
+                test_metrics(),
             );
 
             let last_committed_round = 0;
@@ -512,6 +518,7 @@ mod test {
                 committee.clone(),
                 block_manager.block_store().clone(),
                 wave_length,
+                test_metrics(),
             );
 
             let sequence = committer.try_commit(last_committed_round);
@@ -570,6 +577,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            test_metrics(),
         );
 
         let last_committed_round = 0;
@@ -611,6 +619,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            test_metrics(),
         );
 
         let last_committed_round = 0;
@@ -651,6 +660,7 @@ mod test {
             committee.clone(),
             block_manager.block_store().clone(),
             wave_length,
+            test_metrics(),
         );
 
         let last_committed_round = 0;

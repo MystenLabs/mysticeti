@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_handler::TestCommitHandler;
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::committee::Committee;
 use crate::core::Core;
@@ -11,11 +10,17 @@ use crate::network::Network;
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{format_authority_index, AuthorityIndex, BlockReference, TransactionId};
+use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
+use prometheus::Registry;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
+
+pub fn test_metrics() -> Arc<Metrics> {
+    Arc::new(Metrics::new(&Registry::new()))
+}
 
 pub fn committee(n: usize) -> Arc<Committee> {
     Committee::new(vec![1; n])
@@ -29,7 +34,7 @@ pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandl
             let last_transaction = first_transaction_for_authority(authority);
             let block_handler =
                 TestBlockHandler::new(last_transaction, committee.clone(), authority);
-            let mut core = Core::new(block_handler, authority, committee.clone());
+            let mut core = Core::new(block_handler, authority, committee.clone(), test_metrics());
             core.add_blocks(committee.genesis_blocks(core.authority()));
             core
         })
@@ -66,7 +71,7 @@ pub fn committee_and_syncers(
                     committee.clone(),
                     core.block_handler().transaction_time.clone(),
                 );
-                Syncer::new(core, 3, Default::default(), commit_handler)
+                Syncer::new(core, 3, Default::default(), commit_handler, test_metrics())
             })
             .collect(),
     )
@@ -100,7 +105,7 @@ pub fn simulated_network_syncers(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
         );
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler);
+        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         network_syncers.push(network_syncer);
     }
     (simulated_network, network_syncers)
@@ -115,7 +120,7 @@ pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, Te
             committee.clone(),
             core.block_handler().transaction_time.clone(),
         );
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler);
+        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         network_syncers.push(network_syncer);
     }
     network_syncers

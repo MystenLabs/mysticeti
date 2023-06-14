@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
     fs,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
@@ -11,7 +10,7 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{AuthorityIndex, KeyPair, RoundNumber};
+use crate::types::{AuthorityIndex, KeyPair, PublicKey, RoundNumber};
 
 pub trait Print: Serialize + DeserializeOwned {
     fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), std::io::Error> {
@@ -27,9 +26,15 @@ pub trait Print: Serialize + DeserializeOwned {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct Identifier {
+    pub public_key: PublicKey,
+    pub network_address: SocketAddr,
+    pub metrics_address: SocketAddr,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct Parameters {
-    network_address: HashMap<AuthorityIndex, SocketAddr>,
-    metrics_address: HashMap<AuthorityIndex, SocketAddr>,
+    identifiers: Vec<Identifier>,
     wave_length: RoundNumber,
     leader_timeout: Duration,
 }
@@ -44,35 +49,41 @@ impl Parameters {
     pub const BENCHMARK_METRICS_PORT_OFFSET: u16 = 1000;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
-        let mut network_address = HashMap::new();
-        let mut metrics_address = HashMap::new();
+        let mut identifiers = Vec::new();
         for (i, ip) in ips.into_iter().enumerate() {
-            let authority = i as AuthorityIndex;
+            let public_key = i as PublicKey;
             let network_port = Self::BENCHMARK_PORT_OFFSET + i as u16;
             let metrics_port = Self::BENCHMARK_METRICS_PORT_OFFSET + network_port;
-            let network_addr = SocketAddr::new(ip, network_port);
-            let metrics_addr = SocketAddr::new(ip, metrics_port);
-            network_address.insert(authority, network_addr);
-            metrics_address.insert(authority, metrics_addr);
+            let network_address = SocketAddr::new(ip, network_port);
+            let metrics_address = SocketAddr::new(ip, metrics_port);
+            identifiers.push(Identifier {
+                public_key,
+                network_address,
+                metrics_address,
+            });
         }
         Self {
-            network_address,
-            metrics_address,
+            identifiers,
             wave_length: Self::DEFAULT_WAVE_LENGTH,
             leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
         }
     }
 
+    /// Return all network addresses (including our own) in the order of the authority index.
     pub fn all_network_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
-        self.network_address.values().copied()
+        self.identifiers.iter().map(|id| id.network_address)
     }
 
     pub fn network_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {
-        self.network_address.get(&authority).copied()
+        self.identifiers
+            .get(authority as usize)
+            .map(|id| id.network_address)
     }
 
     pub fn metrics_address(&self, authority: AuthorityIndex) -> Option<SocketAddr> {
-        self.metrics_address.get(&authority).copied()
+        self.identifiers
+            .get(authority as usize)
+            .map(|id| id.metrics_address)
     }
 
     pub fn wave_length(&self) -> RoundNumber {

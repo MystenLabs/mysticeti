@@ -1,6 +1,25 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{
+    fmt::{Debug, Display},
+    path::PathBuf,
+    str::FromStr,
+};
+
+// use mysticeti::{
+//     committee::Committee,
+//     config::{Parameters, PrivateConfig},
+//     types::AuthorityIndex,
+// };
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    benchmark::{BenchmarkParameters, BenchmarkType},
+    client::Instance,
+    settings::Settings,
+};
+
 use super::{ProtocolCommands, ProtocolMetrics};
 
 /// The type of benchmarks supported by Mysticeti.
@@ -58,7 +77,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
             .map(|x| x.main_ip.to_string())
             .collect::<Vec<_>>()
             .join(" ");
-        let working_directory = self.working_dir.clone();
+        let working_directory = self.working_dir.display();
 
         let genesis = [
             "cargo run --release --bin mysticeti --",
@@ -78,27 +97,28 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
     where
         I: IntoIterator<Item = Instance>,
     {
-        let working_dir = self.working_dir.clone();
-        instances
-            .into_iter()
-            .enumerate()
-            .map(|(i, instance)| {
-                let authority = i as AuthorityIndex;
-                let committee_path = [working_dir, Committee::DEFAULT_FILENAME].iter().collect();
-                let parameters_path = [working_dir, Parameters::DEFAULT_FILENAME].iter().collect();
-                let private_configs_path = [working_dir, PrivateConfig::default_filename(authority)].iter().collect();
+        // let working_dir = self.working_dir.clone();
+        // instances
+        //     .into_iter()
+        //     .enumerate()
+        //     .map(|(i, instance)| {
+        //         let authority = i as AuthorityIndex;
+        //         let committee_path = [working_dir, Committee::DEFAULT_FILENAME].iter().collect();
+        //         let parameters_path = [working_dir, Parameters::DEFAULT_FILENAME].iter().collect();
+        //         let private_configs_path = [working_dir, PrivateConfig::default_filename(authority)].iter().collect();
 
-                let run = [
-                    "cargo run --release --bin mysticeti --",
-                    &format!("--authority {authority} --committee-path {committee_path}"),
-                    &format!("--parameters-path {parameters_path} --private-config-path {private_configs_path}"),
-                ]
-                .join(" ");
-                let command = ["source $HOME/.cargo/env", &run].join(" && ");
+        //         let run = [
+        //             "cargo run --release --bin mysticeti --",
+        //             &format!("--authority {authority} --committee-path {committee_path}"),
+        //             &format!("--parameters-path {parameters_path} --private-config-path {private_configs_path}"),
+        //         ]
+        //         .join(" ");
+        //         let command = ["source $HOME/.cargo/env", &run].join(" && ");
 
-                (instance, command)
-            })
-            .collect()
+        //         (instance, command)
+        //     })
+        //     .collect()
+        vec![]
     }
 
     fn client_command<I>(

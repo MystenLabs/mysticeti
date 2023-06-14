@@ -47,15 +47,15 @@ impl Parameters {
     pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
     pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
 
-    pub const BENCHMARK_PORT_OFFSET: u16 = 10_000;
-    pub const BENCHMARK_METRICS_PORT_OFFSET: u16 = 1000;
+    pub const BENCHMARK_PORT_OFFSET: u16 = 1000;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
+        let benchmark_port_offset = ips.len() as u16;
         let mut identifiers = Vec::new();
         for (i, ip) in ips.into_iter().enumerate() {
             let public_key = i as PublicKey;
             let network_port = Self::BENCHMARK_PORT_OFFSET + i as u16;
-            let metrics_port = Self::BENCHMARK_METRICS_PORT_OFFSET + network_port;
+            let metrics_port = benchmark_port_offset + network_port;
             let network_address = SocketAddr::new(ip, network_port);
             let metrics_address = SocketAddr::new(ip, metrics_port);
             identifiers.push(Identifier {

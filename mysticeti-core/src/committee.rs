@@ -224,9 +224,12 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
         let mut processed = vec![];
         for statement in block.statements() {
             match statement {
-                BaseStatement::Share(id, _transaction) => {
+                BaseStatement::Share(id, transaction) => {
                     if self.register(*id, block.author(), committee).is_err() {
-                        panic!("Duplicate transaction: {id} from {}", block.author());
+                        panic!(
+                            "Duplicate transaction {transaction}: {id} from {}",
+                            block.author()
+                        );
                     }
                     if let Some(ref mut response) = response {
                         response.push(BaseStatement::Vote(*id, Vote::Accept));

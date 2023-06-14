@@ -46,10 +46,7 @@ impl Network {
         our_id: AuthorityIndex,
         local_addr: SocketAddr,
     ) -> Self {
-        let mut addresses = vec![];
-        for address in parameters.all_network_addresses() {
-            addresses.push(address);
-        }
+        let addresses = parameters.all_network_addresses().collect::<Vec<_>>();
         Self::from_socket_addresses(&addresses, our_id as usize, local_addr).await
     }
 

@@ -161,7 +161,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .unwrap_or_default();
             select! {
                 _sleep = runtime::sleep(leader_timeout) => {
-                    println!("Timeout {round}");
+                    tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
                     inner.syncer.write().force_new_block(round);
                 }
@@ -236,16 +236,14 @@ mod sim_tests {
     use std::time::Duration;
 
     #[test]
-    fn test_network_sync_sim() {
-        SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_async());
+    fn test_network_sync_sim_all_up() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_all_up_async());
     }
 
-    async fn test_network_sync_sim_async() {
+    async fn test_network_sync_sim_all_up_async() {
         let (simulated_network, network_syncers) = simulated_network_syncers(10);
         simulated_network.connect_all().await;
-        println!("Started");
         runtime::sleep(Duration::from_secs(20)).await;
-        println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {
             let syncer = network_syncer.shutdown().await;

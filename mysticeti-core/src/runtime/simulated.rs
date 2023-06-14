@@ -39,3 +39,7 @@ impl TimeInstant {
         SimulatorContext::time() - self.0
     }
 }
+
+pub fn timestamp_utc() -> Duration {
+    SimulatorContext::time()
+}

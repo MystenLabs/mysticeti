@@ -391,7 +391,8 @@ mod test {
                         round,
                         digest: random_digest(),
                     };
-                    let block = Data::new(StatementBlock::new(reference, includes.clone(), vec![]));
+                    let block =
+                        Data::new(StatementBlock::new(reference, includes.clone(), vec![], 0));
                     (reference, block)
                 })
                 .unzip();
@@ -557,7 +558,12 @@ mod test {
                     round: round_leader_2,
                     digest: random_digest(),
                 };
-                let block = Data::new(StatementBlock::new(reference, references.clone(), vec![]));
+                let block = Data::new(StatementBlock::new(
+                    reference,
+                    references.clone(),
+                    vec![],
+                    0,
+                ));
                 (reference, block)
             })
             .unzip();

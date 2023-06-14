@@ -13,6 +13,7 @@ pub type PublicKey = u64;
 use crate::data::Data;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::Duration;
 #[cfg(test)]
 pub use test::Dag;
 
@@ -52,7 +53,13 @@ pub struct StatementBlock {
     // A list of base statements in order.
     #[allow(dead_code)]
     statements: Vec<BaseStatement>,
+
+    // Creation time of the block as reported by creator, currently not enforced
+    meta_creation_time_ns: TimestampNs,
 }
+
+pub type TimestampNs = u128;
+const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
 
 impl StatementBlock {
     pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
@@ -60,6 +67,7 @@ impl StatementBlock {
             BlockReference::genesis_test(authority),
             vec![],
             vec![],
+            0,
         ))
     }
 
@@ -67,11 +75,13 @@ impl StatementBlock {
         reference: BlockReference,
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
+        meta_creation_time_ns: TimestampNs,
     ) -> Self {
         Self {
             reference,
             includes,
             statements,
+            meta_creation_time_ns,
         }
     }
 
@@ -103,6 +113,12 @@ impl StatementBlock {
         self.reference.author_round()
     }
 
+    pub fn meta_creation_time(&self) -> Duration {
+        // Some context: https://github.com/rust-lang/rust/issues/51107
+        let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
+        let nanos = self.meta_creation_time_ns % NANOS_IN_SEC;
+        Duration::new(secs as u64, nanos as u32)
+    }
     // /// Reference to the parent block made by the same authority
     // pub fn own_parent(&self) -> Option<BlockReference> {
     //     self.includes.get(0).map(|r| {
@@ -249,6 +265,7 @@ mod test {
                 reference,
                 includes,
                 statements: vec![],
+                meta_creation_time_ns: 0,
             }
         }
 
@@ -278,6 +295,7 @@ mod test {
                         reference,
                         includes: vec![],
                         statements: vec![],
+                        meta_creation_time_ns: 0,
                     })
                 });
             }

@@ -1,5 +1,6 @@
 use crate::committee::Committee;
 use crate::data::Data;
+use crate::runtime::timestamp_utc;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, committer::Committer};
@@ -134,7 +135,8 @@ impl<H: BlockHandler> Core<H> {
             digest: 0,
         };
         assert!(!includes.is_empty());
-        let block = StatementBlock::new(block_ref, includes, statements);
+        let time_ns = timestamp_utc().as_nanos();
+        let block = StatementBlock::new(block_ref, includes, statements, time_ns);
         assert_eq!(
             block.includes().get(0).unwrap().authority,
             self.authority,

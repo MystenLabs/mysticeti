@@ -4,6 +4,7 @@
 use crate::block_manager::BlockManager;
 use crate::core::Core;
 use crate::data::Data;
+use crate::runtime::timestamp_utc;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use std::{collections::BTreeMap, sync::Arc};
@@ -86,9 +87,17 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.force_new_block = false;
 
             let newly_committed = self.core.try_commit(3);
+            let utc_now = timestamp_utc();
             if !newly_committed.is_empty() {
-                let committed_refs: Vec<_> =
-                    newly_committed.iter().map(|b| *b.reference()).collect();
+                let committed_refs: Vec<_> = newly_committed
+                    .iter()
+                    .map(|block| {
+                        let age = utc_now
+                            .checked_sub(block.meta_creation_time())
+                            .unwrap_or_default();
+                        format!("{}({}ms)", block.reference(), age.as_millis())
+                    })
+                    .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
             self.commit_observer

@@ -10,12 +10,70 @@ use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
 use parking_lot::Mutex;
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
+}
+
+pub struct RealBlockHandler {
+    pub last_transaction: u64,
+    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    committee: Arc<Committee>,
+    authority: AuthorityIndex,
+    pub transaction_certified_latency: PreciseHistogram<Duration>,
+    rng: StdRng,
+}
+
+impl RealBlockHandler {
+    pub fn new(
+        last_transaction: u64,
+        committee: Arc<Committee>,
+        authority: AuthorityIndex,
+    ) -> Self {
+        let rng = StdRng::seed_from_u64(authority);
+        Self {
+            last_transaction,
+            transaction_votes: Default::default(),
+            transaction_time: Default::default(),
+            committee,
+            authority,
+            transaction_certified_latency: Default::default(),
+            rng,
+        }
+    }
+}
+
+impl BlockHandler for RealBlockHandler {
+    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+        let mut response = vec![];
+        self.last_transaction = self.rng.next_u64();
+        response.push(BaseStatement::Share(
+            self.last_transaction,
+            self.last_transaction,
+        ));
+        let mut transaction_time = self.transaction_time.lock();
+        transaction_time.insert(self.last_transaction, TimeInstant::now());
+        self.transaction_votes
+            .register(self.last_transaction, self.authority, &self.committee)
+            .ok();
+        for block in blocks {
+            let processed =
+                self.transaction_votes
+                    .process_block(block, Some(&mut response), &self.committee);
+            for processed_id in processed {
+                if let Some(instant) = transaction_time.get(&processed_id) {
+                    self.transaction_certified_latency
+                        .observe(instant.elapsed());
+                }
+            }
+        }
+        response
+    }
 }
 
 // Immediately votes and generates new transactions
@@ -54,7 +112,6 @@ impl TestBlockHandler {
             transaction_time: Default::default(),
             committee,
             authority,
-
             transaction_certified_latency: Default::default(),
         }
     }

@@ -227,7 +227,7 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
                 BaseStatement::Share(id, transaction) => {
                     if self.register(*id, block.author(), committee).is_err() {
                         panic!(
-                            "Duplicate transaction {transaction}: {id} from {}",
+                            "Duplicate transaction {transaction:?}: {id} from {}",
                             block.author()
                         );
                     }

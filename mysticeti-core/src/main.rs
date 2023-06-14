@@ -42,7 +42,7 @@ mod block_store;
 mod stat;
 
 use crate::{
-    block_handler::{TestBlockHandler, TestCommitHandler},
+    block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
     config::{Parameters, Print, PrivateConfig},
     core::Core,
@@ -206,7 +206,7 @@ async fn run(
 
     // Boot the validator node.
     let last_transaction = 0;
-    let block_handler = TestBlockHandler::new(last_transaction, committee.clone(), authority);
+    let block_handler = RealBlockHandler::new(last_transaction, committee.clone(), authority);
     let commit_handler =
         TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
     let core = Core::new(block_handler, authority, committee.clone())

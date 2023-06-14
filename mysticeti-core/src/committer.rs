@@ -257,11 +257,7 @@ impl Committer {
             .rev()
             .collect();
 
-        if let Some(metrics) = &self.metrics {
-            metrics
-                .committed_leaders_total
-                .inc_by(sequence.len() as u64);
-        }
+        self.update_metrics(&sequence);
 
         sequence
     }
@@ -307,18 +303,6 @@ impl Committer {
             .filter(|l| self.enough_leader_support(decision_round, l))
             .collect();
 
-        if let Some(metrics) = self.metrics.as_ref() {
-            let support = if leaders_with_enough_support.is_empty() {
-                "not_enough_support"
-            } else {
-                "enough_support"
-            };
-            metrics
-                .leaders_with_enough_support_total
-                .with_label_values(&[support])
-                .inc();
-        }
-
         // There can be at most one leader with enough support for each round.
         if leaders_with_enough_support.len() > 1 {
             panic!("More than one certified block at wave {highest_wave} from leader {leader}")
@@ -331,6 +315,19 @@ impl Committer {
                 self.commit(last_committed_wave, leader_block)
             }
             None => vec![],
+        }
+    }
+
+    /// Update metrics.
+    fn update_metrics(&self, sequence: &[Data<StatementBlock>]) {
+        if let Some(metrics) = &self.metrics {
+            for (i, block) in sequence.iter().rev().enumerate() {
+                let commit_type = if i == 0 { "direct" } else { "indirect" };
+                metrics
+                    .committed_leaders_total
+                    .with_label_values(&[&block.author().to_string(), commit_type])
+                    .inc();
+            }
         }
     }
 }

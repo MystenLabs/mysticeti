@@ -5,23 +5,23 @@ use prometheus::{
 
 #[derive(Clone)]
 pub struct Metrics {
-    pub committed_leaders_total: IntCounter,
-    pub leaders_with_enough_support_total: IntCounterVec,
+    pub committed_leaders_total: IntCounterVec,
+    pub leader_timeout_total: IntCounter,
 }
 
 impl Metrics {
     pub fn new(registry: &Registry) -> Self {
         Self {
-            committed_leaders_total: register_int_counter_with_registry!(
+            committed_leaders_total: register_int_counter_vec_with_registry!(
                 "committed_leaders_total",
-                "Total number of committed leaders",
+                "Total number of (direct or indirect) committed leaders per authority",
+                &["authority", "commit_type"],
                 registry,
             )
             .unwrap(),
-            leaders_with_enough_support_total: register_int_counter_vec_with_registry!(
-                "leaders_with_enough_support_total",
-                "Total number of leaders with enough and not enough support",
-                &["enough_support", "not_enough_support"],
+            leader_timeout_total: register_int_counter_with_registry!(
+                "leader_timeout_total",
+                "Total number of leader timeouts",
                 registry,
             )
             .unwrap(),

@@ -1,12 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_handler::BlockHandler;
 use crate::block_manager::BlockManager;
 use crate::core::Core;
 use crate::data::Data;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
-use std::collections::BTreeMap;
+use crate::{block_handler::BlockHandler, metrics::Metrics};
+use std::{collections::BTreeMap, sync::Arc};
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
@@ -16,6 +16,7 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     commit_period: u64,
     signals: S,
     commit_observer: C,
+    metrics: Option<Arc<Metrics>>,
 }
 
 pub trait SyncerSignals: Send + Sync {
@@ -42,7 +43,13 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             signals,
             commit_observer,
             last_seen_by_authority,
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
@@ -61,6 +68,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
 
     pub fn force_new_block(&mut self, round: RoundNumber) -> bool {
         if self.core.last_proposed() == round {
+            if let Some(metrics) = &self.metrics {
+                metrics.leader_timeout_total.inc();
+            }
+
             self.force_new_block = true;
             self.try_new_block();
             true

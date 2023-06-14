@@ -118,7 +118,7 @@ impl Server {
             if let Some(sender) = self.worker_senders.get(&remote_peer) {
                 sender.send(socket).ok();
             } else {
-                eprintln!("Dropping connection from unknown peer {remote_peer}");
+                tracing::warn!("Dropping connection from unknown peer {remote_peer}");
             }
         }
     }
@@ -205,7 +205,7 @@ impl Worker {
         stream.write_u64(Self::ACTIVE_HANDSHAKE).await?;
         let handshake = stream.read_u64().await?;
         if handshake != Self::PASSIVE_HANDSHAKE {
-            eprintln!("Invalid passive handshake: {handshake}");
+            tracing::warn!("Invalid passive handshake: {handshake}");
             return Ok(());
         }
         let Some(connection) = self.make_connection().await else {
@@ -219,7 +219,7 @@ impl Worker {
         stream.write_u64(Self::PASSIVE_HANDSHAKE).await?;
         let handshake = stream.read_u64().await?;
         if handshake != Self::ACTIVE_HANDSHAKE {
-            eprintln!("Invalid active handshake: {handshake}");
+            tracing::warn!("Invalid active handshake: {handshake}");
             return Ok(());
         }
         let Some(connection) = self.make_connection().await else {
@@ -260,7 +260,7 @@ impl Worker {
         loop {
             let size = stream.read_u32().await?;
             if size > Self::MAX_SIZE {
-                eprintln!("Invalid size: {size}");
+                tracing::warn!("Invalid size: {size}");
                 return Ok(());
             }
             let buf = &mut buf[..size as usize];
@@ -274,7 +274,7 @@ impl Worker {
                     }
                 }
                 Err(err) => {
-                    eprintln!("Failed to deserialize: {}", err);
+                    tracing::warn!("Failed to deserialize: {}", err);
                     return Ok(());
                 }
             }

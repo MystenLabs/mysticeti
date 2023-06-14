@@ -4,6 +4,8 @@
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::committee::Committee;
 use crate::core::Core;
+#[cfg(feature = "simulator")]
+use crate::future_simulator::OverrideNodeContext;
 use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
@@ -105,7 +107,11 @@ pub fn simulated_network_syncers(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
         );
+        #[cfg(feature = "simulator")]
+        let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+        #[cfg(feature = "simulator")]
+        drop(node_context);
         network_syncers.push(network_syncer);
     }
     (simulated_network, network_syncers)

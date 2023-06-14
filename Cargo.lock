@@ -1806,6 +1806,8 @@ dependencies = [
  "tempdir",
  "tokio",
  "tracing",
+ "tracing-core",
+ "tracing-subscriber",
  "tracing-test",
 ]
 

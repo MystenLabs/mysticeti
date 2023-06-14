@@ -232,11 +232,13 @@ mod tests {
 mod sim_tests {
     use crate::future_simulator::SimulatedExecutorState;
     use crate::runtime;
+    use crate::simulator_tracing::setup_simulator_tracing;
     use crate::test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers};
     use std::time::Duration;
 
     #[test]
     fn test_network_sync_sim_all_up() {
+        setup_simulator_tracing();
         SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_all_up_async());
     }
 
@@ -256,6 +258,7 @@ mod sim_tests {
 
     #[test]
     fn test_network_sync_sim_one_down() {
+        setup_simulator_tracing();
         SimulatedExecutorState::run(rng_at_seed(0), test_network_sync_sim_one_down_async());
     }
 

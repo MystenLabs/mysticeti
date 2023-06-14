@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::simulator::{Scheduler, Simulator, SimulatorState};
+use crate::AuthorityIndex;
 use futures::FutureExt;
 use rand::prelude::StdRng;
 use std::cell::RefCell;
@@ -18,6 +19,7 @@ use tokio::sync::{oneshot, Notify};
 #[derive(Default)]
 pub struct SimulatedExecutorState {
     tasks: HashMap<usize, Pin<Box<dyn Future<Output = ()>>>>,
+    task_to_node: HashMap<usize, AuthorityIndex>,
     next_id: usize,
 }
 
@@ -89,7 +91,7 @@ pub fn simulator_spawn<R: Send + 'static, F: Future<Output = R> + Send + 'static
         let task_id = context.next_id;
         context.next_id += 1;
         let (task, join_handle) = make_task(f);
-        context.tasks.insert(task_id, task);
+        context.tasks.insert(task_id, (context.current_node, task));
         join_handle
     })
 }
@@ -100,16 +102,18 @@ thread_local! {
 
 pub struct SimulatorContext {
     next_id: usize,
-    tasks: HashMap<usize, Pin<Box<dyn Future<Output = ()>>>>,
+    tasks: HashMap<usize, (Option<AuthorityIndex>, Pin<Box<dyn Future<Output = ()>>>)>,
     task_id: usize,
+    current_node: Option<AuthorityIndex>,
 }
 
 impl SimulatorContext {
-    pub fn new(next_id: usize, task_id: usize) -> Self {
+    pub fn new(next_id: usize, task_id: usize, current_node: Option<AuthorityIndex>) -> Self {
         Self {
             next_id,
             tasks: Default::default(),
             task_id,
+            current_node,
         }
     }
 
@@ -128,6 +132,15 @@ impl SimulatorContext {
                 .as_ref()
                 .expect("Not running in simulator context")
                 .task_id
+        })
+    }
+
+    pub fn current_node() -> Option<AuthorityIndex> {
+        CONTEXT.with(|ctx| {
+            ctx.borrow()
+                .as_ref()
+                .expect("Not running in simulator context")
+                .current_node
         })
     }
 
@@ -231,15 +244,19 @@ impl SimulatorState for SimulatedExecutorState {
                 let waker = waker.into();
                 let mut context = Context::from_waker(&waker);
                 let task = oc.get_mut();
-                SimulatorContext::new(self.next_id, task_id).enter();
+                let current_node = self.task_to_node.get(&task_id).copied();
+                SimulatorContext::new(self.next_id, task_id, current_node).enter();
                 if let Poll::Ready(()) = task.as_mut().poll(&mut context) {
                     oc.remove();
                 }
                 let context = SimulatorContext::exit();
                 assert_eq!(context.next_id, self.next_id + context.tasks.len());
                 self.next_id = context.next_id;
-                for (id, task) in context.tasks {
+                for (id, (node, task)) in context.tasks {
                     let p = self.tasks.insert(id, task);
+                    if let Some(node) = node {
+                        self.task_to_node.insert(id, node);
+                    }
                     assert!(p.is_none());
                     // todo - randomize scheduling
                     Scheduler::schedule_event(
@@ -304,5 +321,32 @@ impl Future for Sleep {
                 }
             }
         }
+    }
+}
+
+pub struct OverrideNodeContext {
+    prev: Option<AuthorityIndex>,
+}
+
+impl OverrideNodeContext {
+    pub fn enter(new: Option<AuthorityIndex>) -> Self {
+        let prev = CONTEXT.with(|ctx| {
+            let mut ctx = ctx.borrow_mut();
+            let ctx = ctx.as_mut().expect("Not running in simulator context");
+            let prev = ctx.current_node;
+            ctx.current_node = new;
+            prev
+        });
+        Self { prev }
+    }
+}
+
+impl Drop for OverrideNodeContext {
+    fn drop(&mut self) {
+        CONTEXT.with(|ctx| {
+            let mut ctx = ctx.borrow_mut();
+            let ctx = ctx.as_mut().expect("Not running in simulator context");
+            ctx.current_node = self.prev;
+        });
     }
 }

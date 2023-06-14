@@ -8,7 +8,6 @@ use std::{
 
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
-use tokio::task::JoinHandle;
 
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
@@ -19,6 +18,7 @@ use crate::{
     net_sync::NetworkSyncer,
     network::Network,
     prometheus,
+    runtime::JoinHandle,
     types::AuthorityIndex,
 };
 

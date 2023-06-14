@@ -4,7 +4,8 @@
 use axum::{http::StatusCode, routing::get, Extension, Router, Server};
 use prometheus::{Registry, TextEncoder};
 use std::net::SocketAddr;
-use tokio::task::JoinHandle;
+
+use crate::runtime::{Handle, JoinHandle};
 
 pub const METRICS_ROUTE: &str = "/metrics";
 
@@ -17,7 +18,8 @@ pub fn start_prometheus_server(
         .layer(Extension(registry.clone()));
 
     tracing::info!("Prometheus server booted on {address}");
-    tokio::spawn(async move { Server::bind(&address).serve(app.into_make_service()).await })
+    Handle::current()
+        .spawn(async move { Server::bind(&address).serve(app.into_make_service()).await })
 }
 
 async fn metrics(registry: Extension<Registry>) -> (StatusCode, String) {

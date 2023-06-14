@@ -132,7 +132,7 @@ mod test {
 
     /// Ensure that a committee of honest validators commits.
     #[tokio::test]
-    async fn common_case() {
+    async fn validator_smoke_test() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
 

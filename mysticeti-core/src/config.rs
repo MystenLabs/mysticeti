@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    fs,
+    fs, io,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     time::Duration,
@@ -13,14 +13,16 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::types::{AuthorityIndex, KeyPair, PublicKey, RoundNumber};
 
 pub trait Print: Serialize + DeserializeOwned {
-    fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        let content = serde_json::to_string_pretty(self)?;
+    fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), io::Error> {
+        let content =
+            serde_yaml::to_string(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::write(&path, content)
     }
 
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+    fn load<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         let content = fs::read_to_string(&path)?;
-        let object = serde_json::from_str(&content)?;
+        let object =
+            serde_yaml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         Ok(object)
     }
 }

@@ -248,6 +248,7 @@ impl SimulatorState for SimulatedExecutorState {
                 SimulatorContext::new(self.next_id, task_id, current_node).enter();
                 if let Poll::Ready(()) = task.as_mut().poll(&mut context) {
                     oc.remove();
+                    self.task_to_node.remove(&task_id);
                 }
                 let context = SimulatorContext::exit();
                 assert_eq!(context.next_id, self.next_id + context.tasks.len());

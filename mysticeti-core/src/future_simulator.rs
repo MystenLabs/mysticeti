@@ -18,14 +18,18 @@ use tokio::sync::{oneshot, Notify};
 
 #[derive(Default)]
 pub struct SimulatedExecutorState {
-    tasks: HashMap<usize, Pin<Box<dyn Future<Output = ()>>>>,
-    task_to_node: HashMap<usize, AuthorityIndex>,
+    tasks: HashMap<usize, Task>,
     next_id: usize,
 }
 
 pub struct JoinHandle<R> {
     ch: Pin<Box<oneshot::Receiver<Result<R, JoinError>>>>,
     abort: Arc<Notify>,
+}
+
+struct Task {
+    f: Pin<Box<dyn Future<Output = ()>>>,
+    node: Option<AuthorityIndex>,
 }
 
 impl SimulatedExecutorState {
@@ -46,6 +50,10 @@ impl SimulatedExecutorState {
         let task_id = state.next_id;
         state.next_id += 1;
         let (task, join_handle) = make_task(f);
+        let task = Task {
+            f: task,
+            node: None,
+        };
         state.tasks.insert(task_id, task);
         // todo - randomize delay
         simulator.schedule_event(
@@ -91,7 +99,11 @@ pub fn simulator_spawn<R: Send + 'static, F: Future<Output = R> + Send + 'static
         let task_id = context.next_id;
         context.next_id += 1;
         let (task, join_handle) = make_task(f);
-        context.tasks.insert(task_id, (context.current_node, task));
+        let task = Task {
+            f: task,
+            node: context.current_node,
+        };
+        context.tasks.insert(task_id, task);
         join_handle
     })
 }
@@ -102,7 +114,7 @@ thread_local! {
 
 pub struct SimulatorContext {
     next_id: usize,
-    tasks: HashMap<usize, (Option<AuthorityIndex>, Pin<Box<dyn Future<Output = ()>>>)>,
+    tasks: HashMap<usize, Task>,
     task_id: usize,
     current_node: Option<AuthorityIndex>,
 }
@@ -244,20 +256,15 @@ impl SimulatorState for SimulatedExecutorState {
                 let waker = waker.into();
                 let mut context = Context::from_waker(&waker);
                 let task = oc.get_mut();
-                let current_node = self.task_to_node.get(&task_id).copied();
-                SimulatorContext::new(self.next_id, task_id, current_node).enter();
-                if let Poll::Ready(()) = task.as_mut().poll(&mut context) {
+                SimulatorContext::new(self.next_id, task_id, task.node).enter();
+                if let Poll::Ready(()) = task.f.as_mut().poll(&mut context) {
                     oc.remove();
-                    self.task_to_node.remove(&task_id);
                 }
                 let context = SimulatorContext::exit();
                 assert_eq!(context.next_id, self.next_id + context.tasks.len());
                 self.next_id = context.next_id;
-                for (id, (node, task)) in context.tasks {
+                for (id, task) in context.tasks {
                     let p = self.tasks.insert(id, task);
-                    if let Some(node) = node {
-                        self.task_to_node.insert(id, node);
-                    }
                     assert!(p.is_none());
                     // todo - randomize scheduling
                     Scheduler::schedule_event(

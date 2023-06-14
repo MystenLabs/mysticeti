@@ -2,7 +2,7 @@ use crate::core::Core;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
 use crate::runtime::Handle;
-use crate::runtime::JoinHandle;
+use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{AuthorityIndex, RoundNumber};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
@@ -175,8 +175,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
-    pub async fn await_completion(self) {
-        self.main_task.await.expect("Main task failed");
+    pub async fn await_completion(self) -> Result<(), JoinError> {
+        self.main_task.await
     }
 }
 

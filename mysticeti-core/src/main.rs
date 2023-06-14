@@ -208,8 +208,8 @@ async fn run(
 
     // Boot the validator node.
     let validator = Validator::start(authority, committee, &parameters, private).await?;
-    validator.await_completion().await;
-
+    let (network_result, _metrics_result) = validator.await_completion().await;
+    network_result.expect("Validator failed");
     Ok(())
 }
 

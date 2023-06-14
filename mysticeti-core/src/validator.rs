@@ -18,7 +18,7 @@ use crate::{
     net_sync::NetworkSyncer,
     network::Network,
     prometheus,
-    runtime::JoinHandle,
+    runtime::{JoinError, JoinHandle},
     types::AuthorityIndex,
 };
 
@@ -78,11 +78,16 @@ impl Validator {
         })
     }
 
-    pub async fn await_completion(self) {
-        let _ = tokio::join!(
+    pub async fn await_completion(
+        self,
+    ) -> (
+        Result<(), JoinError>,
+        Result<Result<(), hyper::Error>, JoinError>,
+    ) {
+        tokio::join!(
             self.network_synchronizer.await_completion(),
             self.metrics_handle
-        );
+        )
     }
 
     pub async fn stop(self) {

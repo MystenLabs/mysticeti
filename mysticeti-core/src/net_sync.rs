@@ -161,7 +161,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .unwrap_or_default();
             select! {
                 _sleep = runtime::sleep(leader_timeout) => {
-                    tracing::debug!("Timeout {round}");
+                    tracing::info!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
                     inner.syncer.write().force_new_block(round);
                 }

@@ -47,14 +47,12 @@ impl SimulatedExecutorState {
         f: F,
     ) -> JoinHandle<R> {
         let state = &mut simulator.states_mut()[0];
-        let task_id = state.next_id;
-        state.next_id += 1;
         let (task, join_handle) = make_task(f);
         let task = Task {
             f: task,
             node: None,
         };
-        state.tasks.insert(task_id, task);
+        let task_id = state.create_task(task);
         // todo - randomize delay
         simulator.schedule_event(
             Duration::from_nanos(1),
@@ -90,20 +88,26 @@ impl SimulatedExecutorState {
             }
         }
     }
+
+    fn create_task(&mut self, task: Task) -> usize {
+        let task_id = self.next_id;
+        self.next_id += 1;
+        let p = self.tasks.insert(task_id, task);
+        assert!(p.is_none());
+        task_id
+    }
 }
 
 pub fn simulator_spawn<R: Send + 'static, F: Future<Output = R> + Send + 'static>(
     f: F,
 ) -> JoinHandle<R> {
     SimulatorContext::with(|context| {
-        let task_id = context.next_id;
-        context.next_id += 1;
         let (task, join_handle) = make_task(f);
         let task = Task {
             f: task,
             node: context.current_node,
         };
-        context.tasks.insert(task_id, task);
+        context.spawned.push(task);
         join_handle
     })
 }
@@ -113,17 +117,15 @@ thread_local! {
 }
 
 pub struct SimulatorContext {
-    next_id: usize,
-    tasks: HashMap<usize, Task>,
+    spawned: Vec<Task>,
     task_id: usize,
     current_node: Option<AuthorityIndex>,
 }
 
 impl SimulatorContext {
-    pub fn new(next_id: usize, task_id: usize, current_node: Option<AuthorityIndex>) -> Self {
+    pub fn new(task_id: usize, current_node: Option<AuthorityIndex>) -> Self {
         Self {
-            next_id,
-            tasks: Default::default(),
+            spawned: Default::default(),
             task_id,
             current_node,
         }
@@ -256,16 +258,13 @@ impl SimulatorState for SimulatedExecutorState {
                 let waker = waker.into();
                 let mut context = Context::from_waker(&waker);
                 let task = oc.get_mut();
-                SimulatorContext::new(self.next_id, task_id, task.node).enter();
+                SimulatorContext::new(task_id, task.node).enter();
                 if let Poll::Ready(()) = task.f.as_mut().poll(&mut context) {
                     oc.remove();
                 }
                 let context = SimulatorContext::exit();
-                assert_eq!(context.next_id, self.next_id + context.tasks.len());
-                self.next_id = context.next_id;
-                for (id, task) in context.tasks {
-                    let p = self.tasks.insert(id, task);
-                    assert!(p.is_none());
+                for task in context.spawned {
+                    let id = self.create_task(task);
                     // todo - randomize scheduling
                     Scheduler::schedule_event(
                         Duration::from_nanos(id as u64),

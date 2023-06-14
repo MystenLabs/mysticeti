@@ -15,7 +15,7 @@ use crate::types::{AuthorityIndex, KeyPair, PublicKey, RoundNumber};
 pub trait Print: Serialize + DeserializeOwned {
     fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), io::Error> {
         let content =
-            serde_yaml::to_string(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_yaml::to_string(self).expect("Failed to serialize object to YAML string");
         fs::write(&path, content)
     }
 
@@ -42,7 +42,7 @@ pub struct Parameters {
 }
 
 impl Parameters {
-    pub const DEFAULT_FILENAME: &'static str = "parameters.json";
+    pub const DEFAULT_FILENAME: &'static str = "parameters.yaml";
 
     pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
     pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -114,7 +114,7 @@ impl PrivateConfig {
     }
 
     pub fn default_filename(authority: AuthorityIndex) -> PathBuf {
-        ["private", &format!("{authority}.json")].iter().collect()
+        ["private", &format!("{authority}.yaml")].iter().collect()
     }
 }
 

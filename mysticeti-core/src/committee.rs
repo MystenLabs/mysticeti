@@ -21,7 +21,7 @@ pub struct Committee {
 }
 
 impl Committee {
-    pub const DEFAULT_FILENAME: &'static str = "committee.json";
+    pub const DEFAULT_FILENAME: &'static str = "committee.yaml";
 
     pub fn new(stake: Vec<Stake>) -> Arc<Self> {
         // Ensure the list is not empty

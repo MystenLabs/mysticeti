@@ -91,7 +91,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
 
     fn node_command<I>(
         &self,
-        instances: I,
+        _instances: I,
         _parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
     ) -> Vec<(Instance, String)>
     where
@@ -123,8 +123,8 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
 
     fn client_command<I>(
         &self,
-        instances: I,
-        parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
+        _instances: I,
+        _parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
     ) -> Vec<(Instance, String)>
     where
         I: IntoIterator<Item = Instance>,

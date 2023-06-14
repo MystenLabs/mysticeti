@@ -5,9 +5,9 @@ use std::{
     sync::Arc,
 };
 
-use ::prometheus::default_registry;
 use clap::{command, Parser};
 use eyre::{eyre, Context, Result};
+use futures::future;
 
 pub mod block_handler;
 mod block_manager;
@@ -35,6 +35,7 @@ mod syncer;
 mod test_util;
 mod threshold_clock;
 pub mod types;
+pub mod validator;
 #[allow(dead_code)]
 mod wal;
 
@@ -42,14 +43,10 @@ mod block_store;
 mod stat;
 
 use crate::{
-    block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
     config::{Parameters, Print, PrivateConfig},
-    core::Core,
-    metrics::Metrics,
-    net_sync::NetworkSyncer,
-    network::Network,
     types::AuthorityIndex,
+    validator::Validator,
 };
 
 #[derive(Parser)]
@@ -90,6 +87,12 @@ enum Operation {
         #[clap(long, value_name = "FILE")]
         private_configs_path: String,
     },
+    /// Deploy a local testbed.
+    Testbed {
+        /// The number of authorities in the committee.
+        #[clap(long, value_name = "INT")]
+        committee_size: usize,
+    },
 }
 
 #[tokio::main]
@@ -117,6 +120,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+        Operation::Testbed { committee_size } => testbed(committee_size).await?,
     }
 
     Ok(())
@@ -179,7 +183,7 @@ async fn run(
     let parameters = Parameters::load(&parameters_path).wrap_err(format!(
         "Failed to load parameters file '{parameters_path}'"
     ))?;
-    let _private = PrivateConfig::load(&private_configs_path).wrap_err(format!(
+    let private = PrivateConfig::load(&private_configs_path).wrap_err(format!(
         "Failed to load private configuration file '{private_configs_path}'"
     ))?;
 
@@ -199,28 +203,30 @@ async fn run(
     let mut binding_metrics_address = metrics_address;
     binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
-    // Boot the prometheus server.
-    let registry = default_registry();
-    let metrics = Arc::new(Metrics::new(registry));
-    let _handle = prometheus::start_prometheus_server(binding_metrics_address, registry);
-
     // Boot the validator node.
-    let last_transaction = 0;
-    let block_handler = RealBlockHandler::new(last_transaction, committee.clone(), authority);
-    let commit_handler =
-        TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
-    let core = Core::new(block_handler, authority, committee.clone())
-        .with_metrics(metrics)
-        .with_genesis();
-    let network = Network::load(&parameters, authority, binding_network_address).await;
-    let network_synchronizer =
-        NetworkSyncer::start(network, core, parameters.wave_length(), commit_handler);
+    let validator = Validator::start(authority, committee, &parameters, private).await?;
+    validator.await_completion().await;
 
-    tracing::info!("Validator {authority} listening on {network_address}");
-    tracing::info!("Validator {authority} exposing metrics on {metrics_address}");
+    Ok(())
+}
 
-    // Await the completion of the network synchronizer.
-    network_synchronizer.await_completion().await;
-    tracing::info!("Validator {authority} shutdown");
+async fn testbed(committee_size: usize) -> Result<()> {
+    tracing::info!("Starting testbed with committee size {committee_size}");
+
+    let committee = Committee::new_for_benchmarks(committee_size);
+    let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+    let parameters = Parameters::new_for_benchmarks(ips);
+
+    let mut handles = Vec::new();
+    for i in 0..committee_size {
+        let authority = i as AuthorityIndex;
+        let private = PrivateConfig::new_for_benchmarks(authority);
+
+        let validator =
+            Validator::start(authority, committee.clone(), &parameters, private).await?;
+        handles.push(validator.await_completion());
+    }
+
+    future::join_all(handles).await;
     Ok(())
 }

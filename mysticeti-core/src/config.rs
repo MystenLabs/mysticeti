@@ -27,7 +27,7 @@ pub trait Print: Serialize + DeserializeOwned {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Identifier {
     pub public_key: PublicKey,
     pub network_address: SocketAddr,
@@ -47,7 +47,7 @@ impl Parameters {
     pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
     pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
 
-    pub const BENCHMARK_PORT_OFFSET: u16 = 1000;
+    pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

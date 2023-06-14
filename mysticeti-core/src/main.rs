@@ -1,4 +1,9 @@
-use std::{fs, net::IpAddr, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use ::prometheus::default_registry;
 use clap::{command, Parser};
@@ -185,14 +190,14 @@ async fn run(
         .ok_or(eyre!("No network address for authority {authority}"))
         .wrap_err("Unknown authority")?;
     let mut binding_network_address = network_address;
-    binding_network_address.set_ip("0.0.0.0".parse().unwrap());
+    binding_network_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
     let metrics_address = parameters
         .metrics_address(authority)
         .ok_or(eyre!("No metrics address for authority {authority}"))
         .wrap_err("Unknown authority")?;
     let mut binding_metrics_address = metrics_address;
-    binding_metrics_address.set_ip("0.0.0.0".parse().unwrap());
+    binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
     // Boot the prometheus server.
     let registry = default_registry();
@@ -206,11 +211,14 @@ async fn run(
         TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
     let core = Core::new(block_handler, authority, committee.clone()).with_metrics(metrics);
     let network = Network::load(&parameters, authority, binding_network_address).await;
-    let _network_synchronizer =
+    let network_synchronizer =
         NetworkSyncer::start(network, core, parameters.wave_length(), commit_handler);
 
     tracing::info!("Validator {authority} listening on {network_address}");
     tracing::info!("Validator {authority} exposing metrics on {metrics_address}");
 
+    // Await the completion of the network synchronizer.
+    network_synchronizer.await_completion().await;
+    tracing::info!("Validator {authority} shutdown");
     Ok(())
 }

@@ -53,7 +53,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
-            panic!("Shutdown failed - not all resources are freed after main task is compelted");
+            panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
         inner.syncer.into_inner()
     }
@@ -161,6 +161,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
             }
         }
+    }
+
+    pub async fn await_completion(self) {
+        self.main_task.await.expect("Main task failed");
     }
 }
 

@@ -4,6 +4,7 @@ use crate::runtime;
 use crate::runtime::Handle;
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::types::format_authority_index;
 use crate::types::{AuthorityIndex, RoundNumber};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use futures::future::join_all;
@@ -106,10 +107,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .ok()?;
         let handle = Handle::current();
         let mut subscribe_handler: Option<JoinHandle<Option<()>>> = None;
+        let peer = format_authority_index(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
-                    // eprintln!("{}: sub({round})", inner.syncer.read().core().authority());
+                    tracing::debug!("{} subscribed from round {}", peer, round);
                     if let Some(send_blocks_handler) = subscribe_handler.take() {
                         send_blocks_handler.abort();
                         send_blocks_handler.await.ok();
@@ -121,7 +123,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     )));
                 }
                 NetworkMessage::Block(block) => {
-                    // eprintln!("{}: block({block})", inner.syncer.read().core().authority());
+                    tracing::debug!("Received {} from {}", block.reference(), peer);
                     inner.syncer.write().add_blocks(vec![block]);
                 }
             }
@@ -161,7 +163,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .unwrap_or_default();
             select! {
                 _sleep = runtime::sleep(leader_timeout) => {
-                    tracing::info!("Timeout {round}");
+                    tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
                     inner.syncer.write().force_new_block(round);
                 }

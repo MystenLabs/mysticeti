@@ -86,6 +86,11 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.force_new_block = false;
 
             let newly_committed = self.core.try_commit(3);
+            if !newly_committed.is_empty() {
+                let committed_refs: Vec<_> =
+                    newly_committed.iter().map(|b| *b.reference()).collect();
+                tracing::debug!("Committed {:?}", committed_refs);
+            }
             self.commit_observer
                 .handle_commit(self.core.block_manager(), newly_committed);
         }

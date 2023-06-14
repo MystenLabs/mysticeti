@@ -55,8 +55,7 @@ impl Validator {
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Boot the validator node.
-        let last_transaction = 0;
-        let block_handler = RealBlockHandler::new(last_transaction, committee.clone(), authority);
+        let block_handler = RealBlockHandler::new(committee.clone(), authority);
         let commit_handler =
             TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
         let core =

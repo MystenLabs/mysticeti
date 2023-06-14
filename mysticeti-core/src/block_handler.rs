@@ -20,7 +20,6 @@ pub trait BlockHandler: Send + Sync {
 }
 
 pub struct RealBlockHandler {
-    pub last_transaction: u64,
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
@@ -30,14 +29,9 @@ pub struct RealBlockHandler {
 }
 
 impl RealBlockHandler {
-    pub fn new(
-        last_transaction: u64,
-        committee: Arc<Committee>,
-        authority: AuthorityIndex,
-    ) -> Self {
+    pub fn new(committee: Arc<Committee>, authority: AuthorityIndex) -> Self {
         let rng = StdRng::seed_from_u64(authority);
         Self {
-            last_transaction,
             transaction_votes: Default::default(),
             transaction_time: Default::default(),
             committee,
@@ -51,15 +45,12 @@ impl RealBlockHandler {
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
-        self.last_transaction = self.rng.next_u64();
-        response.push(BaseStatement::Share(
-            self.last_transaction,
-            self.last_transaction,
-        ));
+        let next_transaction = self.rng.next_u64();
+        response.push(BaseStatement::Share(next_transaction, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(self.last_transaction, TimeInstant::now());
+        transaction_time.insert(next_transaction, TimeInstant::now());
         self.transaction_votes
-            .register(self.last_transaction, self.authority, &self.committee)
+            .register(next_transaction, self.authority, &self.committee)
             .ok();
         for block in blocks {
             let processed =

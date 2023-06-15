@@ -120,6 +120,11 @@ impl WalWriter {
         self.pos += len;
         Ok(position)
     }
+
+    #[allow(dead_code)]
+    pub fn sync(&mut self) -> io::Result<()> {
+        self.file.sync_data()
+    }
 }
 
 fn combine_header(crc: u64, len: u64, tag: Tag) -> u128 {

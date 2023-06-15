@@ -336,8 +336,8 @@ mod test {
     use prometheus::default_registry;
     use rand::RngCore;
 
+    use crate::test_util::TestBlockWriter;
     use crate::{
-        block_manager::BlockManager,
         committee::Committee,
         data::Data,
         metrics::Metrics,
@@ -357,7 +357,7 @@ mod test {
     /// dag from the specified [`start`] references or from genesis if none are specified.
     fn build_dag(
         committee: &Committee,
-        block_manager: &mut BlockManager,
+        block_writer: &mut TestBlockWriter,
         start: Option<Vec<BlockReference>>,
         stop: RoundNumber,
     ) -> Vec<BlockReference> {
@@ -376,7 +376,7 @@ mod test {
                     .map(|index| StatementBlock::new_genesis(index))
                     .map(|block| (*block.reference(), block))
                     .unzip();
-                block_manager.add_blocks(genesis);
+                block_writer.add_blocks(genesis);
                 references
             }
         };
@@ -396,7 +396,7 @@ mod test {
                     (reference, block)
                 })
                 .unzip();
-            block_manager.add_blocks(blocks);
+            block_writer.add_blocks(blocks);
             includes = references;
         }
 
@@ -410,12 +410,12 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, None, 5);
+        let mut block_writer = TestBlockWriter::default();
+        build_dag(&committee, &mut block_writer, None, 5);
 
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             test_metrics(),
         );
@@ -433,12 +433,12 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, None, 5);
+        let mut block_writer = TestBlockWriter::default();
+        build_dag(&committee, &mut block_writer, None, 5);
 
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             test_metrics(),
         );
@@ -458,12 +458,12 @@ mod test {
 
         let n = 10;
         let enough_blocks = wave_length * (n + 1) - 1;
-        let mut block_manager = BlockManager::default();
-        build_dag(&committee, &mut block_manager, None, enough_blocks);
+        let mut block_writer = TestBlockWriter::default();
+        build_dag(&committee, &mut block_writer, None, enough_blocks);
 
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             metrics,
         );
@@ -486,12 +486,12 @@ mod test {
 
         let first_commit_round = 2 * wave_length - 1;
         for r in 0..first_commit_round - 1 {
-            let mut block_manager = BlockManager::default();
-            build_dag(&committee, &mut block_manager, None, r);
+            let mut block_writer = TestBlockWriter::default();
+            build_dag(&committee, &mut block_writer, None, r);
 
             let committer = Committer::new(
                 committee.clone(),
-                block_manager.block_store().clone(),
+                block_writer.into_block_store(),
                 wave_length,
                 test_metrics(),
             );
@@ -512,12 +512,12 @@ mod test {
         let mut last_committed_round = 0;
         for n in 1..=10 {
             let enough_blocks = wave_length * (n + 1) - 1;
-            let mut block_manager = BlockManager::default();
-            build_dag(&committee, &mut block_manager, None, enough_blocks);
+            let mut block_writer = TestBlockWriter::default();
+            build_dag(&committee, &mut block_writer, None, enough_blocks);
 
             let committer = Committer::new(
                 committee.clone(),
-                block_manager.block_store().clone(),
+                block_writer.into_block_store(),
                 wave_length,
                 test_metrics(),
             );
@@ -539,11 +539,11 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_manager = BlockManager::default();
+        let mut block_writer = TestBlockWriter::default();
 
         // Add enough blocks to finish the first wave.
         let round_decision_1 = wave_length - 1;
-        let references = build_dag(&committee, &mut block_manager, None, round_decision_1);
+        let references = build_dag(&committee, &mut block_writer, None, round_decision_1);
 
         // Add enough blocks to reach the second decision round (but without the second leader).
         let round_leader_2 = wave_length;
@@ -568,12 +568,12 @@ mod test {
             })
             .unzip();
 
-        block_manager.add_blocks(blocks);
+        block_writer.add_blocks(blocks);
 
         let round_decision_2 = 2 * wave_length - 1;
         build_dag(
             &committee,
-            &mut block_manager,
+            &mut block_writer,
             Some(references),
             round_decision_2,
         );
@@ -581,7 +581,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             test_metrics(),
         );
@@ -598,12 +598,12 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_manager = BlockManager::default();
+        let mut block_writer = TestBlockWriter::default();
 
         // Add enough blocks to reach the second leader. Remember that he second leader is part of
         // the genesis.
         let round_leader_2 = wave_length;
-        let references_2 = build_dag(&committee, &mut block_manager, None, round_leader_2);
+        let references_2 = build_dag(&committee, &mut block_writer, None, round_leader_2);
 
         // Filter out the leader.
         let references_2_without_leader: Vec<_> = references_2
@@ -615,7 +615,7 @@ mod test {
         let round_decision_2 = 2 * wave_length - 1;
         build_dag(
             &committee,
-            &mut block_manager,
+            &mut block_writer,
             Some(references_2_without_leader),
             round_decision_2,
         );
@@ -623,7 +623,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             test_metrics(),
         );
@@ -640,11 +640,11 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_manager = BlockManager::default();
+        let mut block_writer = TestBlockWriter::default();
 
         // Add enough blocks to reach the third leader.
         let round_leader_3 = 2 * wave_length;
-        let references_3 = build_dag(&committee, &mut block_manager, None, round_leader_3);
+        let references_3 = build_dag(&committee, &mut block_writer, None, round_leader_3);
 
         // Filter out the third leader.
         let references_3_without_leader: Vec<_> = references_3
@@ -656,7 +656,7 @@ mod test {
         let round_decision_4 = 4 * wave_length - 1;
         build_dag(
             &committee,
-            &mut block_manager,
+            &mut block_writer,
             Some(references_3_without_leader),
             round_decision_4,
         );
@@ -664,7 +664,7 @@ mod test {
         // Ensure we commit the second and fourth leaders.
         let committer = Committer::new(
             committee.clone(),
-            block_manager.block_store().clone(),
+            block_writer.into_block_store(),
             wave_length,
             test_metrics(),
         );

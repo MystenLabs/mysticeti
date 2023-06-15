@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
+use crate::block_store::{BlockStore, BlockWriter};
 use crate::committee::Committee;
 use crate::core::Core;
+use crate::data::Data;
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
 use crate::net_sync::NetworkSyncer;
@@ -11,7 +13,10 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{format_authority_index, AuthorityIndex, BlockReference, TransactionId};
+use crate::types::{
+    format_authority_index, AuthorityIndex, BlockReference, StatementBlock, TransactionId,
+};
+use crate::wal::{walf, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
 use prometheus::Registry;
@@ -207,4 +212,55 @@ fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {
         }
     }
     return true;
+}
+
+pub struct TestBlockWriter {
+    block_store: BlockStore,
+    wal_writer: WalWriter,
+}
+
+impl TestBlockWriter {
+    pub fn new() -> Self {
+        let file = tempfile::tempfile().unwrap();
+        let (wal_writer, wal_reader) = walf(file).unwrap();
+        let block_store = BlockStore::new(Arc::new(wal_reader));
+        Self {
+            block_store,
+            wal_writer,
+        }
+    }
+
+    pub fn add_block(&mut self, block: Data<StatementBlock>) {
+        let pos = self
+            .wal_writer
+            .write(&bincode::serialize(&block).unwrap())
+            .unwrap();
+        self.block_store.insert_block(block, pos);
+    }
+
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
+        for block in blocks {
+            self.add_block(block);
+        }
+    }
+
+    pub fn into_block_store(self) -> BlockStore {
+        self.block_store
+    }
+
+    pub fn block_store(&self) -> BlockStore {
+        self.block_store.clone()
+    }
+}
+
+impl BlockWriter for TestBlockWriter {
+    fn insert_block(&mut self, block: Data<StatementBlock>) {
+        self.add_block(block);
+    }
+}
+
+impl Default for TestBlockWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }

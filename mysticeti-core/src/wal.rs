@@ -9,10 +9,9 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{IoSlice, Write};
+use std::io::{IoSlice, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
-use std::sync::Arc;
 
 pub struct WalWriter {
     file: File,
@@ -21,10 +20,9 @@ pub struct WalWriter {
 
 // todo(andrey)
 // - iteration
-#[derive(Clone)]
 pub struct WalReader {
     fd: RawFd,
-    maps: Arc<Mutex<BTreeMap<u64, Bytes>>>,
+    maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
 #[derive(Clone, Copy)]
@@ -33,12 +31,21 @@ pub struct WalPosition {
     len: u64, // we store len in wal, so this technically can be removed
 }
 
+pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
+    file.seek(SeekFrom::End(0))?;
+    make_wal(file)
+}
+
 pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
         .read(true)
         .open(path)?;
+    make_wal(file)
+}
+
+fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
     let fd = unsafe { libc::dup(file.as_raw_fd()) };
     if fd <= 0 {
         return Err(io::Error::last_os_error());
@@ -82,7 +89,7 @@ impl WalWriter {
         assert!(len <= MAP_SIZE);
         let mut buffs = vec![];
         let mut written_expected = 0usize;
-        eprintln!(
+        tracing::trace!(
             "pos={}, len={}, self.pos + len - 1={}, a(pos)={}, a(pos+len)={}",
             self.pos,
             len,
@@ -93,7 +100,6 @@ impl WalWriter {
         if align_map_size(self.pos) != align_map_size(self.pos + len - 1) {
             let extra_len = align_map_size(self.pos + len - 1) - self.pos;
             let extra = &ZERO_MAP[0..(extra_len as usize)];
-            eprintln!("extra_len={extra_len}");
             buffs.push(IoSlice::new(extra));
             written_expected += extra.len();
             self.pos += extra_len;
@@ -132,7 +138,6 @@ impl WalReader {
         assert!(position.len <= MAP_SIZE);
         let mut maps = self.maps.lock();
         let offset = align_map_size(position.start);
-        println!("offset={offset}");
         let bytes = match maps.entry(offset) {
             Entry::Vacant(va) => {
                 let mmap = unsafe {

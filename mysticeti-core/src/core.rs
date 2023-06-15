@@ -1,8 +1,10 @@
+use crate::block_store::{BlockStore, BlockWriter};
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
+use crate::wal::{walf, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use std::mem;
@@ -21,6 +23,8 @@ pub struct Core<H: BlockHandler> {
     committee: Arc<Committee>,
     last_proposed: RoundNumber,
     last_commit_round: RoundNumber,
+    wal_writer: WalWriter,
+    block_store: BlockStore,
     metrics: Arc<Metrics>,
 }
 
@@ -36,8 +40,12 @@ impl<H: BlockHandler> Core<H> {
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         metrics: Arc<Metrics>,
+        // wal_path: impl AsRef<Path>,
     ) -> Self {
-        let block_manager = BlockManager::default();
+        let wal_file = tempfile::tempfile().unwrap();
+        let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
+        let block_store = BlockStore::new(Arc::new(wal_reader));
+        let block_manager = BlockManager::new(block_store.clone());
         let pending = Default::default();
         let last_proposed = 0;
         let threshold_clock = ThresholdClockAggregator::new(last_proposed);
@@ -52,6 +60,8 @@ impl<H: BlockHandler> Core<H> {
             committee,
             last_proposed,
             last_commit_round,
+            wal_writer,
+            block_store,
             metrics,
         }
     }
@@ -62,7 +72,9 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
-        let processed = self.block_manager.add_blocks(blocks);
+        let processed = self
+            .block_manager
+            .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let statements = self.block_handler.handle_blocks(&processed);
         for processed in &processed {
             self.threshold_clock
@@ -144,7 +156,8 @@ impl<H: BlockHandler> Core<H> {
             block
         );
 
-        let block = self.block_manager.add_own_block(block);
+        let block = Data::new(block);
+        (&mut self.wal_writer, &self.block_store).insert_block(block.clone());
         self.pending.push_front(MetaStatement::Include(block_ref));
 
         self.last_proposed = clock_round;

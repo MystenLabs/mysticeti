@@ -1,14 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, BlockWriter};
 use crate::data::Data;
 use crate::types::{BlockReference, StatementBlock};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
-#[derive(Default)]
 pub struct BlockManager {
     blocks_pending: HashMap<BlockReference, Data<StatementBlock>>,
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
@@ -16,8 +15,20 @@ pub struct BlockManager {
 }
 
 impl BlockManager {
+    pub fn new(block_store: BlockStore) -> Self {
+        Self {
+            blocks_pending: Default::default(),
+            block_references_waiting: Default::default(),
+            block_store,
+        }
+    }
+
     #[allow(dead_code)]
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+    pub fn add_blocks(
+        &mut self,
+        blocks: Vec<Data<StatementBlock>>,
+        block_writer: &mut impl BlockWriter,
+    ) -> Vec<Data<StatementBlock>> {
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
         let mut newly_blocks_processed: Vec<Data<StatementBlock>> = vec![];
         while let Some(block) = blocks.pop_front() {
@@ -49,7 +60,7 @@ impl BlockManager {
 
                 // Block can be processed. So need to update indexes etc
                 newly_blocks_processed.push(block.clone());
-                self.block_store.insert_block(block);
+                block_writer.insert_block(block);
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -77,13 +88,6 @@ impl BlockManager {
         newly_blocks_processed
     }
 
-    pub fn add_own_block(&mut self, block: StatementBlock) -> Data<StatementBlock> {
-        // Update the highest known round number.
-        let block = Data::new(block);
-        self.block_store.insert_block(block.clone());
-        block
-    }
-
     pub fn block_store(&self) -> &BlockStore {
         &self.block_store
     }
@@ -92,6 +96,7 @@ impl BlockManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::TestBlockWriter;
     use crate::types::Dag;
     use rand::prelude::StdRng;
     use rand::SeedableRng;
@@ -102,12 +107,13 @@ mod tests {
             Dag::draw("A1:[A0, B0]; B1:[A0, B0]; B2:[A0, B1]; A2:[A1, B2]").add_genesis_blocks();
         assert_eq!(dag.len(), 6); // 4 blocks in dag + 2 genesis
         for seed in 0..100u8 {
+            let mut block_writer = TestBlockWriter::new();
             println!("Seed {seed}");
             let iter = dag.random_iter(&mut rng(seed));
-            let mut bm = BlockManager::default();
+            let mut bm = BlockManager::new(block_writer.block_store());
             let mut processed_blocks = HashSet::new();
             for block in iter {
-                let processed = bm.add_blocks(vec![block.clone()]);
+                let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);
                 print!("Adding {:?}:", block.reference());
                 for p in processed {
                     print!("{:?},", p.reference());

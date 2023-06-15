@@ -3,7 +3,7 @@
 
 use crate::data::Data;
 use crate::types::{BlockDigest, BlockReference, RoundNumber, StatementBlock};
-use crate::wal::{WalPosition, WalReader, WalWriter};
+use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use crate::AuthorityIndex;
 use parking_lot::RwLock;
 use std::cmp::max;
@@ -98,11 +98,12 @@ impl BlockStore {
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
-                let data = self
+                let (tag, data) = self
                     .block_wal_reader
                     .read(position)
                     .expect("Failed to read wal");
                 // todo - avoid copy of data
+                assert_eq!(tag, WAL_ENTRY_BLOCK);
                 bincode::deserialize(&data).expect("Failed to deserialize data from wal")
             }
             IndexEntry::Loaded(block) => block,
@@ -154,11 +155,16 @@ impl BlockStoreInner {
     }
 }
 
+pub const WAL_ENTRY_BLOCK: Tag = 1;
+
 impl BlockWriter for (&mut WalWriter, &BlockStore) {
     fn insert_block(&mut self, block: Data<StatementBlock>) {
         let pos = self
             .0
-            .write(&bincode::serialize(&block).expect("Serialization failed"))
+            .write(
+                WAL_ENTRY_BLOCK,
+                &bincode::serialize(&block).expect("Serialization failed"),
+            )
             .expect("Writing to wal failed");
         self.1.insert_block(block, pos);
     }

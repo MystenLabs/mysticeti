@@ -25,10 +25,12 @@ pub struct WalReader {
     maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub struct WalPosition {
     start: u64,
 }
+
+pub type Tag = u32;
 
 pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
     file.seek(SeekFrom::End(0))?;
@@ -84,7 +86,7 @@ fn offset(p: u64) -> u64 {
 }
 
 impl WalWriter {
-    pub fn write(&mut self, b: &[u8]) -> io::Result<WalPosition> {
+    pub fn write(&mut self, tag: Tag, b: &[u8]) -> io::Result<WalPosition> {
         let len = b.len() as u64 + HEADER_LEN_BYTES;
         assert!(len <= MAP_SIZE);
         let mut buffs = vec![];
@@ -107,7 +109,7 @@ impl WalWriter {
             debug_assert_eq!(offset(self.pos), offset(self.pos + len - 1));
         }
         let crc = CRC.checksum(b);
-        let header = combine_crc_and_len(crc, len);
+        let header = combine_header(crc, len, tag);
         let header = header.to_le_bytes();
         buffs.push(IoSlice::new(&header));
         buffs.push(IoSlice::new(b));
@@ -120,29 +122,33 @@ impl WalWriter {
     }
 }
 
-fn combine_crc_and_len(crc: u64, len: u64) -> u128 {
-    crc as u128 + ((len as u128) << 64)
+fn combine_header(crc: u64, len: u64, tag: Tag) -> u128 {
+    // wal entries are currently limited by (much smaller) MAP_SIZE
+    assert!(len <= u32::MAX as u64);
+
+    crc as u128 + ((len as u128) << 64) + ((tag as u128) << (64 + 32))
 }
 
-fn split_crc_and_len(combined: u128) -> (u64, u64) {
+fn split_header(combined: u128) -> (u64, u64, Tag) {
     let crc = (combined & ((1 << 64) - 1)) as u64;
-    let len = (combined >> 64) as u64;
-    (crc, len)
+    let len = ((combined >> 64) & ((1 << 32) - 1)) as u64;
+    let tag = (combined >> (64 + 32)) as Tag;
+    (crc, len, tag)
 }
 
 impl WalReader {
-    pub fn read(&self, position: WalPosition) -> io::Result<Bytes> {
+    pub fn read(&self, position: WalPosition) -> io::Result<(Tag, Bytes)> {
         match self.try_read(position)? {
             Some(entry) => Ok(entry),
             None => panic!("No entry found at position {}", position.start),
         }
     }
 
-    fn try_read(&self, position: WalPosition) -> io::Result<Option<Bytes>> {
+    fn try_read(&self, position: WalPosition) -> io::Result<Option<(Tag, Bytes)>> {
         let offset = offset(position.start);
         let bytes = self.map_offset(offset)?;
         let buf_offset = (position.start - offset) as usize;
-        let (crc, len) = Self::read_header(&bytes[buf_offset..]);
+        let (crc, len, tag) = Self::read_header(&bytes[buf_offset..]);
         if len == 0 {
             if crc == 0 {
                 return Ok(None);
@@ -161,7 +167,7 @@ impl WalReader {
                 crc, actual_crc, position.start, len
             );
         }
-        Ok(Some(bytes))
+        Ok(Some((tag, bytes)))
     }
 
     // Attempts cleaning internal mem maps, returning number of retained maps
@@ -199,11 +205,11 @@ impl WalReader {
     }
 
     #[inline]
-    fn read_header(bytes: &[u8]) -> (u64, u64 /*(crc, len)*/) {
+    fn read_header(bytes: &[u8]) -> (u64, u64, Tag /*(crc, len, tag)*/) {
         let mut header = [0u8; HEADER_LEN_BYTES_USIZE];
         header.copy_from_slice(&bytes[..HEADER_LEN_BYTES_USIZE]);
         let header = u128::from_le_bytes(header);
-        split_crc_and_len(header)
+        split_header(header)
     }
 }
 
@@ -214,7 +220,7 @@ pub struct WalIterator<'a> {
 }
 
 impl<'a> Iterator for WalIterator<'a> {
-    type Item = (WalPosition, Bytes);
+    type Item = (WalPosition, (Tag, Bytes));
 
     fn next(&mut self) -> Option<Self::Item> {
         let position = self.position.take()?;
@@ -234,16 +240,16 @@ impl<'a> Iterator for WalIterator<'a> {
 }
 
 impl<'a> WalIterator<'a> {
-    fn try_position(&mut self, position: WalPosition) -> Option<(WalPosition, Bytes)> {
+    fn try_position(&mut self, position: WalPosition) -> Option<(WalPosition, (Tag, Bytes))> {
         if position.start >= self.end_position {
             return None;
         }
-        let entry = self
+        let (tag, data) = self
             .wal_reader
             .try_read(position)
             .expect("Failed to read wal")?;
-        self.position = Some(position.add(entry.len() as u64 + HEADER_LEN_BYTES));
-        Some((position, entry))
+        self.position = Some(position.add(data.len() as u64 + HEADER_LEN_BYTES));
+        Some((position, (tag, data)))
     }
 }
 
@@ -289,26 +295,30 @@ mod tests {
         let two = [2u8; (MAP_SIZE - HEADER_LEN_BYTES) as usize];
         let three = [3u8; 15];
         let four = [4u8; 18];
-        let one_pos = writer.write(&one).unwrap();
-        let two_pos = writer.write(&two).unwrap();
-        let three_pos = writer.write(&three).unwrap();
+        let one_tag = 5;
+        let two_tag = 10;
+        let three_tag = 15;
+        let four_tag = 20;
+        let one_pos = writer.write(one_tag, &one).unwrap();
+        let two_pos = writer.write(two_tag, &two).unwrap();
+        let three_pos = writer.write(three_tag, &three).unwrap();
 
-        assert_eq!(&one, reader.read(one_pos).unwrap().as_ref());
-        assert_eq!(&two, reader.read(two_pos).unwrap().as_ref());
-        assert_eq!(&three, reader.read(three_pos).unwrap().as_ref());
+        assert_eq!(&one, rd(&reader, one_pos, one_tag).as_ref());
+        assert_eq!(&two, rd(&reader, two_pos, two_tag).as_ref());
+        assert_eq!(&three, rd(&reader, three_pos, three_tag).as_ref());
         drop(reader);
         drop(writer);
 
         let (mut writer, reader) = wal(&file).unwrap();
-        assert_eq!(&one, reader.read(one_pos).unwrap().as_ref());
-        assert_eq!(&two, reader.read(two_pos).unwrap().as_ref());
-        assert_eq!(&three, reader.read(three_pos).unwrap().as_ref());
+        assert_eq!(&one, rd(&reader, one_pos, one_tag).as_ref());
+        assert_eq!(&two, rd(&reader, two_pos, two_tag).as_ref());
+        assert_eq!(&three, rd(&reader, three_pos, three_tag).as_ref());
 
-        let four_pos = writer.write(&four).unwrap();
-        assert_eq!(&one, reader.read(one_pos).unwrap().as_ref());
-        assert_eq!(&two, reader.read(two_pos).unwrap().as_ref());
-        assert_eq!(&three, reader.read(three_pos).unwrap().as_ref());
-        assert_eq!(&four, reader.read(four_pos).unwrap().as_ref());
+        let four_pos = writer.write(four_tag, &four).unwrap();
+        assert_eq!(&one, rd(&reader, one_pos, one_tag).as_ref());
+        assert_eq!(&two, rd(&reader, two_pos, two_tag).as_ref());
+        assert_eq!(&three, rd(&reader, three_pos, three_tag).as_ref());
+        assert_eq!(&four, rd(&reader, four_pos, four_tag).as_ref());
 
         drop(reader);
         drop(writer);
@@ -317,13 +327,13 @@ mod tests {
         drop(writer);
 
         // Can create new mappings when writer is dropped
-        assert_eq!(&one, reader.read(one_pos).unwrap().as_ref());
-        assert_eq!(&two, reader.read(two_pos).unwrap().as_ref());
-        assert_eq!(&three, reader.read(three_pos).unwrap().as_ref());
-        assert_eq!(&four, reader.read(four_pos).unwrap().as_ref());
+        assert_eq!(&one, rd(&reader, one_pos, one_tag).as_ref());
+        assert_eq!(&two, rd(&reader, two_pos, two_tag).as_ref());
+        assert_eq!(&three, rd(&reader, three_pos, three_tag).as_ref());
+        assert_eq!(&four, rd(&reader, four_pos, four_tag).as_ref());
 
         // Verify that we can free unused mappings
-        let one_read = reader.read(one_pos).unwrap();
+        let (_, one_read) = reader.read(one_pos).unwrap();
         assert_eq!(reader.cleanup(), 1);
         assert_eq!(&one, one_read.as_ref());
         drop(one_read);
@@ -335,11 +345,28 @@ mod tests {
         let mut iter = reader.iter_until(&writer);
         drop(writer);
 
-        assert_eq!(&one, iter.next().unwrap().1.as_ref());
-        assert_eq!(&two, iter.next().unwrap().1.as_ref());
-        assert_eq!(&three, iter.next().unwrap().1.as_ref());
-        assert_eq!(&four, iter.next().unwrap().1.as_ref());
+        assert_eq!(&one, rd_it(&mut iter, one_tag, one_pos).as_ref());
+        assert_eq!(&two, rd_it(&mut iter, two_tag, two_pos).as_ref());
+        assert_eq!(&three, rd_it(&mut iter, three_tag, three_pos).as_ref());
+        assert_eq!(&four, rd_it(&mut iter, four_tag, four_pos).as_ref());
         assert!(iter.next().is_none());
+    }
+
+    #[track_caller]
+    // Read from position, assert tag
+    fn rd(reader: &WalReader, pos: WalPosition, tag: Tag) -> Bytes {
+        let (read_tag, data) = reader.read(pos).unwrap();
+        assert_eq!(read_tag, tag);
+        data
+    }
+
+    #[track_caller]
+    // Read from iterator, assert tag and position
+    fn rd_it(iter: &mut WalIterator, tag: Tag, pos: WalPosition) -> Bytes {
+        let (read_pos, (read_tag, data)) = iter.next().unwrap();
+        assert_eq!(read_tag, tag);
+        assert_eq!(read_pos, pos);
+        data
     }
 
     #[test]
@@ -350,23 +377,27 @@ mod tests {
         let (mut writer, reader) = wal(&file).unwrap();
         let one = [1u8; 15];
         let two = [2u8; 18];
-        let one_pos = writer.write(&one).unwrap();
-        let one_read = reader.read(one_pos).unwrap();
+        let one_pos = writer.write(5, &one).unwrap();
+        let (one_tag, one_read) = reader.read(one_pos).unwrap();
         assert_eq!(&one, one_read.as_ref());
+        assert_eq!(one_tag, 5);
 
-        let two_pos = writer.write(&two).unwrap();
-        let two_read = reader.read(two_pos).unwrap();
+        let two_pos = writer.write(6, &two).unwrap();
+        let (two_tag, two_read) = reader.read(two_pos).unwrap();
         assert_eq!(&two, two_read.as_ref());
+        assert_eq!(two_tag, 6);
 
         assert_eq!(1, reader.cleanup()); // assert only one mapping was created (therefore one and two share same mapping)
     }
 
     #[test]
-    fn combine_crc_len_test() {
+    fn test_header_combine_split() {
         for crc in [0, 1, 12, u64::MAX] {
-            for len in [0, 1, 18, u64::MAX] {
-                let combined = combine_crc_and_len(crc, len);
-                assert_eq!((crc, len), split_crc_and_len(combined));
+            for len in [0, 1, 18, u32::MAX as u64] {
+                for tag in [0, 1, 18, u32::MAX] {
+                    let combined = combine_header(crc, len, tag);
+                    assert_eq!((crc, len, tag), split_header(combined));
+                }
             }
         }
     }

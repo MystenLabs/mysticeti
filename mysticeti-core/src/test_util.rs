@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
-use crate::block_store::{BlockStore, BlockWriter};
+use crate::block_store::{BlockStore, BlockWriter, WAL_ENTRY_BLOCK};
 use crate::committee::Committee;
 use crate::core::Core;
 use crate::data::Data;
@@ -233,7 +233,7 @@ impl TestBlockWriter {
     pub fn add_block(&mut self, block: Data<StatementBlock>) {
         let pos = self
             .wal_writer
-            .write(&bincode::serialize(&block).unwrap())
+            .write(WAL_ENTRY_BLOCK, &bincode::serialize(&block).unwrap())
             .unwrap();
         self.block_store.insert_block(block, pos);
     }

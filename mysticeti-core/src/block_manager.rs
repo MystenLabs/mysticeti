@@ -87,10 +87,6 @@ impl BlockManager {
 
         newly_blocks_processed
     }
-
-    pub fn block_store(&self) -> &BlockStore {
-        &self.block_store
-    }
 }
 
 #[cfg(test)]

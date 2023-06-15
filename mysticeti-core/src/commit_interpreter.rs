@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::fmt;
 
+use crate::block_store::BlockStore;
 use crate::{
-    block_manager::BlockManager,
     data::Data,
     types::{BlockReference, StatementBlock},
 };
@@ -48,7 +48,7 @@ impl CommitInterpreter {
     /// have already been committed (within previous sub-dags).
     fn collect_sub_dag(
         &mut self,
-        block_manager: &BlockManager,
+        block_store: &BlockStore,
         leader_block: Data<StatementBlock>,
     ) -> CommittedSubDag {
         let mut to_commit = Vec::new();
@@ -60,8 +60,7 @@ impl CommitInterpreter {
             to_commit.push(x.clone());
             for reference in x.includes() {
                 // The block manager may have cleaned up blocks passed the latest committed rounds.
-                let block = block_manager
-                    .block_store()
+                let block = block_store
                     .get_block(*reference)
                     .expect("We should have the whole sub-dag by now");
 
@@ -77,13 +76,13 @@ impl CommitInterpreter {
 
     pub fn handle_commit(
         &mut self,
-        block_manager: &BlockManager,
+        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
         let mut committed = vec![];
         for leader_block in committed_leaders {
             // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(block_manager, leader_block);
+            let mut sub_dag = self.collect_sub_dag(block_store, leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();

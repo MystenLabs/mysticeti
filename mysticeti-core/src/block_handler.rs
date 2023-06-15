@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_manager::BlockManager;
+use crate::block_store::BlockStore;
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
@@ -166,12 +166,12 @@ impl TestCommitHandler {
 impl CommitObserver for TestCommitHandler {
     fn handle_commit(
         &mut self,
-        block_manager: &BlockManager,
+        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) {
         let committed = self
             .commit_interpreter
-            .handle_commit(block_manager, committed_leaders);
+            .handle_commit(block_store, committed_leaders);
         let transaction_time = self.transaction_time.lock();
         for commit in committed {
             self.committed_leaders.push(commit.anchor);

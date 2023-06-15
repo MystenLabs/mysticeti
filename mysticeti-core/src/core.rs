@@ -121,7 +121,7 @@ impl<H: BlockHandler> Core<H> {
         for statement in &taken {
             if let MetaStatement::Include(block_ref) = statement {
                 // for all the includes in the block, add the references in the block to the set
-                if let Some(block) = self.block_manager.block_store().get_block(*block_ref) {
+                if let Some(block) = self.block_store.get_block(*block_ref) {
                     references_in_block.extend(block.includes());
                 }
             }
@@ -170,7 +170,7 @@ impl<H: BlockHandler> Core<H> {
         // todo only create committer once
         let sequence = Committer::new(
             self.committee.clone(),
-            self.block_manager.block_store().clone(),
+            self.block_store.clone(),
             period,
             self.metrics.clone(),
         )
@@ -198,8 +198,7 @@ impl<H: BlockHandler> Core<H> {
             if quorum_round > self.last_commit_round.max(period - 1) {
                 let leader_round = quorum_round - 1;
                 let leader = self.leader_at_round(leader_round, period);
-                self.block_manager
-                    .block_store()
+                self.block_store
                     .block_exists_at_authority_round(leader, leader_round)
             } else {
                 false
@@ -207,8 +206,8 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
-    pub fn block_manager(&self) -> &BlockManager {
-        &self.block_manager
+    pub fn block_store(&self) -> &BlockStore {
+        &self.block_store
     }
 
     pub fn last_proposed(&self) -> RoundNumber {

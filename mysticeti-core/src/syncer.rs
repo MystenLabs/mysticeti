@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_manager::BlockManager;
+use crate::block_store::BlockStore;
 use crate::core::Core;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
@@ -27,7 +27,7 @@ pub trait SyncerSignals: Send + Sync {
 pub trait CommitObserver: Send + Sync {
     fn handle_commit(
         &mut self,
-        block_manager: &BlockManager,
+        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     );
 }
@@ -101,7 +101,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 tracing::debug!("Committed {:?}", committed_refs);
             }
             self.commit_observer
-                .handle_commit(self.core.block_manager(), newly_committed);
+                .handle_commit(self.core.block_store(), newly_committed);
         }
     }
 

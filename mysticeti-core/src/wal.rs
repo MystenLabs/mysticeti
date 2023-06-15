@@ -30,7 +30,7 @@ pub struct WalReader {
 #[derive(Clone, Copy)]
 pub struct WalPosition {
     start: u64,
-    len: u64,
+    len: u64, // we store len in wal, so this technically can be removed
 }
 
 pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
@@ -63,7 +63,8 @@ const _: () = assert_constants();
 const CRC: Crc<u64> = Crc::<u64>::new(
     &CRC_64_MS, /*selection of algorithm here is mostly random*/
 );
-const CRC_LEN_BYTES: u64 = 8;
+const HEADER_LEN_BYTES: u64 = 8 + 8; // CRC and length
+const HEADER_LEN_BYTES_USIZE: usize = HEADER_LEN_BYTES as usize;
 
 const fn assert_constants() {
     if u64::MAX - MAP_MASK != MAP_SIZE - 1 {
@@ -77,7 +78,7 @@ fn align_map_size(p: u64) -> u64 {
 
 impl WalWriter {
     pub fn write(&mut self, b: &[u8]) -> io::Result<WalPosition> {
-        let len = b.len() as u64 + CRC_LEN_BYTES;
+        let len = b.len() as u64 + HEADER_LEN_BYTES;
         assert!(len <= MAP_SIZE);
         let mut buffs = vec![];
         let mut written_expected = 0usize;
@@ -99,8 +100,10 @@ impl WalWriter {
             debug_assert_eq!(align_map_size(self.pos), self.pos);
             debug_assert_eq!(align_map_size(self.pos), align_map_size(self.pos + len - 1));
         }
-        let crc = CRC.checksum(b).to_le_bytes();
-        buffs.push(IoSlice::new(&crc));
+        let crc = CRC.checksum(b);
+        let header = combine_crc_and_len(crc, len);
+        let header = header.to_le_bytes();
+        buffs.push(IoSlice::new(&header));
         buffs.push(IoSlice::new(b));
         written_expected += len as usize;
         let written = self.file.write_vectored(&buffs)?;
@@ -112,6 +115,16 @@ impl WalWriter {
         self.pos += len;
         Ok(position)
     }
+}
+
+fn combine_crc_and_len(crc: u64, len: u64) -> u128 {
+    crc as u128 + ((len as u128) << 64)
+}
+
+fn split_crc_and_len(combined: u128) -> (u64, u64) {
+    let crc = (combined & ((1 << 64) - 1)) as u64;
+    let len = (combined >> 64) as u64;
+    (crc, len)
 }
 
 impl WalReader {
@@ -133,17 +146,25 @@ impl WalReader {
             Entry::Occupied(oc) => oc.into_mut(),
         };
         let buf_offset = (position.start - offset) as usize;
-        let mut crc = [0u8; 8];
-        crc.copy_from_slice(&bytes[buf_offset..buf_offset + (CRC_LEN_BYTES as usize)]);
-        let expected_crc = u64::from_le_bytes(crc);
-        let bytes = bytes
-            .slice(buf_offset + (CRC_LEN_BYTES as usize)..buf_offset + (position.len as usize));
+        let mut header = [0u8; HEADER_LEN_BYTES_USIZE];
+        header.copy_from_slice(&bytes[buf_offset..buf_offset + HEADER_LEN_BYTES_USIZE]);
+        let header = u128::from_le_bytes(header);
+        let (wal_crc, wal_len) = split_crc_and_len(header);
+        if wal_len != position.len {
+            // todo - return error
+            panic!(
+                "Len mismatch, found {} at position {}:{}",
+                wal_len, position.start, position.len
+            )
+        }
+        let bytes =
+            bytes.slice(buf_offset + HEADER_LEN_BYTES_USIZE..buf_offset + (position.len as usize));
         let actual_crc = CRC.checksum(bytes.as_ref());
-        if actual_crc != expected_crc {
+        if actual_crc != wal_crc {
             // todo - return error
             panic!(
                 "Crc mismatch, expected {}, found {} at position {}:{}",
-                expected_crc, actual_crc, position.start, position.len
+                wal_crc, actual_crc, position.start, position.len
             );
         }
         Ok(bytes)
@@ -178,7 +199,7 @@ mod tests {
         let file = temp.path().join("wal");
         let (mut writer, reader) = wal(&file).unwrap();
         let one = [1u8; 1024];
-        let two = [2u8; (MAP_SIZE - CRC_LEN_BYTES) as usize];
+        let two = [2u8; (MAP_SIZE - HEADER_LEN_BYTES) as usize];
         let three = [3u8; 15];
         let four = [4u8; 18];
         let one_pos = writer.write(&one).unwrap();
@@ -239,5 +260,15 @@ mod tests {
         assert_eq!(&two, two_read.as_ref());
 
         assert_eq!(1, reader.cleanup()); // assert only one mapping was created (therefore one and two share same mapping)
+    }
+
+    #[test]
+    fn combine_crc_len_test() {
+        for crc in [0, 1, 12, u64::MAX] {
+            for len in [0, 1, 18, u64::MAX] {
+                let combined = combine_crc_and_len(crc, len);
+                assert_eq!((crc, len), split_crc_and_len(combined));
+            }
+        }
     }
 }

@@ -38,8 +38,7 @@ impl BlockStore {
         let mut inner = BlockStoreInner::default();
         for (_pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
             assert_eq!(tag, WAL_ENTRY_BLOCK);
-            // todo - avoid copy of data
-            let block = bincode::deserialize(&data).expect("Failed to deserialize data from wal");
+            let block = Data::from_bytes(data).expect("Failed to deserialize data from wal");
             inner.add_to_index(block);
         }
         Self {
@@ -106,9 +105,8 @@ impl BlockStore {
                     .block_wal_reader
                     .read(position)
                     .expect("Failed to read wal");
-                // todo - avoid copy of data
                 assert_eq!(tag, WAL_ENTRY_BLOCK);
-                bincode::deserialize(&data).expect("Failed to deserialize data from wal")
+                Data::from_bytes(data).expect("Failed to deserialize data from wal")
             }
             IndexEntry::Loaded(block) => block,
         }

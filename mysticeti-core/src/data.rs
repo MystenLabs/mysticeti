@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use minibytes::Bytes;
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -20,13 +21,29 @@ pub struct Data<T>(Arc<DataInner<T>>);
 
 struct DataInner<T> {
     t: T,
-    serialized: Vec<u8>, // this is serialized as bincode regardless of underlining serialization
+    serialized: Bytes, // this is serialized as bincode regardless of underlining serialization
 }
 
-impl<T: Serialize> Data<T> {
+impl<T: Serialize + DeserializeOwned> Data<T> {
     pub fn new(t: T) -> Self {
         let serialized = bincode::serialize(&t).expect("Serialization should not fail");
+        let serialized = serialized.into();
         Self(Arc::new(DataInner { t, serialized }))
+    }
+
+    // Important - use Data::from_bytes,
+    // rather then Data::deserialize to avoid mem copy of serialized representation
+    pub fn from_bytes(bytes: Bytes) -> bincode::Result<Self> {
+        let t = bincode::deserialize(&bytes)?;
+        let inner = DataInner {
+            t,
+            serialized: bytes,
+        };
+        Ok(Self(Arc::new(inner)))
+    }
+
+    pub fn serialized_bytes(&self) -> &Bytes {
+        &self.0.serialized
     }
 }
 
@@ -56,6 +73,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Data<T> {
         let Ok(t) = bincode::deserialize(&serialized) else {
             return Err(D::Error::custom("Failed to deserialized inner bytes"));
         };
+        let serialized = serialized.into();
         Ok(Self(Arc::new(DataInner { t, serialized })))
     }
 }

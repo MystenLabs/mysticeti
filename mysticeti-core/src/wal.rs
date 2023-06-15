@@ -28,7 +28,6 @@ pub struct WalReader {
 #[derive(Clone, Copy)]
 pub struct WalPosition {
     start: u64,
-    len: u64, // we store len in wal, so this technically can be removed
 }
 
 pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
@@ -70,7 +69,8 @@ const _: () = assert_constants();
 const CRC: Crc<u64> = Crc::<u64>::new(
     &CRC_64_MS, /*selection of algorithm here is mostly random*/
 );
-const HEADER_LEN_BYTES: u64 = 8 + 8; // CRC and length
+const HEADER_LEN_BYTES: u64 = 8 + 8;
+// CRC and length
 const HEADER_LEN_BYTES_USIZE: usize = HEADER_LEN_BYTES as usize;
 
 const fn assert_constants() {
@@ -79,7 +79,7 @@ const fn assert_constants() {
     }
 }
 
-fn align_map_size(p: u64) -> u64 {
+fn offset(p: u64) -> u64 {
     p & MAP_MASK
 }
 
@@ -94,17 +94,17 @@ impl WalWriter {
             self.pos,
             len,
             self.pos + len - 1,
-            align_map_size(self.pos),
-            align_map_size(self.pos + len - 1)
+            offset(self.pos),
+            offset(self.pos + len - 1)
         );
-        if align_map_size(self.pos) != align_map_size(self.pos + len - 1) {
-            let extra_len = align_map_size(self.pos + len - 1) - self.pos;
+        if offset(self.pos) != offset(self.pos + len - 1) {
+            let extra_len = offset(self.pos + len - 1) - self.pos;
             let extra = &ZERO_MAP[0..(extra_len as usize)];
             buffs.push(IoSlice::new(extra));
             written_expected += extra.len();
             self.pos += extra_len;
-            debug_assert_eq!(align_map_size(self.pos), self.pos);
-            debug_assert_eq!(align_map_size(self.pos), align_map_size(self.pos + len - 1));
+            debug_assert_eq!(offset(self.pos), self.pos);
+            debug_assert_eq!(offset(self.pos), offset(self.pos + len - 1));
         }
         let crc = CRC.checksum(b);
         let header = combine_crc_and_len(crc, len);
@@ -114,10 +114,7 @@ impl WalWriter {
         written_expected += len as usize;
         let written = self.file.write_vectored(&buffs)?;
         assert_eq!(written, written_expected);
-        let position = WalPosition {
-            start: self.pos,
-            len,
-        };
+        let position = WalPosition { start: self.pos };
         self.pos += len;
         Ok(position)
     }
@@ -135,9 +132,57 @@ fn split_crc_and_len(combined: u128) -> (u64, u64) {
 
 impl WalReader {
     pub fn read(&self, position: WalPosition) -> io::Result<Bytes> {
-        assert!(position.len <= MAP_SIZE);
+        match self.try_read(position)? {
+            Some(entry) => Ok(entry),
+            None => panic!("No entry found at position {}", position.start),
+        }
+    }
+
+    fn try_read(&self, position: WalPosition) -> io::Result<Option<Bytes>> {
+        let offset = offset(position.start);
+        let bytes = self.map_offset(offset)?;
+        let buf_offset = (position.start - offset) as usize;
+        let (crc, len) = Self::read_header(&bytes[buf_offset..]);
+        if len == 0 {
+            if crc == 0 {
+                return Ok(None);
+            }
+            panic!(
+                "Non-zero crc at len 0, crc: {crc}, position:{}",
+                position.start
+            );
+        }
+        let bytes = bytes.slice(buf_offset + HEADER_LEN_BYTES_USIZE..buf_offset + (len as usize));
+        let actual_crc = CRC.checksum(bytes.as_ref());
+        if actual_crc != crc {
+            // todo - return error
+            panic!(
+                "Crc mismatch, expected {}, found {} at position {}:{}",
+                crc, actual_crc, position.start, len
+            );
+        }
+        Ok(Some(bytes))
+    }
+
+    // Attempts cleaning internal mem maps, returning number of retained maps
+    // Map can be freed when all buffers linked to this portion of a file are dropped
+    pub fn cleanup(&self) -> usize {
         let mut maps = self.maps.lock();
-        let offset = align_map_size(position.start);
+        maps.retain(|_k, v| v.downcast_mut::<Mmap>().is_none());
+        maps.len()
+    }
+
+    // Iter all entries up to writer position at the time iter_until(...) is called
+    pub fn iter_until(&self, w: &WalWriter) -> WalIterator {
+        WalIterator {
+            wal_reader: self,
+            position: Some(WalPosition { start: 0 }),
+            end_position: w.pos,
+        }
+    }
+
+    fn map_offset(&self, offset: u64) -> io::Result<Bytes> {
+        let mut maps = self.maps.lock();
         let bytes = match maps.entry(offset) {
             Entry::Vacant(va) => {
                 let mmap = unsafe {
@@ -150,37 +195,74 @@ impl WalReader {
             }
             Entry::Occupied(oc) => oc.into_mut(),
         };
-        let buf_offset = (position.start - offset) as usize;
-        let mut header = [0u8; HEADER_LEN_BYTES_USIZE];
-        header.copy_from_slice(&bytes[buf_offset..buf_offset + HEADER_LEN_BYTES_USIZE]);
-        let header = u128::from_le_bytes(header);
-        let (wal_crc, wal_len) = split_crc_and_len(header);
-        if wal_len != position.len {
-            // todo - return error
-            panic!(
-                "Len mismatch, found {} at position {}:{}",
-                wal_len, position.start, position.len
-            )
-        }
-        let bytes =
-            bytes.slice(buf_offset + HEADER_LEN_BYTES_USIZE..buf_offset + (position.len as usize));
-        let actual_crc = CRC.checksum(bytes.as_ref());
-        if actual_crc != wal_crc {
-            // todo - return error
-            panic!(
-                "Crc mismatch, expected {}, found {} at position {}:{}",
-                wal_crc, actual_crc, position.start, position.len
-            );
-        }
-        Ok(bytes)
+        Ok(bytes.clone())
     }
 
-    // Attempts cleaning internal mem maps, returning number of retained maps
-    // Map can be freed when all buffers linked to this portion of a file are dropped
-    pub fn cleanup(&self) -> usize {
-        let mut maps = self.maps.lock();
-        maps.retain(|_k, v| v.downcast_mut::<Mmap>().is_none());
-        maps.len()
+    #[inline]
+    fn read_header(bytes: &[u8]) -> (u64, u64 /*(crc, len)*/) {
+        let mut header = [0u8; HEADER_LEN_BYTES_USIZE];
+        header.copy_from_slice(&bytes[..HEADER_LEN_BYTES_USIZE]);
+        let header = u128::from_le_bytes(header);
+        split_crc_and_len(header)
+    }
+}
+
+pub struct WalIterator<'a> {
+    wal_reader: &'a WalReader,
+    position: Option<WalPosition>,
+    end_position: u64,
+}
+
+impl<'a> Iterator for WalIterator<'a> {
+    type Item = (WalPosition, Bytes);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let position = self.position.take()?;
+        tracing::trace!("Iter read {}", position.start);
+        // Either read from current position, or try next mapping, but only once
+        if let Some(item) = self.try_position(position) {
+            return Some(item);
+        }
+        if position.first_in_map() {
+            return None;
+        }
+        tracing::trace!("Iter fallback read {}", position.next_start_offset().start);
+        // todo - need to consider crash recovery here
+        // Either need to reset writer position, or read all offsets until writer position
+        self.try_position(position.next_start_offset())
+    }
+}
+
+impl<'a> WalIterator<'a> {
+    fn try_position(&mut self, position: WalPosition) -> Option<(WalPosition, Bytes)> {
+        if position.start >= self.end_position {
+            return None;
+        }
+        let entry = self
+            .wal_reader
+            .try_read(position)
+            .expect("Failed to read wal")?;
+        self.position = Some(position.add(entry.len() as u64 + HEADER_LEN_BYTES));
+        Some((position, entry))
+    }
+}
+
+impl WalPosition {
+    pub fn add(&self, len: u64) -> Self {
+        Self {
+            start: self.start + len,
+        }
+    }
+
+    fn next_start_offset(&self) -> Self {
+        let offset = offset(self.start);
+        Self {
+            start: offset + MAP_SIZE,
+        }
+    }
+
+    fn first_in_map(&self) -> bool {
+        self.start == offset(self.start)
     }
 }
 
@@ -246,6 +328,18 @@ mod tests {
         assert_eq!(&one, one_read.as_ref());
         drop(one_read);
         assert_eq!(reader.cleanup(), 0);
+        drop(reader);
+
+        let (writer, reader) = wal(&file).unwrap();
+
+        let mut iter = reader.iter_until(&writer);
+        drop(writer);
+
+        assert_eq!(&one, iter.next().unwrap().1.as_ref());
+        assert_eq!(&two, iter.next().unwrap().1.as_ref());
+        assert_eq!(&three, iter.next().unwrap().1.as_ref());
+        assert_eq!(&four, iter.next().unwrap().1.as_ref());
+        assert!(iter.next().is_none());
     }
 
     #[test]

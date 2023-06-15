@@ -44,7 +44,7 @@ impl<H: BlockHandler> Core<H> {
     ) -> Self {
         let wal_file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let block_store = BlockStore::new(Arc::new(wal_reader));
+        let block_store = BlockStore::new(Arc::new(wal_reader), &wal_writer);
         let block_manager = BlockManager::new(block_store.clone());
         let pending = Default::default();
         let last_proposed = 0;

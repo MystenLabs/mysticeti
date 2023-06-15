@@ -34,18 +34,22 @@ enum IndexEntry {
 }
 
 impl BlockStore {
-    pub fn new(block_wal_reader: Arc<WalReader>) -> Self {
+    pub fn new(block_wal_reader: Arc<WalReader>, wal_writer: &WalWriter) -> Self {
+        let mut inner = BlockStoreInner::default();
+        for (_pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
+            assert_eq!(tag, WAL_ENTRY_BLOCK);
+            // todo - avoid copy of data
+            let block = bincode::deserialize(&data).expect("Failed to deserialize data from wal");
+            inner.add_to_index(block);
+        }
         Self {
             block_wal_reader,
-            inner: Default::default(), // todo - read wal
+            inner: Arc::new(RwLock::new(inner)),
         }
     }
 
     pub fn insert_block(&self, block: Data<StatementBlock>, _position: WalPosition) {
-        let mut inner = self.inner.write();
-        inner.highest_round = max(inner.highest_round, block.round());
-        let map = inner.index.entry(block.round()).or_default();
-        map.insert((block.author(), block.digest()), IndexEntry::Loaded(block));
+        self.inner.write().add_to_index(block);
     }
 
     pub fn get_block(&self, reference: BlockReference) -> Option<Data<StatementBlock>> {
@@ -152,6 +156,12 @@ impl BlockStoreInner {
             .get(&reference.round)?
             .get(&(reference.authority, reference.digest))
             .cloned()
+    }
+
+    pub fn add_to_index(&mut self, block: Data<StatementBlock>) {
+        self.highest_round = max(self.highest_round, block.round());
+        let map = self.index.entry(block.round()).or_default();
+        map.insert((block.author(), block.digest()), IndexEntry::Loaded(block));
     }
 }
 

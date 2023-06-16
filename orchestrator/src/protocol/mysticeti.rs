@@ -7,11 +7,11 @@ use std::{
     str::FromStr,
 };
 
-// use mysticeti::{
-//     committee::Committee,
-//     config::{Parameters, PrivateConfig},
-//     types::AuthorityIndex,
-// };
+use mysticeti::{
+    committee::Committee,
+    config::{Parameters, PrivateConfig},
+    types::AuthorityIndex,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -91,34 +91,50 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
 
     fn node_command<I>(
         &self,
-        _instances: I,
+        instances: I,
         _parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
     ) -> Vec<(Instance, String)>
     where
         I: IntoIterator<Item = Instance>,
     {
-        // let working_dir = self.working_dir.clone();
-        // instances
-        //     .into_iter()
-        //     .enumerate()
-        //     .map(|(i, instance)| {
-        //         let authority = i as AuthorityIndex;
-        //         let committee_path = [working_dir, Committee::DEFAULT_FILENAME].iter().collect();
-        //         let parameters_path = [working_dir, Parameters::DEFAULT_FILENAME].iter().collect();
-        //         let private_configs_path = [working_dir, PrivateConfig::default_filename(authority)].iter().collect();
+        instances
+            .into_iter()
+            .enumerate()
+            .map(|(i, instance)| {
+                let authority = i as AuthorityIndex;
+                let committee_path: PathBuf =
+                    [&self.working_dir, &Committee::DEFAULT_FILENAME.into()]
+                        .iter()
+                        .collect();
+                let parameters_path: PathBuf =
+                    [&self.working_dir, &Parameters::DEFAULT_FILENAME.into()]
+                        .iter()
+                        .collect();
+                let private_configs_path: PathBuf = [
+                    &self.working_dir,
+                    &PrivateConfig::default_filename(authority),
+                ]
+                .iter()
+                .collect();
 
-        //         let run = [
-        //             "cargo run --release --bin mysticeti --",
-        //             &format!("--authority {authority} --committee-path {committee_path}"),
-        //             &format!("--parameters-path {parameters_path} --private-config-path {private_configs_path}"),
-        //         ]
-        //         .join(" ");
-        //         let command = ["source $HOME/.cargo/env", &run].join(" && ");
+                let run = [
+                    "cargo run --release --bin mysticeti --",
+                    &format!(
+                        "--authority {authority} --committee-path {}",
+                        committee_path.display()
+                    ),
+                    &format!(
+                        "--parameters-path {} --private-config-path {}",
+                        parameters_path.display(),
+                        private_configs_path.display()
+                    ),
+                ]
+                .join(" ");
+                let command = ["source $HOME/.cargo/env", &run].join(" && ");
 
-        //         (instance, command)
-        //     })
-        //     .collect()
-        vec![]
+                (instance, command)
+            })
+            .collect()
     }
 
     fn client_command<I>(

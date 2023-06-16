@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::simulator::{Scheduler, Simulator, SimulatorState};
-use crate::AuthorityIndex;
+use crate::types::AuthorityIndex;
 use futures::FutureExt;
 use rand::prelude::StdRng;
 use std::cell::RefCell;

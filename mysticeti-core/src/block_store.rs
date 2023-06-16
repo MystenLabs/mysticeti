@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::Data;
-use crate::types::{BlockDigest, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
-use crate::AuthorityIndex;
 use parking_lot::RwLock;
 use std::cmp::max;
 use std::collections::HashMap;

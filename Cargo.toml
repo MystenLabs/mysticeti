@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "mysticeti-core",
+    "mysticeti-core", 
+    "mysticeti-main",
     "minibytes",
     "orchestrator"
 ]

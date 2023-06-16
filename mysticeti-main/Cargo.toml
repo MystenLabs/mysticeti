@@ -6,11 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.28.1", features = ["full"] }
-tracing = "0.1.37"
-futures = "0.3.28"
-clap = { version = "4.3.3", features = ["derive"] }
-eyre = "0.6.8"
-color-eyre = "0.6.2"
+tokio = { workspace = true }
+futures = { workspace = true }
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
 
 mysticeti-core = { path = "../mysticeti-core" }

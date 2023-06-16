@@ -13,4 +13,4 @@ clap = { version = "4.3.3", features = ["derive"] }
 eyre = "0.6.8"
 color-eyre = "0.6.2"
 
-mysticeti = { path = "../mysticeti-core" }
+mysticeti-core = { path = "../mysticeti-core" }

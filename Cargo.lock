@@ -1783,7 +1783,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mysticeti"
+name = "mysticeti-core"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -1818,7 +1818,7 @@ dependencies = [
  "color-eyre",
  "eyre",
  "futures",
- "mysticeti",
+ "mysticeti-core",
  "tokio",
  "tracing",
 ]
@@ -1963,7 +1963,7 @@ dependencies = [
  "futures",
  "glob",
  "multiaddr",
- "mysticeti",
+ "mysticeti-core",
  "plotters",
  "prettytable-rs",
  "prometheus-parse",

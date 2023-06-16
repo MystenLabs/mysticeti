@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use mysticeti::{
+use mysticeti_core::{
     committee::Committee,
     config::{Parameters, PrivateConfig},
     types::AuthorityIndex,

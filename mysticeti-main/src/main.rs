@@ -12,7 +12,7 @@ use clap::{command, Parser};
 use eyre::{eyre, Context, Result};
 use futures::future;
 
-use mysticeti::{
+use mysticeti_core::{
     committee::Committee,
     config::{Parameters, Print, PrivateConfig},
     types::AuthorityIndex,

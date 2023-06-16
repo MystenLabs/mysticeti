@@ -29,7 +29,7 @@ glob = "0.3.1"
 
 prometheus-parse = { git = "https://github.com/asonnino/prometheus-parser.git", rev = "75334db" }
 
-mysticeti = { path = "../mysticeti-core" }
+mysticeti-core = { path = "../mysticeti-core" }
 
 [dev-dependencies]
 tempfile = "3.4.0"

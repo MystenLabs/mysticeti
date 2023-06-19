@@ -203,8 +203,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             .await?;
 
         // Wait until all nodes are reachable.
-        let metrics = format!("curl 127.0.0.1:{}/metrics", P::NODE_METRICS_PORT);
-        self.ssh_manager.wait_for_success(instances, metrics).await;
+        let commands = self.protocol_commands.nodes_metrics_command(instances);
+        self.ssh_manager.wait_for_success(commands).await;
 
         Ok(())
     }
@@ -376,8 +376,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             .await?;
 
         // Wait until all load generators are reachable.
-        let metrics = format!("curl 127.0.0.1:{}/metrics", P::CLIENT_METRICS_PORT);
-        self.ssh_manager.wait_for_success(clients, metrics).await;
+        let commands = self.protocol_commands.clients_metrics_command(clients);
+        self.ssh_manager.wait_for_success(commands).await;
 
         display::done();
         Ok(())
@@ -397,7 +397,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         let (clients, nodes) = self.select_instances(parameters)?;
 
         // Regularly scrape the client metrics.
-        let metrics = format!("curl 127.0.0.1:{}/metrics", P::CLIENT_METRICS_PORT);
+        let metrics_commands = self.protocol_commands.clients_metrics_command(clients);
 
         let mut aggregator = MeasurementsCollection::new(&self.settings, parameters.clone());
         let mut metrics_interval = time::interval(self.scrape_interval);
@@ -418,7 +418,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
                     let stdio = self
                         .ssh_manager
-                        .execute(clients.clone(), metrics.clone(), CommandContext::default())
+                        .execute_per_instance(metrics_commands.clone(), CommandContext::default())
                         .await?;
                     for (i, (stdout, _stderr)) in stdio.iter().enumerate() {
                         let measurement = Measurement::from_prometheus::<P>(stdout);

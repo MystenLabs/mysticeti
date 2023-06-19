@@ -223,20 +223,16 @@ impl SshConnectionManager {
         Ok(())
     }
 
-    pub async fn wait_for_success<I, S>(&self, instances: I, command: S)
+    pub async fn wait_for_success<I, S>(&self, instances: I)
     where
-        I: IntoIterator<Item = Instance> + Clone,
-        S: Into<String> + Clone + Send + 'static,
+        I: IntoIterator<Item = (Instance, S)> + Clone,
+        S: Into<String> + Send + 'static + Clone,
     {
         loop {
             sleep(Self::RETRY_DELAY).await;
 
             if self
-                .execute(
-                    instances.clone(),
-                    command.clone(),
-                    CommandContext::default(),
-                )
+                .execute_per_instance(instances.clone(), CommandContext::default())
                 .await
                 .is_ok()
             {

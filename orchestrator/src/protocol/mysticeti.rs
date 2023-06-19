@@ -3,13 +3,14 @@
 
 use std::{
     fmt::{Debug, Display},
+    net::IpAddr,
     path::PathBuf,
     str::FromStr,
 };
 
 use mysticeti_core::{
     committee::Committee,
-    config::{Parameters, PrivateConfig},
+    config::{self, Parameters, PrivateConfig},
     types::AuthorityIndex,
 };
 use serde::{Deserialize, Serialize};
@@ -160,12 +161,33 @@ impl MysticetiProtocol {
 }
 
 impl ProtocolMetrics for MysticetiProtocol {
-    const NODE_METRICS_PORT: u16 = 9091;
-    const CLIENT_METRICS_PORT: u16 = 8081;
-
     const BENCHMARK_DURATION: &'static str = "benchmark_duration";
     const TOTAL_TRANSACTIONS: &'static str = "latency_s_count";
     const LATENCY_BUCKETS: &'static str = "latency_s";
     const LATENCY_SUM: &'static str = "latency_s_sum";
     const LATENCY_SQUARED_SUM: &'static str = "latency_squared_s";
+
+    fn nodes_metrics_path<I>(&self, instances: I) -> Vec<(Instance, String)>
+    where
+        I: IntoIterator<Item = Instance>,
+    {
+        let (ips, instances): (_, Vec<_>) = instances
+            .into_iter()
+            .map(|x| (IpAddr::V4(x.main_ip), x))
+            .unzip();
+        let parameters = config::Parameters::new_for_benchmarks(ips);
+        let metrics_paths = parameters
+            .all_metric_addresses()
+            .map(|x| format!("{x}{}", mysticeti_core::prometheus::METRICS_ROUTE));
+
+        instances.into_iter().zip(metrics_paths).collect()
+    }
+
+    fn clients_metrics_path<I>(&self, instances: I) -> Vec<(Instance, String)>
+    where
+        I: IntoIterator<Item = Instance>,
+    {
+        // TODO: hack until we have benchmark clients.
+        self.nodes_metrics_path(instances)
+    }
 }

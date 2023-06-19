@@ -77,7 +77,6 @@ impl Parameters {
     }
 
     /// Return all metric addresses (including our own) in the order of the authority index.
-    #[cfg(test)]
     pub fn all_metric_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
         self.identifiers.iter().map(|id| id.metrics_address)
     }

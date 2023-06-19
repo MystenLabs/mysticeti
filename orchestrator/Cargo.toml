@@ -10,6 +10,7 @@ edition = "2021"
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
+eyre = { workspace = true }
 color-eyre = { workspace = true }
 reqwest = { workspace = true }
 clap = { workspace = true }

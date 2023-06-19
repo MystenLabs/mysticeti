@@ -25,6 +25,7 @@ pub trait BenchmarkType:
     + Hash
     + PartialOrd
     + Ord
+    + FromStr
 {
 }
 

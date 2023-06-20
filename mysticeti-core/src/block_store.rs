@@ -1,13 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::core::MetaStatement;
 use crate::data::Data;
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use minibytes::Bytes;
 use parking_lot::RwLock;
 use std::cmp::max;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::IoSlice;
 use std::sync::Arc;
 
@@ -39,7 +40,11 @@ impl BlockStore {
     pub fn open(
         block_wal_reader: Arc<WalReader>,
         wal_writer: &WalWriter,
-    ) -> (Self, Option<OwnBlockData>) {
+    ) -> (
+        Self,
+        Option<OwnBlockData>,
+        VecDeque<(WalPosition, MetaStatement)>,
+    ) {
         let mut inner = BlockStoreInner::default();
         let mut pending = BTreeMap::new();
         let mut last_own_block: Option<OwnBlockData> = None;
@@ -71,7 +76,11 @@ impl BlockStore {
             block_wal_reader,
             inner: Arc::new(RwLock::new(inner)),
         };
-        (this, last_own_block)
+        let pending_statements = pending
+            .into_iter()
+            .map(|(pos, raw)| (pos, raw.into_meta_statement()))
+            .collect();
+        (this, last_own_block, pending_statements)
     }
 
     pub fn insert_block(&self, block: Data<StatementBlock>, _position: WalPosition) {
@@ -219,7 +228,7 @@ pub struct OwnBlockData {
 
 const OWN_BLOCK_HEADER_SIZE: usize = 8;
 
-pub enum RawMetaStatement {
+enum RawMetaStatement {
     Include(BlockReference),
     Payload(Bytes),
 }
@@ -245,6 +254,17 @@ impl OwnBlockData {
         writer
             .writev(WAL_ENTRY_OWN_BLOCK, &[header, block])
             .expect("Writing to wal failed")
+    }
+}
+
+impl RawMetaStatement {
+    fn into_meta_statement(self) -> MetaStatement {
+        match self {
+            RawMetaStatement::Include(include) => MetaStatement::Include(include),
+            RawMetaStatement::Payload(payload) => MetaStatement::Payload(
+                bincode::deserialize(&payload).expect("Failed to deserialize payload"),
+            ),
+        }
     }
 }
 

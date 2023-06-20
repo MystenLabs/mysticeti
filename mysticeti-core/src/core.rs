@@ -30,7 +30,7 @@ pub struct Core<H: BlockHandler> {
 }
 
 #[derive(Debug)]
-enum MetaStatement {
+pub enum MetaStatement {
     Include(BlockReference),
     Payload(Vec<BaseStatement>),
 }
@@ -44,13 +44,19 @@ impl<H: BlockHandler> Core<H> {
         wal_file: File,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        // todo - recover pending and threshold_clock
-        let (block_store, last_own_block) = BlockStore::open(Arc::new(wal_reader), &wal_writer);
-        let mut pending = VecDeque::default();
+        let (block_store, last_own_block, mut pending) =
+            BlockStore::open(Arc::new(wal_reader), &wal_writer);
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
+            for (_, pending_block) in pending.iter() {
+                if let MetaStatement::Include(include) = pending_block {
+                    threshold_clock.add_block(*include, &committee);
+                }
+            }
             own_block
         } else {
+            // todo(fix) - this technically has a race condition if node crashes after genesis
+            assert!(pending.is_empty());
             // Initialize empty block store
             // A lot of this code is shared with Self::add_blocks, this is not great and some code reuse would be great
             let (own_genesis_block, other_genesis_blocks) = committee.genesis_blocks(authority);

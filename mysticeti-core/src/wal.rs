@@ -18,8 +18,6 @@ pub struct WalWriter {
     pos: u64,
 }
 
-// todo(andrey)
-// - iteration
 pub struct WalReader {
     fd: RawFd,
     maps: Mutex<BTreeMap<u64, Bytes>>,
@@ -37,6 +35,28 @@ pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
     make_wal(file)
 }
 
+/// Creates wal reader and wal writer on the file.
+/// WalWriter methods generally take &mut references so normally only one thread can access WalWriter at a time.
+/// WalReader methods take & reference, you can wrap WalReader in Arc and safely share it across different threads.
+///
+/// You can write to wal using WalWriter::write method, which takes byte slice and a 'tag'(an opaque u32 value).
+/// WalWriter::write method returns WalPosition that can later be used to read the wal.
+///
+/// When WalWriter::write completes, the data is guaranteed to be written into kernel buffers, but not synced to disk.
+/// If the program terminates early, the data will be eventually written to disk by the operating system.
+/// If the machine crashes however, some data might be lost, unless WalWriter::sync method is called to flush data to disk.
+///
+///
+/// You can read the wal using WalReader::read by providing the WalPosition returned by WalWriter.
+///
+/// WalReader::read uses memory mapped files to map a region of the wal, and returns a pointer(in the form of Bytes abstraction)
+/// pointing to the region of the memory mapped file.
+///
+/// All returned Bytes references(and their sub-slices) holds a reference counter to the underlining memory mapped file.
+/// This allows to minimize copy of data, however it also means that holding the references to the buffers returned by WalReader::read will keep the wal file open.
+///
+/// In order to completely "close" the wal file(for example to allow to delete/reclaim space), user need to drop
+/// the wal reader, wal writer, **and** drop all the buffers returned by WalReader::read().
 pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
     let file = OpenOptions::new()
         .create(true)

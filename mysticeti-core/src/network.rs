@@ -40,7 +40,6 @@ impl Network {
         }
     }
 
-    #[allow(dead_code)]
     pub async fn load(
         parameters: &Parameters,
         our_id: AuthorityIndex,

@@ -24,7 +24,6 @@ impl BlockManager {
         }
     }
 
-    #[allow(dead_code)]
     pub fn add_blocks(
         &mut self,
         blocks: Vec<Data<StatementBlock>>,

@@ -51,7 +51,6 @@ pub struct StatementBlock {
     includes: Vec<BlockReference>,
 
     // A list of base statements in order.
-    #[allow(dead_code)]
     statements: Vec<BaseStatement>,
 
     // Creation time of the block as reported by creator, currently not enforced

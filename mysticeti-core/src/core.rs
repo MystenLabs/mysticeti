@@ -200,7 +200,6 @@ impl<H: BlockHandler> Core<H> {
         Some(block)
     }
 
-    #[allow(dead_code)]
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
         // todo only create committer once
         let sequence = Committer::new(

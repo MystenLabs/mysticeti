@@ -271,7 +271,7 @@ impl<H: BlockHandler> Core<H> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_util::committee_and_cores;
+    use crate::test_util::{committee_and_cores, committee_and_cores_persisted};
     use crate::threshold_clock;
     use rand::prelude::StdRng;
     use rand::{Rng, SeedableRng};
@@ -409,6 +409,71 @@ mod test {
                 }
             }
             panic!("Seed {seed} failed - not all transactions are committed");
+        }
+    }
+
+    #[test]
+    fn test_core_recovery() {
+        let tmp = tempdir::TempDir::new("test_core_recovery").unwrap();
+        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()), None);
+
+        let mut proposed_transactions = vec![];
+        let mut blocks = vec![];
+        for core in &mut cores {
+            core.run_block_handler(&[]);
+            let block = core
+                .try_new_block()
+                .expect("Must be able to create block after genesis");
+            assert_eq!(block.reference().round, 1);
+            proposed_transactions.push(core.block_handler.last_transaction);
+            eprintln!("{}: {}", core.authority, block);
+            blocks.push(block.clone());
+        }
+        assert_eq!(proposed_transactions.len(), 4);
+        // todo - persistence for block handler
+        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+
+        let (_committee, mut cores) =
+            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+
+        let more_blocks = blocks.split_off(2);
+
+        eprintln!("===");
+
+        let mut blocks_r2 = vec![];
+        for core in &mut cores {
+            core.add_blocks(blocks.clone());
+            assert!(core.try_new_block().is_none());
+            core.add_blocks(more_blocks.clone());
+            let block = core
+                .try_new_block()
+                .expect("Must be able to create block after full round");
+            eprintln!("{}: {}", core.authority, block);
+            assert_eq!(block.reference().round, 2);
+            blocks_r2.push(block.clone());
+        }
+
+        // todo - persistence for block handler
+        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+
+        let (_committee, mut cores) =
+            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+
+        for core in &mut cores {
+            core.add_blocks(blocks_r2.clone());
+            let block = core
+                .try_new_block()
+                .expect("Must be able to create block after full round");
+            eprintln!("{}: {}", core.authority, block);
+            assert_eq!(block.reference().round, 3);
+            for txid in &proposed_transactions {
+                assert!(
+                    core.block_handler.is_certified(*txid),
+                    "Transaction {} is not certified by {}",
+                    txid,
+                    core.authority
+                );
+            }
         }
     }
 

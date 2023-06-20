@@ -38,6 +38,15 @@ pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
     make_wal(file)
 }
 
+/// Opens file with mode suitable for walf
+pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(p)
+}
+
 /// Creates wal reader and wal writer on the file.
 /// WalWriter methods generally take &mut references so normally only one thread can access WalWriter at a time.
 /// WalReader methods take & reference, you can wrap WalReader in Arc and safely share it across different threads.

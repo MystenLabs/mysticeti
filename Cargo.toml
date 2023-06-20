@@ -2,7 +2,7 @@
 members = [
     "mysticeti-core", 
     "mysticeti-main",
-    "minibytes",
+    "third-party/minibytes",
     "orchestrator"
 ]
 

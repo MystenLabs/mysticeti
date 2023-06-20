@@ -79,8 +79,7 @@ impl<H: BlockHandler> Core<H> {
         let block_manager = BlockManager::new(block_store.clone());
         let last_commit_round = 0;
 
-        let own_block = last_own_block.block.clone();
-        let mut this = Self {
+        Self {
             block_manager,
             pending,
             last_own_block,
@@ -92,10 +91,7 @@ impl<H: BlockHandler> Core<H> {
             wal_writer,
             block_store,
             metrics,
-        };
-        // todo this is needed only for test_core_simple_exchange, fix the test, remove this line
-        assert_eq!(this.add_blocks(vec![own_block]).len(), 0);
-        this
+        }
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -111,7 +107,12 @@ impl<H: BlockHandler> Core<H> {
                 .push_back((position, MetaStatement::Include(*processed.reference())));
             result.push(processed);
         }
-        let statements = self.block_handler.handle_blocks(&result);
+        self.run_block_handler(&result);
+        result
+    }
+
+    fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
+        let statements = self.block_handler.handle_blocks(processed);
         let serialized_statements =
             bincode::serialize(&statements).expect("Payload serialization failed");
         let position = self
@@ -120,7 +121,6 @@ impl<H: BlockHandler> Core<H> {
             .expect("Failed to write statements to wal");
         self.pending
             .push_back((position, MetaStatement::Payload(statements)));
-        result
     }
 
     pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
@@ -284,6 +284,7 @@ mod test {
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
         for core in &mut cores {
+            core.run_block_handler(&[]);
             let block = core
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
@@ -337,6 +338,7 @@ mod test {
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();
             for core in &mut cores {
+                core.run_block_handler(&[]);
                 let block = core
                     .try_new_block()
                     .expect("Must be able to create block after genesis");

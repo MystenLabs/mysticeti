@@ -162,7 +162,6 @@ impl WalWriter {
         Ok(position)
     }
 
-    #[allow(dead_code)]
     pub fn sync(&mut self) -> io::Result<()> {
         self.file.sync_data()
     }

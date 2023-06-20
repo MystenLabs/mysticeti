@@ -27,6 +27,11 @@ pub struct Core<H: BlockHandler> {
     wal_writer: WalWriter,
     block_store: BlockStore,
     metrics: Arc<Metrics>,
+    options: CoreOptions,
+}
+
+pub struct CoreOptions {
+    fsync: bool,
 }
 
 #[derive(Debug)]
@@ -42,6 +47,7 @@ impl<H: BlockHandler> Core<H> {
         committee: Arc<Committee>,
         metrics: Arc<Metrics>,
         wal_file: File,
+        options: CoreOptions,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
         let (block_store, last_own_block, mut pending) =
@@ -91,6 +97,7 @@ impl<H: BlockHandler> Core<H> {
             wal_writer,
             block_store,
             metrics,
+            options,
         }
     }
 
@@ -197,6 +204,10 @@ impl<H: BlockHandler> Core<H> {
         };
         (&mut self.wal_writer, &self.block_store).insert_own_block(&self.last_own_block);
 
+        if self.options.fsync {
+            self.wal_writer.sync().expect("Wal sync failed");
+        }
+
         Some(block)
     }
 
@@ -264,6 +275,17 @@ impl<H: BlockHandler> Core<H> {
         assert!(round == 0 || round % period == 0);
 
         self.committee.elect_leader(round / period)
+    }
+}
+
+impl CoreOptions {
+    pub fn test() -> Self {
+        Self { fsync: false }
+    }
+
+    #[allow(dead_code)]
+    pub fn production() -> Self {
+        Self { fsync: true }
     }
 }
 

@@ -4,7 +4,7 @@
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
 use crate::committee::Committee;
-use crate::core::Core;
+use crate::core::{Core, CoreOptions};
 use crate::data::Data;
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
@@ -66,6 +66,7 @@ pub fn committee_and_cores_persisted(
                 committee.clone(),
                 test_metrics(),
                 wal_file,
+                CoreOptions::test(),
             )
         })
         .collect();

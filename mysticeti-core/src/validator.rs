@@ -9,6 +9,7 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
+use crate::core::CoreOptions;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -64,6 +65,7 @@ impl Validator {
             committee.clone(),
             metrics.clone(),
             tempfile::tempfile().unwrap(),
+            CoreOptions::test(),
         );
         let network = Network::load(parameters, authority, binding_network_address).await;
         let network_synchronizer = NetworkSyncer::start(

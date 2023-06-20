@@ -23,7 +23,6 @@ pub struct Core<H: BlockHandler> {
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
-    last_proposed: RoundNumber,
     last_commit_round: RoundNumber,
     wal_writer: WalWriter,
     block_store: BlockStore,
@@ -45,10 +44,10 @@ impl<H: BlockHandler> Core<H> {
         wal_file: File,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
+        // todo - recover pending and threshold_clock
         let (block_store, last_own_block) = BlockStore::open(Arc::new(wal_reader), &wal_writer);
-        let last_proposed = 0; // todo - fix
         let mut pending = VecDeque::default();
-        let mut threshold_clock = ThresholdClockAggregator::new(last_proposed);
+        let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
             own_block
         } else {
@@ -83,7 +82,6 @@ impl<H: BlockHandler> Core<H> {
             authority,
             threshold_clock,
             committee,
-            last_proposed,
             last_commit_round,
             wal_writer,
             block_store,
@@ -121,7 +119,7 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
         let clock_round = self.threshold_clock.get_round();
-        if clock_round <= self.last_proposed {
+        if clock_round <= self.last_proposed() {
             return None;
         }
 
@@ -140,14 +138,6 @@ impl<H: BlockHandler> Core<H> {
         let mut taken = self.pending.split_off(first_include_index);
         // Split off returns the "tail", what we want is keep the tail in "pending" and get the head
         mem::swap(&mut taken, &mut self.pending);
-        // At least one include statement should always be present - when creating new block
-        // we immediately insert an include reference to it to self.pending
-        // assert!(!taken.is_empty());
-        // let our_authority = self.authority;
-        // // The first statement should always be Include(our_previous_block)
-        // assert!(
-        //     matches!(taken.get(0).unwrap(), MetaStatement::Include(BlockReference{authority, ..}) if authority == &our_authority)
-        // );
         // Compress the references in the block
         // Iterate through all the include statements in the block, and make a set of all the references in their includes.
         let mut references_in_block: HashSet<BlockReference> = HashSet::new();
@@ -201,9 +191,6 @@ impl<H: BlockHandler> Core<H> {
         };
         (&mut self.wal_writer, &self.block_store).insert_own_block(&self.last_own_block);
 
-        // todo - remove
-        self.last_proposed = clock_round;
-
         Some(block)
     }
 
@@ -253,7 +240,7 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn last_proposed(&self) -> RoundNumber {
-        self.last_proposed
+        self.last_own_block.block.round()
     }
 
     pub fn authority(&self) -> AuthorityIndex {

@@ -11,6 +11,7 @@ use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::IoSlice;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct BlockStore {
@@ -48,7 +49,12 @@ impl BlockStore {
         let mut inner = BlockStoreInner::default();
         let mut pending = BTreeMap::new();
         let mut last_own_block: Option<OwnBlockData> = None;
+        let mut replay_started: Option<Instant> = None;
         for (pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
+            if replay_started.is_none() {
+                replay_started = Some(Instant::now());
+                tracing::info!("Wal is not empty, starting replay");
+            }
             let block = match tag {
                 WAL_ENTRY_BLOCK => {
                     let block = Data::<StatementBlock>::from_bytes(data)
@@ -71,6 +77,11 @@ impl BlockStore {
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
             };
             inner.add_to_index(block);
+        }
+        if let Some(replay_started) = replay_started {
+            tracing::info!("Wal replay completed in {:?}", replay_started.elapsed());
+        } else {
+            tracing::info!("Wal is empty, will start from genesis");
         }
         let this = Self {
             block_wal_reader,
@@ -220,7 +231,7 @@ impl BlockWriter for (&mut WalWriter, &BlockStore) {
     }
 }
 
-// This data structure has a special serialization usage, it must be kept constant size
+// This data structure has a special serialization in/from Bytes, see OwnBlockData::from_bytes/write_to_wal
 pub struct OwnBlockData {
     pub next_entry: WalPosition,
     pub block: Data<StatementBlock>,

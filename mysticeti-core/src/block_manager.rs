@@ -4,6 +4,7 @@
 use crate::block_store::{BlockStore, BlockWriter};
 use crate::data::Data;
 use crate::types::{BlockReference, StatementBlock};
+use crate::wal::WalPosition;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
@@ -28,9 +29,9 @@ impl BlockManager {
         &mut self,
         blocks: Vec<Data<StatementBlock>>,
         block_writer: &mut impl BlockWriter,
-    ) -> Vec<Data<StatementBlock>> {
+    ) -> Vec<(WalPosition, Data<StatementBlock>)> {
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
-        let mut newly_blocks_processed: Vec<Data<StatementBlock>> = vec![];
+        let mut newly_blocks_processed: Vec<(WalPosition, Data<StatementBlock>)> = vec![];
         while let Some(block) = blocks.pop_front() {
             // Update the highest known round number.
 
@@ -59,8 +60,8 @@ impl BlockManager {
                 let block_reference = *block_reference;
 
                 // Block can be processed. So need to update indexes etc
-                newly_blocks_processed.push(block.clone());
-                block_writer.insert_block(block);
+                let position = block_writer.insert_block(block.clone());
+                newly_blocks_processed.push((position, block.clone()));
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -111,7 +112,7 @@ mod tests {
             for block in iter {
                 let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);
                 print!("Adding {:?}:", block.reference());
-                for p in processed {
+                for (_, p) in processed {
                     print!("{:?},", p.reference());
                     if !processed_blocks.insert(p.reference().clone()) {
                         panic!("Block {:?} processed twice", p.reference());

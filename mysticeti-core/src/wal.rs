@@ -5,13 +5,14 @@ use crc::{Crc, CRC_64_MS};
 use memmap2::{Mmap, MmapOptions};
 use minibytes::Bytes;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io;
 use std::io::{IoSlice, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
+use std::{fmt, io};
 
 pub struct WalWriter {
     file: File,
@@ -23,7 +24,9 @@ pub struct WalReader {
     maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[derive(
+    Clone, Copy, Eq, PartialEq, Debug, Ord, PartialOrd, Hash, Default, Serialize, Deserialize,
+)]
 pub struct WalPosition {
     start: u64,
 }
@@ -107,7 +110,12 @@ fn offset(p: u64) -> u64 {
 
 impl WalWriter {
     pub fn write(&mut self, tag: Tag, b: &[u8]) -> io::Result<WalPosition> {
-        let len = b.len() as u64 + HEADER_LEN_BYTES;
+        self.writev(tag, &[IoSlice::new(b)])
+    }
+
+    pub fn writev(&mut self, tag: Tag, v: &[IoSlice]) -> io::Result<WalPosition> {
+        let v_len = v.iter().map(|s| s.len()).sum::<usize>();
+        let len = v_len as u64 + HEADER_LEN_BYTES;
         assert!(len <= MAP_SIZE);
         let mut buffs = vec![];
         let mut written_expected = 0usize;
@@ -128,11 +136,15 @@ impl WalWriter {
             debug_assert_eq!(offset(self.pos), self.pos);
             debug_assert_eq!(offset(self.pos), offset(self.pos + len - 1));
         }
-        let crc = CRC.checksum(b);
+        let mut crc = CRC.digest();
+        for slice in v {
+            crc.update(slice);
+        }
+        let crc = crc.finalize();
         let header = combine_header(crc, len, tag);
         let header = header.to_le_bytes();
         buffs.push(IoSlice::new(&header));
-        buffs.push(IoSlice::new(b));
+        buffs.extend_from_slice(v);
         written_expected += len as usize;
         let written = self.file.write_vectored(&buffs)?;
         assert_eq!(written, written_expected);
@@ -279,6 +291,8 @@ impl<'a> WalIterator<'a> {
 }
 
 impl WalPosition {
+    pub const MAX: WalPosition = WalPosition { start: u64::MAX };
+
     pub fn add(&self, len: u64) -> Self {
         Self {
             start: self.start + len,
@@ -304,6 +318,12 @@ impl Drop for WalReader {
                 Err::<(), _>(io::Error::last_os_error()).expect("Failed to close wal fd");
             }
         }
+    }
+}
+
+impl fmt::Display for WalPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.start)
     }
 }
 

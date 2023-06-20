@@ -48,14 +48,23 @@ impl Committee {
         0u64..(self.stake.len() as AuthorityIndex)
     }
 
-    /// Block for for_authority will go first
-    pub fn genesis_blocks(&self, for_authority: AuthorityIndex) -> Vec<Data<StatementBlock>> {
-        let mut blocks: Vec<_> = self
+    /// Return own genesis block and other genesis blocks
+    pub fn genesis_blocks(
+        &self,
+        for_authority: AuthorityIndex,
+    ) -> (Data<StatementBlock>, Vec<Data<StatementBlock>>) {
+        let other_blocks: Vec<_> = self
             .authorities()
-            .map(StatementBlock::new_genesis)
+            .filter_map(|a| {
+                if a == for_authority {
+                    None
+                } else {
+                    Some(StatementBlock::new_genesis(a))
+                }
+            })
             .collect();
-        blocks.swap(0, for_authority as usize);
-        blocks
+        let own_genesis_block = StatementBlock::new_genesis(for_authority);
+        (own_genesis_block, other_blocks)
     }
 
     pub fn is_valid(&self, amount: Stake) -> bool {

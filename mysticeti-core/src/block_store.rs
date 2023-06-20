@@ -4,9 +4,11 @@
 use crate::data::Data;
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
+use minibytes::Bytes;
 use parking_lot::RwLock;
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::io::IoSlice;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -22,7 +24,8 @@ struct BlockStoreInner {
 }
 
 pub trait BlockWriter {
-    fn insert_block(&mut self, block: Data<StatementBlock>);
+    fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition;
+    fn insert_own_block(&mut self, block: &OwnBlockData);
 }
 
 #[derive(Clone)]
@@ -33,17 +36,42 @@ enum IndexEntry {
 }
 
 impl BlockStore {
-    pub fn new(block_wal_reader: Arc<WalReader>, wal_writer: &WalWriter) -> Self {
+    pub fn open(
+        block_wal_reader: Arc<WalReader>,
+        wal_writer: &WalWriter,
+    ) -> (Self, Option<OwnBlockData>) {
         let mut inner = BlockStoreInner::default();
-        for (_pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
-            assert_eq!(tag, WAL_ENTRY_BLOCK);
-            let block = Data::from_bytes(data).expect("Failed to deserialize data from wal");
+        let mut pending = BTreeMap::new();
+        let mut last_own_block: Option<OwnBlockData> = None;
+        for (pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
+            let block = match tag {
+                WAL_ENTRY_BLOCK => {
+                    let block = Data::<StatementBlock>::from_bytes(data)
+                        .expect("Failed to deserialize data from wal");
+                    pending.insert(pos, RawMetaStatement::Include(*block.reference()));
+                    block
+                }
+                WAL_ENTRY_PAYLOAD => {
+                    pending.insert(pos, RawMetaStatement::Payload(data));
+                    continue;
+                }
+                WAL_ENTRY_OWN_BLOCK => {
+                    let (own_block_data, own_block) = OwnBlockData::from_bytes(data)
+                        .expect("Failed to deserialized own block data from wal");
+                    // Edge case of WalPosition::MAX is automatically handled here, empty map is returned
+                    pending = pending.split_off(&own_block_data.next_entry);
+                    last_own_block = Some(own_block_data);
+                    own_block
+                }
+                _ => panic!("Unknown wal tag {tag} at position {pos}"),
+            };
             inner.add_to_index(block);
         }
-        Self {
+        let this = Self {
             block_wal_reader,
             inner: Arc::new(RwLock::new(inner)),
-        }
+        };
+        (this, last_own_block)
     }
 
     pub fn insert_block(&self, block: Data<StatementBlock>, _position: WalPosition) {
@@ -104,6 +132,7 @@ impl BlockStore {
                     .block_wal_reader
                     .read(position)
                     .expect("Failed to read wal");
+                // todo - handle own block data
                 assert_eq!(tag, WAL_ENTRY_BLOCK);
                 Data::from_bytes(data).expect("Failed to deserialize data from wal")
             }
@@ -163,16 +192,70 @@ impl BlockStoreInner {
 }
 
 pub const WAL_ENTRY_BLOCK: Tag = 1;
+pub const WAL_ENTRY_PAYLOAD: Tag = 2;
+pub const WAL_ENTRY_OWN_BLOCK: Tag = 3;
 
 impl BlockWriter for (&mut WalWriter, &BlockStore) {
-    fn insert_block(&mut self, block: Data<StatementBlock>) {
+    fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition {
         let pos = self
             .0
-            .write(
-                WAL_ENTRY_BLOCK,
-                &bincode::serialize(&block).expect("Serialization failed"),
-            )
+            .write(WAL_ENTRY_BLOCK, block.serialized_bytes())
             .expect("Writing to wal failed");
         self.1.insert_block(block, pos);
+        pos
+    }
+
+    fn insert_own_block(&mut self, data: &OwnBlockData) {
+        let block_pos = data.write_to_wal(self.0);
+        self.1.insert_block(data.block.clone(), block_pos);
+    }
+}
+
+// This data structure has a special serialization usage, it must be kept constant size
+pub struct OwnBlockData {
+    pub next_entry: WalPosition,
+    pub block: Data<StatementBlock>,
+}
+
+const OWN_BLOCK_HEADER_SIZE: usize = 8;
+
+pub enum RawMetaStatement {
+    Include(BlockReference),
+    Payload(Bytes),
+}
+
+impl OwnBlockData {
+    // A bit of custom serialization to minimize data copy, relies on own_block_serialization_test
+    pub fn from_bytes(bytes: Bytes) -> bincode::Result<(OwnBlockData, Data<StatementBlock>)> {
+        let next_entry = &bytes[..OWN_BLOCK_HEADER_SIZE];
+        let next_entry: WalPosition = bincode::deserialize(next_entry)?;
+        let block = bytes.slice(OWN_BLOCK_HEADER_SIZE..);
+        let block = Data::<StatementBlock>::from_bytes(block)?;
+        let own_block_data = OwnBlockData {
+            next_entry,
+            block: block.clone(),
+        };
+        Ok((own_block_data, block))
+    }
+
+    pub fn write_to_wal(&self, writer: &mut WalWriter) -> WalPosition {
+        let header = bincode::serialize(&self.next_entry).expect("Serialization failed");
+        let header = IoSlice::new(&header);
+        let block = IoSlice::new(self.block.serialized_bytes());
+        writer
+            .writev(WAL_ENTRY_OWN_BLOCK, &[header, block])
+            .expect("Writing to wal failed")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn own_block_serialization_test() {
+        let next_entry = WalPosition::default();
+        let serialized = bincode::serialize(&next_entry).unwrap();
+        assert_eq!(serialized.len(), OWN_BLOCK_HEADER_SIZE);
     }
 }

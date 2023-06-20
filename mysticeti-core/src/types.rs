@@ -24,7 +24,7 @@ pub enum Vote {
     Reject(Option<TransactionId>),
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
     pub round: RoundNumber,

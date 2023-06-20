@@ -1,12 +1,13 @@
-use crate::block_store::{BlockStore, BlockWriter};
+use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOAD};
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
-use crate::wal::{walf, WalWriter};
+use crate::wal::{walf, WalPosition, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use std::fs::File;
 use std::mem;
 use std::sync::Arc;
 use std::{
@@ -16,7 +17,8 @@ use std::{
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
-    pending: VecDeque<MetaStatement>,
+    pending: VecDeque<(WalPosition, MetaStatement)>,
+    last_own_block: OwnBlockData,
     block_handler: H,
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
@@ -35,25 +37,48 @@ enum MetaStatement {
 }
 
 impl<H: BlockHandler> Core<H> {
-    pub fn new(
+    pub fn open(
         block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         metrics: Arc<Metrics>,
-        // wal_path: impl AsRef<Path>,
+        wal_file: File,
     ) -> Self {
-        let wal_file = tempfile::tempfile().unwrap();
-        let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let block_store = BlockStore::new(Arc::new(wal_reader), &wal_writer);
+        let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
+        let (block_store, last_own_block) = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let last_proposed = 0; // todo - fix
+        let mut pending = VecDeque::default();
+        let mut threshold_clock = ThresholdClockAggregator::new(last_proposed);
+        let last_own_block = if let Some(own_block) = last_own_block {
+            own_block
+        } else {
+            // Initialize empty block store
+            // A lot of this code is shared with Self::add_blocks, this is not great and some code reuse would be great
+            let (own_genesis_block, other_genesis_blocks) = committee.genesis_blocks(authority);
+            assert_eq!(own_genesis_block.author(), authority);
+            let mut block_writer = (&mut wal_writer, &block_store);
+            for block in other_genesis_blocks {
+                let reference = *block.reference();
+                threshold_clock.add_block(reference, &committee);
+                let position = block_writer.insert_block(block);
+                pending.push_back((position, MetaStatement::Include(reference)));
+            }
+            threshold_clock.add_block(*own_genesis_block.reference(), &committee);
+            let own_block_data = OwnBlockData {
+                next_entry: WalPosition::MAX,
+                block: own_genesis_block,
+            };
+            block_writer.insert_own_block(&own_block_data);
+            own_block_data
+        };
         let block_manager = BlockManager::new(block_store.clone());
-        let pending = Default::default();
-        let last_proposed = 0;
-        let threshold_clock = ThresholdClockAggregator::new(last_proposed);
         let last_commit_round = 0;
 
-        Self {
+        let own_block = last_own_block.block.clone();
+        let mut this = Self {
             block_manager,
             pending,
+            last_own_block,
             block_handler,
             authority,
             threshold_clock,
@@ -63,27 +88,35 @@ impl<H: BlockHandler> Core<H> {
             wal_writer,
             block_store,
             metrics,
-        }
+        };
+        // todo this is needed only for test_core_simple_exchange, fix the test, remove this line
+        assert_eq!(this.add_blocks(vec![own_block]).len(), 0);
+        this
     }
 
-    pub fn with_genesis(mut self) -> Self {
-        self.add_blocks(self.committee.genesis_blocks(self.authority()));
-        self
-    }
-
+    // Note that generally when you update this function you also want to change genesis initialization above
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
         let processed = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
-        let statements = self.block_handler.handle_blocks(&processed);
-        for processed in &processed {
+        let mut result = Vec::with_capacity(processed.len());
+        for (position, processed) in processed.into_iter() {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
-                .push_back(MetaStatement::Include(*processed.reference()));
+                .push_back((position, MetaStatement::Include(*processed.reference())));
+            result.push(processed);
         }
-        self.pending.push_back(MetaStatement::Payload(statements));
-        processed
+        let statements = self.block_handler.handle_blocks(&result);
+        let serialized_statements =
+            bincode::serialize(&statements).expect("Payload serialization failed");
+        let position = self
+            .wal_writer
+            .write(WAL_ENTRY_PAYLOAD, &serialized_statements)
+            .expect("Failed to write statements to wal");
+        self.pending
+            .push_back((position, MetaStatement::Payload(statements)));
+        result
     }
 
     pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
@@ -98,7 +131,7 @@ impl<H: BlockHandler> Core<H> {
         let first_include_index = self
             .pending
             .iter()
-            .position(|statement| match statement {
+            .position(|(_, statement)| match statement {
                 MetaStatement::Include(block_ref) => block_ref.round >= clock_round,
                 _ => false,
             })
@@ -109,16 +142,17 @@ impl<H: BlockHandler> Core<H> {
         mem::swap(&mut taken, &mut self.pending);
         // At least one include statement should always be present - when creating new block
         // we immediately insert an include reference to it to self.pending
-        assert!(!taken.is_empty());
-        let our_authority = self.authority;
-        // The first statement should always be Include(our_previous_block)
-        assert!(
-            matches!(taken.get(0).unwrap(), MetaStatement::Include(BlockReference{authority, ..}) if authority == &our_authority)
-        );
+        // assert!(!taken.is_empty());
+        // let our_authority = self.authority;
+        // // The first statement should always be Include(our_previous_block)
+        // assert!(
+        //     matches!(taken.get(0).unwrap(), MetaStatement::Include(BlockReference{authority, ..}) if authority == &our_authority)
+        // );
         // Compress the references in the block
         // Iterate through all the include statements in the block, and make a set of all the references in their includes.
         let mut references_in_block: HashSet<BlockReference> = HashSet::new();
-        for statement in &taken {
+        references_in_block.extend(self.last_own_block.block.includes());
+        for (_, statement) in &taken {
             if let MetaStatement::Include(block_ref) = statement {
                 // for all the includes in the block, add the references in the block to the set
                 if let Some(block) = self.block_store.get_block(*block_ref) {
@@ -126,12 +160,11 @@ impl<H: BlockHandler> Core<H> {
                 }
             }
         }
-        for (i, statement) in taken.into_iter().enumerate() {
+        includes.push(*self.last_own_block.block.reference());
+        for (_, statement) in taken.into_iter() {
             match statement {
                 MetaStatement::Include(include) => {
-                    // First block in includes should always be our block
-                    // We should not exclude it even if some other block already references it
-                    if i == 0 || !references_in_block.contains(&include) {
+                    if !references_in_block.contains(&include) {
                         includes.push(include);
                     }
                 }
@@ -157,9 +190,18 @@ impl<H: BlockHandler> Core<H> {
         );
 
         let block = Data::new(block);
-        (&mut self.wal_writer, &self.block_store).insert_block(block.clone());
-        self.pending.push_front(MetaStatement::Include(block_ref));
+        let next_entry = if let Some((pos, _)) = self.pending.get(0) {
+            *pos
+        } else {
+            WalPosition::MAX
+        };
+        self.last_own_block = OwnBlockData {
+            next_entry,
+            block: block.clone(),
+        };
+        (&mut self.wal_writer, &self.block_store).insert_own_block(&self.last_own_block);
 
+        // todo - remove
         self.last_proposed = clock_round;
 
         Some(block)
@@ -244,12 +286,11 @@ mod test {
 
     #[test]
     fn test_core_simple_exchange() {
-        let (committee, mut cores) = committee_and_cores(4);
+        let (_committee, mut cores) = committee_and_cores(4);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
         for core in &mut cores {
-            core.add_blocks(committee.genesis_blocks(core.authority));
             let block = core
                 .try_new_block()
                 .expect("Must be able to create block after genesis");

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
-use crate::block_store::{BlockStore, BlockWriter, WAL_ENTRY_BLOCK};
+use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
 use crate::committee::Committee;
 use crate::core::Core;
 use crate::data::Data;
@@ -16,7 +16,7 @@ use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, StatementBlock, TransactionId,
 };
-use crate::wal::{walf, WalWriter};
+use crate::wal::{walf, WalPosition, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
 use prometheus::Registry;
@@ -41,9 +41,13 @@ pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandl
             let last_transaction = first_transaction_for_authority(authority);
             let block_handler =
                 TestBlockHandler::new(last_transaction, committee.clone(), authority);
-            let mut core = Core::new(block_handler, authority, committee.clone(), test_metrics());
-            core.add_blocks(committee.genesis_blocks(core.authority()));
-            core
+            Core::open(
+                block_handler,
+                authority,
+                committee.clone(),
+                test_metrics(),
+                tempfile::tempfile().unwrap(),
+            )
         })
         .collect();
     (committee, cores)
@@ -223,19 +227,20 @@ impl TestBlockWriter {
     pub fn new() -> Self {
         let file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(file).unwrap();
-        let block_store = BlockStore::new(Arc::new(wal_reader), &wal_writer);
+        let (block_store, _) = BlockStore::open(Arc::new(wal_reader), &wal_writer);
         Self {
             block_store,
             wal_writer,
         }
     }
 
-    pub fn add_block(&mut self, block: Data<StatementBlock>) {
+    pub fn add_block(&mut self, block: Data<StatementBlock>) -> WalPosition {
         let pos = self
             .wal_writer
             .write(WAL_ENTRY_BLOCK, &bincode::serialize(&block).unwrap())
             .unwrap();
         self.block_store.insert_block(block, pos);
+        pos
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
@@ -254,8 +259,12 @@ impl TestBlockWriter {
 }
 
 impl BlockWriter for TestBlockWriter {
-    fn insert_block(&mut self, block: Data<StatementBlock>) {
-        self.add_block(block);
+    fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition {
+        (&mut self.wal_writer, &self.block_store).insert_block(block)
+    }
+
+    fn insert_own_block(&mut self, block: &OwnBlockData) {
+        (&mut self.wal_writer, &self.block_store).insert_own_block(block)
     }
 }
 

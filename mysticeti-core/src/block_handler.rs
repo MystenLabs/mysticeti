@@ -50,8 +50,7 @@ impl BlockHandler for RealBlockHandler {
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(next_transaction, TimeInstant::now());
         self.transaction_votes
-            .register(next_transaction, self.authority, &self.committee)
-            .ok();
+            .register(next_transaction, self.authority, &self.committee);
         for block in blocks {
             let processed =
                 self.transaction_votes
@@ -123,8 +122,7 @@ impl BlockHandler for TestBlockHandler {
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(self.last_transaction, TimeInstant::now());
         self.transaction_votes
-            .register(self.last_transaction, self.authority, &self.committee)
-            .ok();
+            .register(self.last_transaction, self.authority, &self.committee);
         for block in blocks {
             let processed =
                 self.transaction_votes

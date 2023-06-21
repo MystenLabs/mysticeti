@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -129,10 +130,34 @@ pub struct StakeAggregator<TH> {
     _phantom: PhantomData<TH>,
 }
 
-/// Tracks votes for pending transactions and set of certified transactions
-pub struct TransactionAggregator<K, TH> {
+/// Tracks votes for pending transactions and outputs certified transactions to a handler
+pub struct TransactionAggregator<K, TH, H = HashSet<K>> {
     pending: HashMap<K, StakeAggregator<TH>>,
-    processed: HashSet<K>,
+    handler: H,
+}
+
+pub trait ProcessedTransactionHandler<K> {
+    fn transaction_processed(&mut self, k: K);
+    fn duplicate_transaction(&mut self, _k: K, _from: AuthorityIndex) {}
+    fn unknown_transaction(&mut self, _k: K, _from: AuthorityIndex) {}
+}
+
+impl<K: Hash + Eq + Copy + Display> ProcessedTransactionHandler<K> for HashSet<K> {
+    fn transaction_processed(&mut self, k: K) {
+        self.insert(k);
+    }
+
+    fn duplicate_transaction(&mut self, k: K, from: AuthorityIndex) {
+        if !self.contains(&k) {
+            panic!("Duplicate transaction {k}: from {from}");
+        }
+    }
+
+    fn unknown_transaction(&mut self, k: K, from: AuthorityIndex) {
+        if !self.contains(&k) {
+            panic!("Unexpected - got vote for unknown transaction {k} from {from}");
+        }
+    }
 }
 
 impl<TH: CommitteeThreshold> StakeAggregator<TH> {
@@ -158,32 +183,27 @@ impl<TH: CommitteeThreshold> StakeAggregator<TH> {
     }
 }
 
-impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
+impl<K: Hash + Eq + Copy, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K> + Default>
+    TransactionAggregator<K, TH, H>
+{
     pub fn new() -> Self {
         Self {
             pending: Default::default(),
-            processed: Default::default(),
+            handler: Default::default(),
         }
     }
 
     /// Returns Ok(()) if this is first time we see transaction and Err otherwise
-    /// When Err is returned transaction is ignored (todo - is this what we want?)
-    pub fn register(
-        &mut self,
-        k: K,
-        vote: AuthorityIndex,
-        committee: &Committee,
-    ) -> Result<(), ()> {
-        if self.processed.contains(&k) {
-            return Err(());
-        }
+    /// When Err is returned transaction is ignored
+    pub fn register(&mut self, k: K, vote: AuthorityIndex, committee: &Committee) {
         match self.pending.entry(k) {
-            Entry::Occupied(_) => Err(()),
+            Entry::Occupied(_) => {
+                self.handler.duplicate_transaction(k, vote);
+            }
             Entry::Vacant(va) => {
                 let mut aggregator = StakeAggregator::<TH>::new();
                 aggregator.add(vote, committee);
                 va.insert(aggregator);
-                Ok(())
             }
         }
     }
@@ -194,33 +214,31 @@ impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
         vote: AuthorityIndex,
         committee: &Committee,
     ) -> Result<TransactionVoteResult, ()> {
-        if self.processed.contains(&k) {
-            return Ok(TransactionVoteResult::AlreadyProcessed);
-        }
         if let Some(aggregator) = self.pending.get_mut(&k) {
             if aggregator.add(vote, committee) {
                 // todo - reuse entry and remove Copy constraint when "entry_insert" is stable
                 self.pending.remove(&k).unwrap();
-                self.processed.insert(k);
+                self.handler.transaction_processed(k);
                 Ok(TransactionVoteResult::Processed)
             } else {
                 Ok(TransactionVoteResult::VoteAccepted)
             }
         } else {
-            // Unknown transaction
+            self.handler.unknown_transaction(k, vote);
             Err(())
         }
     }
+}
 
+impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
     pub fn is_processed(&self, k: &K) -> bool {
-        self.processed.contains(k)
+        self.handler.contains(k)
     }
 }
 
 pub enum TransactionVoteResult {
     Processed,
     VoteAccepted,
-    AlreadyProcessed,
 }
 
 impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
@@ -233,27 +251,21 @@ impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
         let mut processed = vec![];
         for statement in block.statements() {
             match statement {
-                BaseStatement::Share(id, transaction) => {
-                    if self.register(*id, block.author(), committee).is_err() {
-                        panic!(
-                            "Duplicate transaction {transaction:?}: {id} from {}",
-                            block.author()
-                        );
-                    }
+                BaseStatement::Share(id, _transaction) => {
+                    self.register(*id, block.author(), committee);
                     if let Some(ref mut response) = response {
                         response.push(BaseStatement::Vote(*id, Vote::Accept));
                     }
                 }
                 BaseStatement::Vote(id, vote) => match vote {
-                    Vote::Accept => match self.vote(*id, block.author(), committee) {
-                        Ok(TransactionVoteResult::Processed) => {
+                    Vote::Accept => {
+                        if matches!(
+                            self.vote(*id, block.author(), committee),
+                            Ok(TransactionVoteResult::Processed)
+                        ) {
                             processed.push(*id);
                         }
-                        Ok(_) => {}
-                        Err(()) => {
-                            panic!("Unexpected - got vote for unknown transaction {}", id);
-                        }
-                    },
+                    }
                     Vote::Reject(_) => unimplemented!(),
                 },
             }
@@ -268,7 +280,9 @@ impl<TH: CommitteeThreshold> Default for StakeAggregator<TH> {
     }
 }
 
-impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> Default for TransactionAggregator<K, TH> {
+impl<K: Hash + Eq + Copy, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K> + Default>
+    Default for TransactionAggregator<K, TH, H>
+{
     fn default() -> Self {
         Self::new()
     }

@@ -31,7 +31,12 @@ impl Committee {
         // Ensure all stakes are positive
         assert!(stake.iter().all(|stake| *stake > 0));
 
-        let total_stake: Stake = stake.iter().sum();
+        let mut total_stake: Stake = 0;
+        for stake in stake.iter() {
+            total_stake = total_stake
+                .checked_add(*stake)
+                .expect("Total stake overflow");
+        }
         let validity_threshold = total_stake / 3;
         let quorum_threshold = 2 * total_stake / 3;
         Arc::new(Committee {

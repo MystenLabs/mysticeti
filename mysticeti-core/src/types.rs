@@ -57,6 +57,9 @@ pub struct StatementBlock {
     meta_creation_time_ns: TimestampNs,
 }
 
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+pub struct AuthoritySet(u128); // todo - support more then 128 authorities
+
 pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
 
@@ -172,6 +175,23 @@ impl fmt::Display for BlockReference {
         } else {
             write!(f, "[{:02}]{}", self.authority, self.round)
         }
+    }
+}
+
+impl AuthoritySet {
+    #[inline]
+    pub fn insert(&mut self, v: AuthorityIndex) -> bool {
+        let bit = 1u128 << v;
+        if self.0 & bit == bit {
+            return false;
+        }
+        self.0 |= bit;
+        true
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0 = 0;
     }
 }
 
@@ -353,5 +373,20 @@ mod test {
             &d.get(&b2).unwrap().includes,
             &vec![BlockReference::new_test(1, 1)]
         );
+    }
+
+    #[test]
+    fn authority_set_test() {
+        let mut a = AuthoritySet::default();
+        assert!(a.insert(0));
+        assert!(!a.insert(0));
+        assert!(a.insert(1));
+        assert!(a.insert(2));
+        assert!(!a.insert(1));
+        assert!(a.insert(127));
+        assert!(!a.insert(127));
+        assert!(a.insert(3));
+        assert!(!a.insert(3));
+        assert!(!a.insert(2));
     }
 }

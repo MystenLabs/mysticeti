@@ -1,7 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::types::{AuthorityIndex, BaseStatement, Stake, StatementBlock, TransactionId, Vote};
+use crate::types::{
+    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionId, Vote,
+};
 use crate::{config::Print, data::Data};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,7 @@ impl Committee {
 
         // Ensure all stakes are positive
         assert!(stake.iter().all(|stake| *stake > 0));
+        assert!(stake.len() <= 128); // For now AuthoritySet only supports up to 128 authorities
 
         let mut total_stake: Stake = 0;
         for stake in stake.iter() {
@@ -130,7 +133,7 @@ impl CommitteeThreshold for ValidityThreshold {
 }
 
 pub struct StakeAggregator<TH> {
-    votes: HashSet<AuthorityIndex>,
+    votes: AuthoritySet,
     stake: Stake,
     _phantom: PhantomData<TH>,
 }

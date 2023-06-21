@@ -1,0 +1,53 @@
+Checkpoint and Epoch Change
+
+Owned-object-only transaction is considered final if there are 2f+1 effect 
+signatures in any view of the DAG, i.e. at least f+1 correct validators have
+executed the transaction.
+
+Checkpoints are computed using a deterministic rule over the commits. 
+Owned-object-only transactions that are not final (i.e. do not have 2f+1
+effect signatures) as per the causal history of the committed leader are not
+included in the corresponding checkpoint.
+Since every validator sees the same sequence of commits, they agree on which 
+transactions are included in the checkpoint.
+Checkpoints are also sequenced through consensus.
+
+Epoch Change:
+A pre-determined checkpoint number is used to determine the new committee.
+Epoch change begins after 2f+1 ``Ready'' messages from the new committee are
+sequenced. 
+Once epoch change begins, validators stop acquiring locks and
+casting votes, and focus on sequencing effect signatures for already executed 
+transactions.
+Once the effect signatures of all its executed transactions are
+sequenced, the validator sends an ``End-epoch'' message.
+After 2f+1 ``End-epoch'' messages are sequenced, the epoch can be safely closed.
+The state until this point (including the tail after the last checkpoint) is
+used as the start state of the next epoch.
+Continuing validators drop their owned objects locks and revert execution of
+transactions not finalised until the end state of the epoch.
+
+Safety:
+Effects of all finalised transactions persist across epochs.
+
+Liveness:
+Epoch change process terminates for all correct validators eventually.
+
+Safety Proof.
+Since transactions containing shared objects are considered final only after
+being sequenced, their effect trivially persists across epochs.
+It is therefore sufficient to prove that all owned-object-only transactions
+that are considered final (i.e. executed by f+1 correct validator nodes) in the
+current epoch are included in the end state of the current epoch.
+Note that the current epoch terminates only after at least f+1 correct nodes
+send the ``End-epoch'' message.
+A correct validator only sends the ``End-epoch'' message after its executed
+transaction is sequenced. By quorum intersection, all final transactions are
+sequenced before the epoch end state.
+
+Liveness Proof.
+It is sufficient to prove that 2f+1 nodes send ``End-epoch'' messages.
+After the epoch change begins, correct nodes do not issue effect signatures for
+new transactions. By liveness property of BA, all correct 2f+1 nodes are
+eventually able to sequence all the pending transactions for which they have
+issued effect signatures, and then sequence the ``End-epoch'' message.

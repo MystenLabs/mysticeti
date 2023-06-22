@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, CommitData};
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::data::Data;
@@ -13,7 +13,7 @@ use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -201,11 +201,12 @@ impl CommitObserver for TestCommitHandler {
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-    ) {
+    ) -> Vec<CommitData> {
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);
         let transaction_time = self.transaction_time.lock();
+        let mut commit_data = vec![];
         for commit in committed {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
@@ -227,7 +228,14 @@ impl CommitObserver for TestCommitHandler {
                     }
                 }
             }
+            commit_data.push(CommitData::from(&commit));
             self.committed_dags.push(commit);
         }
+        commit_data
+    }
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>) {
+        assert!(self.commit_interpreter.committed.is_empty());
+        self.commit_interpreter.committed = committed;
     }
 }

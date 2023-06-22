@@ -30,13 +30,15 @@ struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
     pub fn start(
         network: Network,
-        core: Core<H>,
+        mut core: Core<H>,
         commit_period: u64,
-        commit_observer: C,
+        mut commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
+        // todo - ugly, probably need to merge syncer and core
+        commit_observer.recover_committed(core.take_recovered_committed_blocks());
         let mut syncer = Syncer::new(
             core,
             commit_period,

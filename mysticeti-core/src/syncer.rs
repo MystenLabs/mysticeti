@@ -1,12 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, CommitData};
 use crate::core::Core;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
-use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use std::collections::HashSet;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -29,7 +30,9 @@ pub trait CommitObserver: Send + Sync {
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-    );
+    ) -> Vec<CommitData>;
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>);
 }
 
 #[allow(dead_code)]
@@ -100,8 +103,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
-            self.commit_observer
+            let commit_data = self
+                .commit_observer
                 .handle_commit(self.core.block_store(), newly_committed);
+            self.core.write_commits(&commit_data);
         }
     }
 

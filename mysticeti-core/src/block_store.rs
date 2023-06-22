@@ -1,12 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::commit_interpreter::CommittedSubDag;
 use crate::data::Data;
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use minibytes::Bytes;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::HashMap;
 use std::io::IoSlice;
@@ -66,6 +68,12 @@ impl BlockStore {
                 }
                 WAL_ENTRY_STATE => {
                     builder.state(data);
+                    continue;
+                }
+                WAL_ENTRY_COMMIT => {
+                    let commit_data = bincode::deserialize(&data)
+                        .expect("Failed to deserialized commit data from wal");
+                    builder.commit_data(commit_data);
                     continue;
                 }
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
@@ -205,6 +213,7 @@ pub const WAL_ENTRY_BLOCK: Tag = 1;
 pub const WAL_ENTRY_PAYLOAD: Tag = 2;
 pub const WAL_ENTRY_OWN_BLOCK: Tag = 3;
 pub const WAL_ENTRY_STATE: Tag = 4;
+pub const WAL_ENTRY_COMMIT: Tag = 5;
 
 impl BlockWriter for (&mut WalWriter, &BlockStore) {
     fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition {
@@ -251,6 +260,23 @@ impl OwnBlockData {
         writer
             .writev(WAL_ENTRY_OWN_BLOCK, &[header, block])
             .expect("Writing to wal failed")
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CommitData {
+    pub leader: BlockReference,
+    // All committed blocks, including the leader
+    pub sub_dag: Vec<BlockReference>,
+}
+
+impl From<&CommittedSubDag> for CommitData {
+    fn from(value: &CommittedSubDag) -> Self {
+        let sub_dag = value.blocks.iter().map(|b| *b.reference()).collect();
+        Self {
+            leader: value.anchor,
+            sub_dag,
+        }
     }
 }
 

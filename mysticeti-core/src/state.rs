@@ -1,10 +1,10 @@
-use crate::block_store::{BlockStore, OwnBlockData};
+use crate::block_store::{BlockStore, CommitData, OwnBlockData};
 use crate::core::MetaStatement;
 use crate::data::Data;
 use crate::types::{BlockReference, StatementBlock};
 use crate::wal::WalPosition;
 use minibytes::Bytes;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 pub struct RecoveredState {
     pub block_store: BlockStore,
@@ -12,6 +12,9 @@ pub struct RecoveredState {
     pub pending: VecDeque<(WalPosition, MetaStatement)>,
     pub state: Option<Bytes>,
     pub unprocessed_blocks: Vec<Data<StatementBlock>>,
+
+    pub last_committed_leader: Option<BlockReference>,
+    pub committed_blocks: HashSet<BlockReference>,
 }
 
 #[derive(Default)]
@@ -20,6 +23,9 @@ pub struct RecoveredStateBuilder {
     last_own_block: Option<OwnBlockData>,
     state: Option<Bytes>,
     unprocessed_blocks: Vec<Data<StatementBlock>>,
+
+    last_committed_leader: Option<BlockReference>,
+    committed_blocks: HashSet<BlockReference>,
 }
 
 impl RecoveredStateBuilder {
@@ -49,6 +55,14 @@ impl RecoveredStateBuilder {
         self.unprocessed_blocks.clear();
     }
 
+    pub fn commit_data(&mut self, commits: Vec<CommitData>) {
+        for commit_data in commits {
+            self.last_committed_leader = Some(commit_data.leader);
+            self.committed_blocks
+                .extend(commit_data.sub_dag.into_iter());
+        }
+    }
+
     pub fn build(self, block_store: BlockStore) -> RecoveredState {
         let pending = self
             .pending
@@ -61,6 +75,8 @@ impl RecoveredStateBuilder {
             block_store,
             state: self.state,
             unprocessed_blocks: self.unprocessed_blocks,
+            last_committed_leader: self.last_committed_leader,
+            committed_blocks: self.committed_blocks,
         }
     }
 }

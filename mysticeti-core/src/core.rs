@@ -1,5 +1,6 @@
 use crate::block_store::{
-    BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOAD, WAL_ENTRY_STATE,
+    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+    WAL_ENTRY_STATE,
 };
 use crate::committee::Committee;
 use crate::data::Data;
@@ -31,6 +32,8 @@ pub struct Core<H: BlockHandler> {
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     options: CoreOptions,
+    // todo - ugly, probably need to merge syncer and core
+    recovered_committed_blocks: Option<HashSet<BlockReference>>,
 }
 
 pub struct CoreOptions {
@@ -60,6 +63,8 @@ impl<H: BlockHandler> Core<H> {
             mut pending,
             state,
             unprocessed_blocks,
+            last_committed_leader,
+            committed_blocks,
         } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
@@ -92,7 +97,10 @@ impl<H: BlockHandler> Core<H> {
             own_block_data
         };
         let block_manager = BlockManager::new(block_store.clone());
-        let last_commit_round = 0;
+        let last_commit_round = last_committed_leader
+            .as_ref()
+            .map(BlockReference::round)
+            .unwrap_or_default();
 
         if let Some(state) = state {
             block_handler.recover_state(&state);
@@ -111,6 +119,7 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
+            recovered_committed_blocks: Some(committed_blocks),
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -278,6 +287,19 @@ impl<H: BlockHandler> Core<H> {
         self.wal_writer
             .write(WAL_ENTRY_STATE, &self.block_handler().state())
             .expect("Write to wal has failed");
+    }
+
+    pub fn write_commits(&mut self, commits: &[CommitData]) {
+        let commits = bincode::serialize(&commits).expect("Commits serialization failed");
+        self.wal_writer
+            .write(WAL_ENTRY_COMMIT, &commits)
+            .expect("Write to wal has failed");
+    }
+
+    pub fn take_recovered_committed_blocks(&mut self) -> HashSet<BlockReference> {
+        self.recovered_committed_blocks
+            .take()
+            .expect("take_recovered_committed_blocks called twice")
     }
 
     pub fn block_store(&self) -> &BlockStore {

@@ -20,11 +20,9 @@ use std::time::Duration;
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
 
-    fn state(&self) -> Bytes {
-        Bytes::new()
-    }
+    fn state(&self) -> Bytes;
 
-    fn recover_state(&mut self, _state: &Bytes) {}
+    fn recover_state(&mut self, _state: &Bytes);
 }
 
 pub struct RealBlockHandler {
@@ -71,6 +69,19 @@ impl BlockHandler for RealBlockHandler {
             }
         }
         response
+    }
+
+    fn state(&self) -> Bytes {
+        let state = &self.transaction_votes;
+        let bytes =
+            bincode::serialize(&state).expect("Failed to serialize transaction aggregator state");
+        bytes.into()
+    }
+
+    fn recover_state(&mut self, state: &Bytes) {
+        let transaction_votes = bincode::deserialize(state)
+            .expect("Failed to deserialize transaction aggregator state");
+        self.transaction_votes = transaction_votes;
     }
 }
 

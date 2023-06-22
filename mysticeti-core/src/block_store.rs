@@ -71,9 +71,9 @@ impl BlockStore {
                     continue;
                 }
                 WAL_ENTRY_COMMIT => {
-                    let commit_data = bincode::deserialize(&data)
+                    let (commit_data, state) = bincode::deserialize(&data)
                         .expect("Failed to deserialized commit data from wal");
-                    builder.commit_data(commit_data);
+                    builder.commit_data(commit_data, state);
                     continue;
                 }
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
@@ -213,6 +213,8 @@ pub const WAL_ENTRY_BLOCK: Tag = 1;
 pub const WAL_ENTRY_PAYLOAD: Tag = 2;
 pub const WAL_ENTRY_OWN_BLOCK: Tag = 3;
 pub const WAL_ENTRY_STATE: Tag = 4;
+// Commit entry includes both commit interpreter incremental state and committed transactions aggregator
+// todo - They could be separated for better performance, but this will require catching up for committed transactions aggregator state
 pub const WAL_ENTRY_COMMIT: Tag = 5;
 
 impl BlockWriter for (&mut WalWriter, &BlockStore) {

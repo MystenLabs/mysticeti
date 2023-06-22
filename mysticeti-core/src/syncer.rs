@@ -7,6 +7,7 @@ use crate::data::Data;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use minibytes::Bytes;
 use std::collections::HashSet;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -32,7 +33,9 @@ pub trait CommitObserver: Send + Sync {
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommitData>;
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>);
+    fn aggregator_state(&self) -> Bytes;
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
 }
 
 #[allow(dead_code)]
@@ -106,7 +109,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             let commit_data = self
                 .commit_observer
                 .handle_commit(self.core.block_store(), newly_committed);
-            self.core.write_commits(&commit_data);
+            self.core
+                .write_commits(&commit_data, &self.commit_observer.aggregator_state());
         }
     }
 

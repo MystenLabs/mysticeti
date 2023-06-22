@@ -234,8 +234,22 @@ impl CommitObserver for TestCommitHandler {
         commit_data
     }
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>) {
+    fn aggregator_state(&self) -> Bytes {
+        bincode::serialize(&self.transaction_votes)
+            .expect("Serialization failed")
+            .into()
+    }
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
         assert!(self.commit_interpreter.committed.is_empty());
+        assert!(self.transaction_votes.is_empty());
+        if let Some(state) = state {
+            let transaction_votes =
+                bincode::deserialize(&state).expect("Failed to deserialize committed aggregator");
+            self.transaction_votes = transaction_votes;
+        } else {
+            assert!(committed.is_empty());
+        }
         self.commit_interpreter.committed = committed;
     }
 }

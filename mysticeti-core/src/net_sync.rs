@@ -38,7 +38,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
         // todo - ugly, probably need to merge syncer and core
-        commit_observer.recover_committed(core.take_recovered_committed_blocks());
+        let (committed, state) = core.take_recovered_committed_blocks();
+        commit_observer.recover_committed(committed, state);
         let mut syncer = Syncer::new(
             core,
             commit_period,

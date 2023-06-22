@@ -11,6 +11,7 @@ use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, S
 use crate::wal::{walf, WalPosition, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
 use std::sync::Arc;
@@ -33,7 +34,7 @@ pub struct Core<H: BlockHandler> {
     metrics: Arc<Metrics>,
     options: CoreOptions,
     // todo - ugly, probably need to merge syncer and core
-    recovered_committed_blocks: Option<HashSet<BlockReference>>,
+    recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
 }
 
 pub struct CoreOptions {
@@ -65,6 +66,7 @@ impl<H: BlockHandler> Core<H> {
             unprocessed_blocks,
             last_committed_leader,
             committed_blocks,
+            committed_state,
         } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
@@ -119,7 +121,7 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
-            recovered_committed_blocks: Some(committed_blocks),
+            recovered_committed_blocks: Some((committed_blocks, committed_state)),
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -289,14 +291,14 @@ impl<H: BlockHandler> Core<H> {
             .expect("Write to wal has failed");
     }
 
-    pub fn write_commits(&mut self, commits: &[CommitData]) {
-        let commits = bincode::serialize(&commits).expect("Commits serialization failed");
+    pub fn write_commits(&mut self, commits: &[CommitData], state: &Bytes) {
+        let commits = bincode::serialize(&(commits, state)).expect("Commits serialization failed");
         self.wal_writer
             .write(WAL_ENTRY_COMMIT, &commits)
             .expect("Write to wal has failed");
     }
 
-    pub fn take_recovered_committed_blocks(&mut self) -> HashSet<BlockReference> {
+    pub fn take_recovered_committed_blocks(&mut self) -> (HashSet<BlockReference>, Option<Bytes>) {
         self.recovered_committed_blocks
             .take()
             .expect("take_recovered_committed_blocks called twice")

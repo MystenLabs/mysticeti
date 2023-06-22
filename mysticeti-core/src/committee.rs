@@ -145,6 +145,10 @@ pub struct StakeAggregator<TH> {
 #[derive(Serialize, Deserialize)]
 pub struct TransactionAggregator<K: TransactionAggregatorKey, TH, H = HashSet<K>> {
     pending: HashMap<K, StakeAggregator<TH>>,
+    // todo - need to figure out something with this
+    // Currently we skip serialization for test handler,
+    // but it also means some invariants wrt unknown_transaction might be potentially broken in some tests
+    #[serde(skip)]
     handler: H,
 }
 
@@ -245,6 +249,10 @@ impl<
             self.handler.unknown_transaction(k, vote);
             Err(())
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
     }
 }
 

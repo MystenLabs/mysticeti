@@ -83,7 +83,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         let genesis = [
             "cargo run --release --bin mysticeti --",
             "benchmark-genesis",
-            &format!("--ips {ips} --working_directory {working_directory}"),
+            &format!("--ips {ips} --working-directory {working_directory}"),
         ]
         .join(" ");
 

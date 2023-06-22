@@ -32,6 +32,7 @@ pub mod validator;
 mod wal;
 
 mod block_store;
+mod log;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;
 mod stat;

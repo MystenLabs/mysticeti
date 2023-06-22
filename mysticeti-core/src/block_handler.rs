@@ -4,7 +4,9 @@
 use crate::block_store::{BlockStore, CommitData};
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
+use crate::config::StorageDir;
 use crate::data::Data;
+use crate::log::CertifiedTransactionLog;
 use crate::runtime::TimeInstant;
 use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
@@ -26,7 +28,8 @@ pub trait BlockHandler: Send + Sync {
 }
 
 pub struct RealBlockHandler {
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    transaction_votes:
+        TransactionAggregator<TransactionId, QuorumThreshold, CertifiedTransactionLog>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
@@ -35,10 +38,12 @@ pub struct RealBlockHandler {
 }
 
 impl RealBlockHandler {
-    pub fn new(committee: Arc<Committee>, authority: AuthorityIndex) -> Self {
+    pub fn new(committee: Arc<Committee>, authority: AuthorityIndex, config: &StorageDir) -> Self {
         let rng = StdRng::seed_from_u64(authority);
+        let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
+            .expect("Failed to open certified transaction log for write");
         Self {
-            transaction_votes: Default::default(),
+            transaction_votes: TransactionAggregator::with_handler(transaction_log),
             transaction_time: Default::default(),
             committee,
             authority,
@@ -72,16 +77,11 @@ impl BlockHandler for RealBlockHandler {
     }
 
     fn state(&self) -> Bytes {
-        let state = &self.transaction_votes;
-        let bytes =
-            bincode::serialize(&state).expect("Failed to serialize transaction aggregator state");
-        bytes.into()
+        self.transaction_votes.state()
     }
 
     fn recover_state(&mut self, state: &Bytes) {
-        let transaction_votes = bincode::deserialize(state)
-            .expect("Failed to deserialize transaction aggregator state");
-        self.transaction_votes = transaction_votes;
+        self.transaction_votes.with_state(state);
     }
 }
 
@@ -170,7 +170,7 @@ impl BlockHandler for TestBlockHandler {
     }
 
     fn state(&self) -> Bytes {
-        let state = (&self.transaction_votes, &self.last_transaction);
+        let state = (&self.transaction_votes.state(), &self.last_transaction);
         let bytes =
             bincode::serialize(&state).expect("Failed to serialize transaction aggregator state");
         bytes.into()
@@ -179,7 +179,7 @@ impl BlockHandler for TestBlockHandler {
     fn recover_state(&mut self, state: &Bytes) {
         let (transaction_votes, last_transaction) = bincode::deserialize(state)
             .expect("Failed to deserialize transaction aggregator state");
-        self.transaction_votes = transaction_votes;
+        self.transaction_votes.with_state(&transaction_votes);
         self.last_transaction = last_transaction;
     }
 }
@@ -246,18 +246,13 @@ impl CommitObserver for TestCommitHandler {
     }
 
     fn aggregator_state(&self) -> Bytes {
-        bincode::serialize(&self.transaction_votes)
-            .expect("Serialization failed")
-            .into()
+        self.transaction_votes.state()
     }
 
     fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
         assert!(self.commit_interpreter.committed.is_empty());
-        assert!(self.transaction_votes.is_empty());
         if let Some(state) = state {
-            let transaction_votes =
-                bincode::deserialize(&state).expect("Failed to deserialize committed aggregator");
-            self.transaction_votes = transaction_votes;
+            self.transaction_votes.with_state(&state);
         } else {
             assert!(committed.is_empty());
         }

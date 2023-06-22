@@ -104,23 +104,41 @@ impl Print for Parameters {}
 pub struct PrivateConfig {
     authority_index: AuthorityIndex,
     keypair: KeyPair,
-    storage_path: PathBuf,
+    storage_path: StorageDir,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StorageDir {
+    path: PathBuf,
 }
 
 impl PrivateConfig {
-    pub fn new_for_benchmarks(authority_index: AuthorityIndex) -> Self {
+    pub fn new_for_benchmarks(dir: &Path, authority_index: AuthorityIndex) -> Self {
         // TODO: Once we have a crypto library, generate a keypair from a fixed seed.
         tracing::warn!("Generating a predictable keypair for benchmarking");
+        let path = dir.join(format!("val-{authority_index}"));
+        fs::create_dir_all(&path).expect("Failed to create validator storage directory");
         Self {
             authority_index,
             keypair: 0,
-            storage_path: ["storage", &authority_index.to_string()].iter().collect(),
+            storage_path: StorageDir { path },
         }
     }
 
     pub fn default_filename(authority: AuthorityIndex) -> PathBuf {
         ["private", &format!("{authority}.yaml")].iter().collect()
     }
+
+    pub fn storage(&self) -> &StorageDir {
+        &self.storage_path
+    }
 }
 
 impl Print for PrivateConfig {}
+
+impl StorageDir {
+    pub fn certified_transactions_log(&self) -> PathBuf {
+        self.path.join("certified.txt")
+    }
+}

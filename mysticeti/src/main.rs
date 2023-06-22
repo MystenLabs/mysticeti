@@ -130,7 +130,7 @@ fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()>
             "Failed to create directory '{}'",
             parent_directory.display()
         ))?;
-        PrivateConfig::new_for_benchmarks(i as AuthorityIndex)
+        PrivateConfig::new_for_benchmarks(parent_directory, i as AuthorityIndex)
             .print(&path)
             .wrap_err("Failed to print private config file")?;
         tracing::info!("Generated private config file: {}", path.display());
@@ -190,7 +190,9 @@ async fn testbed(committee_size: usize) -> Result<()> {
     let mut handles = Vec::new();
     for i in 0..committee_size {
         let authority = i as AuthorityIndex;
-        let private = PrivateConfig::new_for_benchmarks(authority);
+        // todo - i am not sure if "" (current dir) is the best path here?
+        let dir = PathBuf::new();
+        let private = PrivateConfig::new_for_benchmarks(&dir, authority);
 
         let validator =
             Validator::start(authority, committee.clone(), &parameters, private).await?;

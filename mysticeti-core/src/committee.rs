@@ -5,6 +5,7 @@ use crate::types::{
     AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionId, Vote,
 };
 use crate::{config::Print, data::Data};
+use minibytes::Bytes;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -142,18 +143,22 @@ pub struct StakeAggregator<TH> {
 }
 
 /// Tracks votes for pending transactions and outputs certified transactions to a handler
-#[derive(Serialize, Deserialize)]
 pub struct TransactionAggregator<K: TransactionAggregatorKey, TH, H = HashSet<K>> {
     pending: HashMap<K, StakeAggregator<TH>>,
-    // todo - need to figure out something with this
+    // todo - need to figure out serialization story with this
     // Currently we skip serialization for test handler,
     // but it also means some invariants wrt unknown_transaction might be potentially broken in some tests
-    #[serde(skip)]
     handler: H,
 }
 
-pub trait TransactionAggregatorKey: Hash + Eq + Copy + Display + Serialize {}
-impl<T> TransactionAggregatorKey for T where T: Hash + Eq + Copy + Display + Serialize {}
+pub trait TransactionAggregatorKey:
+    Hash + Eq + Copy + Display + Serialize + for<'a> Deserialize<'a>
+{
+}
+impl<T> TransactionAggregatorKey for T where
+    T: Hash + Eq + Copy + Display + Serialize + for<'a> Deserialize<'a>
+{
+}
 
 pub trait ProcessedTransactionHandler<K> {
     fn transaction_processed(&mut self, k: K);
@@ -214,6 +219,28 @@ impl<
             handler: Default::default(),
         }
     }
+}
+
+impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K>>
+    TransactionAggregator<K, TH, H>
+{
+    pub fn with_handler(handler: H) -> Self {
+        Self {
+            pending: Default::default(),
+            handler,
+        }
+    }
+
+    pub fn state(&self) -> Bytes {
+        bincode::serialize(&self.pending)
+            .expect("Serialization failed")
+            .into()
+    }
+
+    pub fn with_state(&mut self, state: &Bytes) {
+        assert!(self.pending.is_empty());
+        self.pending = bincode::deserialize(state).expect("Deserialization failed");
+    }
 
     /// Returns Ok(()) if this is first time we see transaction and Err otherwise
     /// When Err is returned transaction is ignored
@@ -267,7 +294,9 @@ pub enum TransactionVoteResult {
     VoteAccepted,
 }
 
-impl<TH: CommitteeThreshold> TransactionAggregator<TransactionId, TH> {
+impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionId>>
+    TransactionAggregator<TransactionId, TH, H>
+{
     pub fn process_block(
         &mut self,
         block: &Data<StatementBlock>,

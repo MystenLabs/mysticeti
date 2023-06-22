@@ -33,7 +33,7 @@ impl Validator {
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         parameters: &Parameters,
-        _private_config: PrivateConfig,
+        private_config: PrivateConfig,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -56,7 +56,8 @@ impl Validator {
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Boot the validator node.
-        let block_handler = RealBlockHandler::new(committee.clone(), authority);
+        let block_handler =
+            RealBlockHandler::new(committee.clone(), authority, private_config.storage());
         let commit_handler =
             TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
         let core = Core::open(
@@ -109,6 +110,7 @@ mod test {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::Duration,
     };
+    use tempdir::TempDir;
 
     use tokio::time;
 
@@ -152,9 +154,10 @@ mod test {
         let parameters = Parameters::new_for_benchmarks(ips);
 
         let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_smoke_test").unwrap();
         for i in 0..committee_size {
             let authority = i as AuthorityIndex;
-            let private = PrivateConfig::new_for_benchmarks(authority);
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
             let validator = Validator::start(authority, committee.clone(), &parameters, private)
                 .await

@@ -35,3 +35,4 @@ mod block_store;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;
 mod stat;
+mod state;

@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::core::MetaStatement;
 use crate::data::Data;
+use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use minibytes::Bytes;
 use parking_lot::RwLock;
 use std::cmp::max;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::IoSlice;
 use std::sync::Arc;
 use std::time::Instant;
@@ -38,17 +38,9 @@ enum IndexEntry {
 }
 
 impl BlockStore {
-    pub fn open(
-        block_wal_reader: Arc<WalReader>,
-        wal_writer: &WalWriter,
-    ) -> (
-        Self,
-        Option<OwnBlockData>,
-        VecDeque<(WalPosition, MetaStatement)>,
-    ) {
+    pub fn open(block_wal_reader: Arc<WalReader>, wal_writer: &WalWriter) -> RecoveredState {
         let mut inner = BlockStoreInner::default();
-        let mut pending = BTreeMap::new();
-        let mut last_own_block: Option<OwnBlockData> = None;
+        let mut builder = RecoveredStateBuilder::new();
         let mut replay_started: Option<Instant> = None;
         for (pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
             if replay_started.is_none() {
@@ -59,19 +51,17 @@ impl BlockStore {
                 WAL_ENTRY_BLOCK => {
                     let block = Data::<StatementBlock>::from_bytes(data)
                         .expect("Failed to deserialize data from wal");
-                    pending.insert(pos, RawMetaStatement::Include(*block.reference()));
+                    builder.block(pos, &block);
                     block
                 }
                 WAL_ENTRY_PAYLOAD => {
-                    pending.insert(pos, RawMetaStatement::Payload(data));
+                    builder.payload(pos, data);
                     continue;
                 }
                 WAL_ENTRY_OWN_BLOCK => {
                     let (own_block_data, own_block) = OwnBlockData::from_bytes(data)
                         .expect("Failed to deserialized own block data from wal");
-                    // Edge case of WalPosition::MAX is automatically handled here, empty map is returned
-                    pending = pending.split_off(&own_block_data.next_entry);
-                    last_own_block = Some(own_block_data);
+                    builder.own_block(own_block_data);
                     own_block
                 }
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
@@ -87,11 +77,7 @@ impl BlockStore {
             block_wal_reader,
             inner: Arc::new(RwLock::new(inner)),
         };
-        let pending_statements = pending
-            .into_iter()
-            .map(|(pos, raw)| (pos, raw.into_meta_statement()))
-            .collect();
-        (this, last_own_block, pending_statements)
+        builder.build(this)
     }
 
     pub fn insert_block(&self, block: Data<StatementBlock>, _position: WalPosition) {
@@ -239,11 +225,6 @@ pub struct OwnBlockData {
 
 const OWN_BLOCK_HEADER_SIZE: usize = 8;
 
-enum RawMetaStatement {
-    Include(BlockReference),
-    Payload(Bytes),
-}
-
 impl OwnBlockData {
     // A bit of custom serialization to minimize data copy, relies on own_block_serialization_test
     pub fn from_bytes(bytes: Bytes) -> bincode::Result<(OwnBlockData, Data<StatementBlock>)> {
@@ -265,17 +246,6 @@ impl OwnBlockData {
         writer
             .writev(WAL_ENTRY_OWN_BLOCK, &[header, block])
             .expect("Writing to wal failed")
-    }
-}
-
-impl RawMetaStatement {
-    fn into_meta_statement(self) -> MetaStatement {
-        match self {
-            RawMetaStatement::Include(include) => MetaStatement::Include(include),
-            RawMetaStatement::Payload(payload) => MetaStatement::Payload(
-                bincode::deserialize(&payload).expect("Failed to deserialize payload"),
-            ),
-        }
     }
 }
 

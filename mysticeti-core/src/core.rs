@@ -2,6 +2,7 @@ use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOA
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
+use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalWriter};
@@ -50,8 +51,12 @@ impl<H: BlockHandler> Core<H> {
         options: CoreOptions,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let (block_store, last_own_block, mut pending) =
-            BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let state = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let RecoveredState {
+            block_store,
+            last_own_block,
+            mut pending,
+        } = state;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {

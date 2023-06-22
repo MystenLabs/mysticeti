@@ -1622,6 +1622,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mysticeti"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "eyre",
+ "futures",
+ "mysticeti-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mysticeti-core"
 version = "0.1.0"
 dependencies = [
@@ -1647,19 +1660,6 @@ dependencies = [
  "tracing-core",
  "tracing-subscriber",
  "tracing-test",
-]
-
-[[package]]
-name = "mysticeti-main"
-version = "0.1.0"
-dependencies = [
- "clap",
- "color-eyre",
- "eyre",
- "futures",
- "mysticeti-core",
- "tokio",
- "tracing",
 ]
 
 [[package]]

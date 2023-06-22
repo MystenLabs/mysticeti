@@ -233,6 +233,9 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",
             "source $HOME/.cargo/env",
             "rustup default stable",
+            // Required to compile the orchestrator.
+            // TODO: remove this dependency.
+            "sudo apt-get -y install libssl-dev",
             // Create the working directory.
             &format!("mkdir -p {working_dir}"),
             // Clone the repo.

@@ -55,7 +55,7 @@ enum Operation {
 
         /// Path to the file holding the private validator configurations (including keys).
         #[clap(long, value_name = "FILE")]
-        private_configs_path: String,
+        private_config_path: String,
     },
     /// Deploy a local testbed.
     Testbed {
@@ -80,13 +80,13 @@ async fn main() -> Result<()> {
             authority,
             committee_path,
             parameters_path,
-            private_configs_path,
+            private_config_path,
         } => {
             run(
                 authority,
                 committee_path,
                 parameters_path,
-                private_configs_path,
+                private_config_path,
             )
             .await?
         }
@@ -144,7 +144,7 @@ async fn run(
     authority: AuthorityIndex,
     committee_path: String,
     parameters_path: String,
-    private_configs_path: String,
+    private_config_path: String,
 ) -> Result<()> {
     tracing::info!("Starting validator {authority}");
 
@@ -153,8 +153,8 @@ async fn run(
     let parameters = Parameters::load(&parameters_path).wrap_err(format!(
         "Failed to load parameters file '{parameters_path}'"
     ))?;
-    let private = PrivateConfig::load(&private_configs_path).wrap_err(format!(
-        "Failed to load private configuration file '{private_configs_path}'"
+    let private = PrivateConfig::load(&private_config_path).wrap_err(format!(
+        "Failed to load private configuration file '{private_config_path}'"
     ))?;
 
     let committee = Arc::new(committee);

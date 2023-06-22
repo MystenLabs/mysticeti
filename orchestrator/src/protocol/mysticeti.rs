@@ -120,6 +120,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
 
                 let run = [
                     "cargo run --release --bin mysticeti --",
+                    "run",
                     &format!(
                         "--authority {authority} --committee-path {}",
                         committee_path.display()

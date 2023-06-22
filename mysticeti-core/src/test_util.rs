@@ -35,25 +35,20 @@ pub fn committee(n: usize) -> Arc<Committee> {
 }
 
 pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
-    committee_and_cores_persisted(n, None, None)
+    committee_and_cores_persisted(n, None)
 }
 
 pub fn committee_and_cores_persisted(
     n: usize,
     path: Option<&Path>,
-    block_handlers: Option<Vec<TestBlockHandler>>,
 ) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
     let committee = committee(n);
-    let mut block_handler_iter = block_handlers.map(Vec::into_iter);
     let cores: Vec<_> = committee
         .authorities()
         .map(|authority| {
             let last_transaction = first_transaction_for_authority(authority);
-            let block_handler = if let Some(block_handler_iter) = block_handler_iter.as_mut() {
-                block_handler_iter.next().unwrap()
-            } else {
-                TestBlockHandler::new(last_transaction, committee.clone(), authority)
-            };
+            let block_handler =
+                TestBlockHandler::new(last_transaction, committee.clone(), authority);
             let wal_file = if let Some(path) = path {
                 let wal_path = path.join(format!("{:03}.wal", authority));
                 open_file_for_wal(&wal_path).unwrap()

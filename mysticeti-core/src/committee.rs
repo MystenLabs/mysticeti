@@ -117,7 +117,9 @@ pub trait CommitteeThreshold {
     fn is_threshold(committee: &Committee, amount: Stake) -> bool;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct QuorumThreshold;
+#[derive(Serialize, Deserialize)]
 pub struct ValidityThreshold;
 
 impl CommitteeThreshold for QuorumThreshold {
@@ -132,6 +134,7 @@ impl CommitteeThreshold for ValidityThreshold {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct StakeAggregator<TH> {
     votes: AuthoritySet,
     stake: Stake,
@@ -139,10 +142,14 @@ pub struct StakeAggregator<TH> {
 }
 
 /// Tracks votes for pending transactions and outputs certified transactions to a handler
-pub struct TransactionAggregator<K, TH, H = HashSet<K>> {
+#[derive(Serialize, Deserialize)]
+pub struct TransactionAggregator<K: TransactionAggregatorKey, TH, H = HashSet<K>> {
     pending: HashMap<K, StakeAggregator<TH>>,
     handler: H,
 }
+
+pub trait TransactionAggregatorKey: Hash + Eq + Copy + Display + Serialize {}
+impl<T> TransactionAggregatorKey for T where T: Hash + Eq + Copy + Display + Serialize {}
 
 pub trait ProcessedTransactionHandler<K> {
     fn transaction_processed(&mut self, k: K);
@@ -150,7 +157,7 @@ pub trait ProcessedTransactionHandler<K> {
     fn unknown_transaction(&mut self, _k: K, _from: AuthorityIndex) {}
 }
 
-impl<K: Hash + Eq + Copy + Display> ProcessedTransactionHandler<K> for HashSet<K> {
+impl<K: TransactionAggregatorKey> ProcessedTransactionHandler<K> for HashSet<K> {
     fn transaction_processed(&mut self, k: K) {
         self.insert(k);
     }
@@ -191,8 +198,11 @@ impl<TH: CommitteeThreshold> StakeAggregator<TH> {
     }
 }
 
-impl<K: Hash + Eq + Copy, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K> + Default>
-    TransactionAggregator<K, TH, H>
+impl<
+        K: TransactionAggregatorKey,
+        TH: CommitteeThreshold,
+        H: ProcessedTransactionHandler<K> + Default,
+    > TransactionAggregator<K, TH, H>
 {
     pub fn new() -> Self {
         Self {
@@ -238,7 +248,7 @@ impl<K: Hash + Eq + Copy, TH: CommitteeThreshold, H: ProcessedTransactionHandler
     }
 }
 
-impl<K: Hash + Eq + Copy, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
+impl<K: TransactionAggregatorKey, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
     pub fn is_processed(&self, k: &K) -> bool {
         self.handler.contains(k)
     }
@@ -288,8 +298,11 @@ impl<TH: CommitteeThreshold> Default for StakeAggregator<TH> {
     }
 }
 
-impl<K: Hash + Eq + Copy, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K> + Default>
-    Default for TransactionAggregator<K, TH, H>
+impl<
+        K: TransactionAggregatorKey,
+        TH: CommitteeThreshold,
+        H: ProcessedTransactionHandler<K> + Default,
+    > Default for TransactionAggregator<K, TH, H>
 {
     fn default() -> Self {
         Self::new()

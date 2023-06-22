@@ -64,6 +64,10 @@ impl BlockStore {
                     builder.own_block(own_block_data);
                     own_block
                 }
+                WAL_ENTRY_STATE => {
+                    builder.state(data);
+                    continue;
+                }
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
             };
             inner.add_to_index(block);
@@ -200,6 +204,7 @@ impl BlockStoreInner {
 pub const WAL_ENTRY_BLOCK: Tag = 1;
 pub const WAL_ENTRY_PAYLOAD: Tag = 2;
 pub const WAL_ENTRY_OWN_BLOCK: Tag = 3;
+pub const WAL_ENTRY_STATE: Tag = 4;
 
 impl BlockWriter for (&mut WalWriter, &BlockStore) {
     fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition {

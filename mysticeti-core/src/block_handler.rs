@@ -9,6 +9,7 @@ use crate::runtime::TimeInstant;
 use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
+use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::collections::HashMap;
@@ -17,6 +18,12 @@ use std::time::Duration;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
+
+    fn state(&self) -> Bytes {
+        Bytes::new()
+    }
+
+    fn recover_state(&mut self, _state: &Bytes) {}
 }
 
 pub struct RealBlockHandler {
@@ -135,6 +142,20 @@ impl BlockHandler for TestBlockHandler {
             }
         }
         response
+    }
+
+    fn state(&self) -> Bytes {
+        let state = (&self.transaction_votes, &self.last_transaction);
+        let bytes =
+            bincode::serialize(&state).expect("Failed to serialize transaction aggregator state");
+        bytes.into()
+    }
+
+    fn recover_state(&mut self, state: &Bytes) {
+        let (transaction_votes, last_transaction) = bincode::deserialize(state)
+            .expect("Failed to deserialize transaction aggregator state");
+        self.transaction_votes = transaction_votes;
+        self.last_transaction = last_transaction;
     }
 }
 

@@ -10,12 +10,14 @@ pub struct RecoveredState {
     pub block_store: BlockStore,
     pub last_own_block: Option<OwnBlockData>,
     pub pending: VecDeque<(WalPosition, MetaStatement)>,
+    pub state: Option<Bytes>,
 }
 
 #[derive(Default)]
 pub struct RecoveredStateBuilder {
     pending: BTreeMap<WalPosition, RawMetaStatement>,
     last_own_block: Option<OwnBlockData>,
+    state: Option<Bytes>,
 }
 
 impl RecoveredStateBuilder {
@@ -38,6 +40,10 @@ impl RecoveredStateBuilder {
         self.last_own_block = Some(own_block_data);
     }
 
+    pub fn state(&mut self, state: Bytes) {
+        self.state = Some(state);
+    }
+
     pub fn build(self, block_store: BlockStore) -> RecoveredState {
         let pending = self
             .pending
@@ -48,6 +54,7 @@ impl RecoveredStateBuilder {
             pending,
             last_own_block: self.last_own_block,
             block_store,
+            state: self.state,
         }
     }
 }

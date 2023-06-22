@@ -1,4 +1,6 @@
-use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOAD};
+use crate::block_store::{
+    BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOAD, WAL_ENTRY_STATE,
+};
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
@@ -43,7 +45,7 @@ pub enum MetaStatement {
 
 impl<H: BlockHandler> Core<H> {
     pub fn open(
-        block_handler: H,
+        mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         metrics: Arc<Metrics>,
@@ -51,12 +53,13 @@ impl<H: BlockHandler> Core<H> {
         options: CoreOptions,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let state = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let recovered = BlockStore::open(Arc::new(wal_reader), &wal_writer);
         let RecoveredState {
             block_store,
             last_own_block,
             mut pending,
-        } = state;
+            state,
+        } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {
@@ -89,6 +92,10 @@ impl<H: BlockHandler> Core<H> {
         };
         let block_manager = BlockManager::new(block_store.clone());
         let last_commit_round = 0;
+
+        if let Some(state) = state {
+            block_handler.recover_state(&state);
+        }
 
         Self {
             block_manager,
@@ -254,6 +261,12 @@ impl<H: BlockHandler> Core<H> {
                 false
             }
         }
+    }
+
+    pub fn write_state(&mut self) {
+        self.wal_writer
+            .write(WAL_ENTRY_STATE, &self.block_handler().state())
+            .expect("Write to wal has failed");
     }
 
     pub fn block_store(&self) -> &BlockStore {
@@ -441,7 +454,7 @@ mod test {
     #[test]
     fn test_core_recovery() {
         let tmp = tempdir::TempDir::new("test_core_recovery").unwrap();
-        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()), None);
+        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -456,11 +469,10 @@ mod test {
             blocks.push(block.clone());
         }
         assert_eq!(proposed_transactions.len(), 4);
-        // todo - persistence for block handler
-        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+        cores.iter_mut().for_each(Core::write_state);
+        drop(cores);
 
-        let (_committee, mut cores) =
-            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let more_blocks = blocks.split_off(2);
 
@@ -479,11 +491,11 @@ mod test {
             blocks_r2.push(block.clone());
         }
 
-        // todo - persistence for block handler
-        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+        cores.iter_mut().for_each(Core::write_state);
+        // todo - test without write
+        drop(cores);
 
-        let (_committee, mut cores) =
-            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         for core in &mut cores {
             core.add_blocks(blocks_r2.clone());

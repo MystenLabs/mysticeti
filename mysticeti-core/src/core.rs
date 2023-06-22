@@ -59,6 +59,7 @@ impl<H: BlockHandler> Core<H> {
             last_own_block,
             mut pending,
             state,
+            unprocessed_blocks,
         } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
@@ -97,7 +98,7 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
-        Self {
+        let mut this = Self {
             block_manager,
             pending,
             last_own_block,
@@ -110,7 +111,17 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
+        };
+
+        if !unprocessed_blocks.is_empty() {
+            println!(
+                "Replaying blocks {:?} for transaction aggregator",
+                unprocessed_blocks
+            );
+            this.run_block_handler(&unprocessed_blocks);
         }
+
+        this
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -491,9 +502,11 @@ mod test {
             blocks_r2.push(block.clone());
         }
 
-        cores.iter_mut().for_each(Core::write_state);
-        // todo - test without write
+        // Note that we do not call Core::write_state here unlike before.
+        // This should also be handled correctly by re-processing unprocessed_blocks
         drop(cores);
+
+        eprintln!("===");
 
         let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()));
 

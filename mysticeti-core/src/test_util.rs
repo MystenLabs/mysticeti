@@ -55,6 +55,7 @@ pub fn committee_and_cores_persisted(
             } else {
                 tempfile::tempfile().unwrap()
             };
+            println!("Opening core {authority}");
             Core::open(
                 block_handler,
                 authority,

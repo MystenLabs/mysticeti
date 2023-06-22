@@ -12,6 +12,7 @@ use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -120,6 +121,18 @@ impl TestBlockHandler {
 
 impl BlockHandler for TestBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+        // todo - this is ugly, but right now we need a way to recover self.last_transaction
+        for block in blocks {
+            if block.author() == self.authority {
+                // We can see our own block in handle_blocks - this can happen during core recovery
+                // Todo - we might also need to process pending Payload statements as well
+                for statement in block.statements() {
+                    if let BaseStatement::Share(id, _) = statement {
+                        self.last_transaction = max(self.last_transaction, *id);
+                    }
+                }
+            }
+        }
         let mut response = vec![];
         self.last_transaction += 1;
         response.push(BaseStatement::Share(
@@ -131,6 +144,7 @@ impl BlockHandler for TestBlockHandler {
         self.transaction_votes
             .register(self.last_transaction, self.authority, &self.committee);
         for block in blocks {
+            println!("Processing {block:?}");
             let processed =
                 self.transaction_votes
                     .process_block(block, Some(&mut response), &self.committee);

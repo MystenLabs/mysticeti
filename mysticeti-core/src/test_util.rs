@@ -97,6 +97,7 @@ pub fn committee_and_syncers(
                 let commit_handler = TestCommitHandler::new(
                     committee.clone(),
                     core.block_handler().transaction_time.clone(),
+                    test_metrics(),
                 );
                 Syncer::new(core, 3, Default::default(), commit_handler, test_metrics())
             })
@@ -131,6 +132,7 @@ pub fn simulated_network_syncers(
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
+            test_metrics(),
         );
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
@@ -148,6 +150,7 @@ pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, Te
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
+            test_metrics(),
         );
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         network_syncers.push(network_syncer);

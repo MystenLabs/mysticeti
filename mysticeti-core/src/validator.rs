@@ -58,8 +58,11 @@ impl Validator {
         // Boot the validator node.
         let block_handler =
             RealBlockHandler::new(committee.clone(), authority, private_config.storage());
-        let commit_handler =
-            TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
+        let commit_handler = TestCommitHandler::new(
+            committee.clone(),
+            block_handler.transaction_time.clone(),
+            metrics.clone(),
+        );
         let core = Core::open(
             block_handler,
             authority,

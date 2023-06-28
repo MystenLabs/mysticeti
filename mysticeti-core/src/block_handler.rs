@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::{BlockStore, CommitData};
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::config::StorageDir;
@@ -11,6 +10,10 @@ use crate::runtime::TimeInstant;
 use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
+use crate::{
+    block_store::{BlockStore, CommitData},
+    metrics::Metrics,
+};
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -96,19 +99,6 @@ pub struct TestBlockHandler {
     pub transaction_certified_latency: PreciseHistogram<Duration>,
 }
 
-#[allow(dead_code)]
-pub struct TestCommitHandler {
-    commit_interpreter: CommitInterpreter,
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
-    committee: Arc<Committee>,
-    committed_leaders: Vec<BlockReference>,
-    committed_dags: Vec<CommittedSubDag>,
-
-    transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
-    pub certificate_committed_latency: PreciseHistogram<Duration>,
-    pub transaction_committed_latency: PreciseHistogram<Duration>,
-}
-
 impl TestBlockHandler {
     pub fn new(
         last_transaction: u64,
@@ -184,10 +174,27 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
+#[allow(dead_code)]
+pub struct TestCommitHandler {
+    commit_interpreter: CommitInterpreter,
+    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    committee: Arc<Committee>,
+    committed_leaders: Vec<BlockReference>,
+    committed_dags: Vec<CommittedSubDag>,
+
+    start_time: TimeInstant,
+    transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    pub certificate_committed_latency: PreciseHistogram<Duration>,
+    pub transaction_committed_latency: PreciseHistogram<Duration>,
+
+    metrics: Arc<Metrics>,
+}
+
 impl TestCommitHandler {
     pub fn new(
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             commit_interpreter: CommitInterpreter::new(),
@@ -196,14 +203,37 @@ impl TestCommitHandler {
             committed_leaders: vec![],
             committed_dags: vec![],
 
+            start_time: TimeInstant::now(),
             transaction_time,
             certificate_committed_latency: Default::default(),
             transaction_committed_latency: Default::default(),
+
+            metrics,
         }
     }
 
     pub fn committed_leaders(&self) -> &Vec<BlockReference> {
         &self.committed_leaders
+    }
+
+    /// Note: these metrics are used to compute performance during benchmarks.
+    fn update_metrics(&self, timestamp: &Duration) {
+        let time_from_start = self.start_time.elapsed();
+        let benchmark_duration = self.metrics.benchmark_duration.get();
+        if let Some(delta) = time_from_start.as_secs().checked_sub(benchmark_duration) {
+            self.metrics.benchmark_duration.inc_by(delta);
+        }
+
+        self.metrics
+            .latency_s
+            .with_label_values(&["default"])
+            .observe(timestamp.as_secs_f64());
+
+        let square_latency = timestamp.as_secs_f64().powf(2.0);
+        self.metrics
+            .latency_squared_s
+            .with_label_values(&["default"])
+            .inc_by(square_latency);
     }
 }
 
@@ -233,8 +263,9 @@ impl CommitObserver for TestCommitHandler {
                 for statement in block.statements() {
                     if let BaseStatement::Share(id, _) = statement {
                         if let Some(instant) = transaction_time.get(id) {
-                            self.transaction_committed_latency
-                                .observe(instant.elapsed());
+                            let timestamp = instant.elapsed();
+                            self.update_metrics(&timestamp);
+                            self.transaction_committed_latency.observe(timestamp);
                         }
                     }
                 }

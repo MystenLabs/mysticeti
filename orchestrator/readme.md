@@ -1,6 +1,6 @@
 # Sui Orchestrator
 
-The crate provides facilities to quickly deploy and benchmark the Sui codebase in a geo-distributed environment. It is absolutely not meant to run Sui in production and is no indicator of proper production engineering best practices. Its purpose is to facilitate research projects wishing to benchmarks (variants of) Sui and analyze its performance.
+The crate provides facilities to quickly deploy and benchmark the codebase in a geo-distributed environment. It is not designed as an orchestrator for production deployments and is no indicator of proper production engineering best practices. Its purpose is to facilitate research projects wishing to benchmark (variants of) this codebase and analyze its performance.
 
 Below is a step-by-step guide to run geo-distributed benchmarks on either [Vultr](http://vultr.com) or [Amazon Web Services (AWS)](http://aws.amazon.com).
 
@@ -26,7 +26,7 @@ aws_access_key_id = YOUR_ACCESS_KEY_ID
 aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
 ```
 
-Do not specify any AWS region in that file as the python scripts will allow you to handle multiple regions programmatically.
+Do not specify any AWS region in that file as the scripts need to handle multiple regions programmatically.
 
 ## Step 2. Specify the testbed configuration
 
@@ -84,7 +84,7 @@ Running benchmarks involves installing on the remote machines the version of the
 cargo run --bin orchestrator -- benchmark --committee 10 --loads 200 --duration 180s
 ```
 
-Since a network of 10 validators runs with 10 loads generators (each validator is collocated with a load generator), each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the prometheus metrics exposed by the load generators.
+Since a network of 10 validators runs with 10 load generators (each validator is collocated with a load generator), each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the Prometheus metrics exposed by the load generators.
 
 ## Step 6. Analyzing results
 
@@ -94,4 +94,4 @@ Benchmarks results are automatically saved into the folder specified by the sett
 cargo run --bin orchestrator -- plot
 ```
 
-More elaborated (and nicer) plots can be generated with the python script located in `./assets/plots.rs`.
+More elaborated (and nicer) plots can be generated with the Python script located in `./assets/plots.rs`.

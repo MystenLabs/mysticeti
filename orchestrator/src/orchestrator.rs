@@ -223,8 +223,6 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             "sudo apt-get -y remove needrestart",
             // The following dependencies prevent the error: [error: linker `cc` not found].
             "sudo apt-get -y install build-essential",
-            // Install dependencies to compile 'plotter'.
-            "sudo apt-get -y install libfontconfig libfontconfig1-dev",
             // Install prometheus.
             "sudo apt-get -y install prometheus",
             "sudo chmod 777 -R /var/lib/prometheus/",

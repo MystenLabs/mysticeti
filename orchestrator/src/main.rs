@@ -10,7 +10,6 @@ use eyre::{Context, Result};
 use faults::FaultsType;
 use measurement::MeasurementsCollection;
 use orchestrator::Orchestrator;
-use plot::Plotter;
 use protocol::mysticeti::{MysticetiBenchmarkType, MysticetiProtocol};
 use settings::{CloudProvider, Settings};
 use ssh::SshConnectionManager;
@@ -24,7 +23,6 @@ pub mod faults;
 pub mod logs;
 pub mod measurement;
 pub mod orchestrator;
-pub mod plot;
 pub mod protocol;
 pub mod settings;
 pub mod ssh;
@@ -119,18 +117,6 @@ pub enum Operation {
         /// The load to submit to the system.
         #[clap(subcommand)]
         load_type: Load,
-    },
-
-    /// Print L-graphs from the collected data. These plots are very basic, their purpose
-    /// is to get a quick lock at the data.
-    Plot {
-        /// The limit of the x-axis.
-        #[clap(long, value_name = "FLOAT")]
-        x_lim: Option<f32>,
-
-        /// The limit of the y-axis.
-        #[clap(long, value_name = "FLOAT")]
-        y_lim: Option<f32>,
     },
 
     /// Print a summary of the specified measurements collection.
@@ -345,14 +331,6 @@ async fn run<C: ServerProviderClient>(settings: Settings, client: C, opts: Opts)
             .await
             .wrap_err("Failed to run benchmarks")?;
         }
-
-        // Plot (basic) L-graphs from the collected data.
-        Operation::Plot { x_lim, y_lim } => Plotter::<BenchmarkType>::new(settings)
-            .with_x_lim(x_lim)
-            .with_y_lim(y_lim)
-            .load_measurements()
-            .plot_latency_throughput()
-            .wrap_err("Failed to plot data")?,
 
         // Print a summary of the specified measurements collection.
         Operation::Summarize { path } => {

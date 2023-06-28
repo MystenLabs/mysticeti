@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::{BlockStore, CommitData};
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::config::StorageDir;
@@ -11,15 +10,24 @@ use crate::runtime::TimeInstant;
 use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
+use crate::{
+    block_store::{BlockStore, CommitData},
+    types::Transaction,
+};
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
-use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{cmp::max, collections::VecDeque};
 
 pub trait BlockHandler: Send + Sync {
+    /// Handle transactions that were received from the clients. We do not promise clients that
+    /// their transactions will be included in any block, so it is acceptable to drop transactions
+    /// (e.g., upon crash-recovery or to apply back pressure).
+    fn handle_transactions(&mut self, transactions: Vec<Data<Transaction>>);
+
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
 
     fn state(&self) -> Bytes;
@@ -35,9 +43,13 @@ pub struct RealBlockHandler {
     authority: AuthorityIndex,
     pub transaction_certified_latency: PreciseHistogram<Duration>,
     rng: StdRng,
+    /// Transactions that are pending to be included in a block.
+    pending_transactions: VecDeque<Data<Transaction>>,
 }
 
 impl RealBlockHandler {
+    pub const MAX_PENDING_TRANSACTIONS: usize = 300_000;
+
     pub fn new(committee: Arc<Committee>, authority: AuthorityIndex, config: &StorageDir) -> Self {
         let rng = StdRng::seed_from_u64(authority);
         let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
@@ -49,11 +61,22 @@ impl RealBlockHandler {
             authority,
             transaction_certified_latency: Default::default(),
             rng,
+            pending_transactions: VecDeque::with_capacity(Self::MAX_PENDING_TRANSACTIONS * 2),
         }
     }
 }
 
 impl BlockHandler for RealBlockHandler {
+    fn handle_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+        for transaction in transactions {
+            if self.pending_transactions.len() >= Self::MAX_PENDING_TRANSACTIONS {
+                tracing::warn!("Too many pending transactions, dropping transaction");
+            } else {
+                self.pending_transactions.push_back(transaction);
+            }
+        }
+    }
+
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
         let next_transaction = self.rng.next_u64();
@@ -131,6 +154,10 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
+    fn handle_transactions(&mut self, _transactions: Vec<Data<Transaction>>) {
+        unimplemented!("Transactions are self-generated when creating blocks")
+    }
+
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         // todo - this is ugly, but right now we need a way to recover self.last_transaction
         for block in blocks {

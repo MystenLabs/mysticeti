@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, RoundNumber, StatementBlock, Transaction};
 use crate::{config::Parameters, data::Data};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
@@ -20,6 +20,8 @@ use tokio::sync::mpsc;
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
+    /// Transactions submitted by clients
+    Transaction(Vec<Data<Transaction>>),
 }
 
 pub struct Network {

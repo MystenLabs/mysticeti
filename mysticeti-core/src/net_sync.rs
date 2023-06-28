@@ -129,6 +129,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     tracing::debug!("Received {} from {}", block.reference(), peer);
                     inner.syncer.write().add_blocks(vec![block]);
                 }
+                NetworkMessage::Transaction(tx) => {
+                    inner.syncer.write().add_transactions(tx);
+                }
             }
         }
         if let Some(subscribe_handler) = subscribe_handler.take() {

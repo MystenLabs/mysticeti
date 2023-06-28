@@ -1,12 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::{BlockStore, CommitData};
 use crate::core::Core;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use crate::{
+    block_store::{BlockStore, CommitData},
+    types::Transaction,
+};
 use minibytes::Bytes;
 use std::collections::HashSet;
 use std::{collections::BTreeMap, sync::Arc};
@@ -58,6 +61,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             last_seen_by_authority,
             metrics,
         }
+    }
+
+    pub fn add_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+        self.core.add_transactions(transactions);
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {

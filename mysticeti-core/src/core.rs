@@ -1,7 +1,3 @@
-use crate::block_store::{
-    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
-    WAL_ENTRY_STATE,
-};
 use crate::committee::Committee;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
@@ -11,6 +7,13 @@ use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, S
 use crate::wal::{walf, WalPosition, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use crate::{
+    block_store::{
+        BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+        WAL_ENTRY_STATE,
+    },
+    types::Transaction,
+};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -133,6 +136,10 @@ impl<H: BlockHandler> Core<H> {
         }
 
         this
+    }
+
+    pub fn add_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+        self.block_handler.handle_transactions(transactions);
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above

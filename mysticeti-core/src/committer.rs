@@ -123,10 +123,11 @@ impl Committer {
         (author, round): (AuthorityIndex, RoundNumber),
         from: &Data<StatementBlock>,
     ) -> Option<BlockReference> {
-        if from.round() < round {
+        if from.round() <= round {
             return None;
         }
         for include in from.includes() {
+            // Weak links may point to blocks with lower round numbers than strong links.
             if include.round() < round {
                 continue;
             }

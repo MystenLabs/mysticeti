@@ -88,10 +88,10 @@ impl BlockHandler for RealBlockHandler {
         let mut response = Vec::new();
         let mut transaction_time = self.transaction_time.lock();
         for transaction in &transactions {
-            self.transaction_votes
-                .register(*transaction, self.authority, &self.committee);
             transaction_time.insert(*transaction, TimeInstant::now());
             response.push(BaseStatement::Share(*transaction, *transaction));
+            self.transaction_votes
+                .register(*transaction, self.authority, &self.committee);
         }
 
         for block in blocks {

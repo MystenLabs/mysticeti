@@ -63,7 +63,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         }
     }
 
-    pub fn add_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+    pub fn add_transactions(&mut self, transactions: Vec<Transaction>) {
         self.core.add_transactions(transactions);
     }
 

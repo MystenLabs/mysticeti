@@ -21,7 +21,7 @@ pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
     /// Transactions submitted by clients
-    Transaction(Vec<Data<Transaction>>),
+    Transaction(Vec<Transaction>),
 }
 
 pub struct Network {

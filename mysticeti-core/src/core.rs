@@ -138,7 +138,7 @@ impl<H: BlockHandler> Core<H> {
         this
     }
 
-    pub fn add_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+    pub fn add_transactions(&mut self, transactions: Vec<Transaction>) {
         self.block_handler.handle_transactions(transactions);
     }
 

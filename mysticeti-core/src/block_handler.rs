@@ -16,7 +16,6 @@ use crate::{
 };
 use minibytes::Bytes;
 use parking_lot::Mutex;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +25,7 @@ pub trait BlockHandler: Send + Sync {
     /// Handle transactions that were received from the clients. We do not promise clients that
     /// their transactions will be included in any block, so it is acceptable to drop transactions
     /// (e.g., upon crash-recovery or to apply back pressure).
-    fn handle_transactions(&mut self, transactions: Vec<Data<Transaction>>);
+    fn handle_transactions(&mut self, transactions: Vec<Transaction>);
 
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
 
@@ -42,16 +41,15 @@ pub struct RealBlockHandler {
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     pub transaction_certified_latency: PreciseHistogram<Duration>,
-    rng: StdRng,
     /// Transactions that are pending to be included in a block.
-    pending_transactions: VecDeque<Data<Transaction>>,
+    pending_transactions: VecDeque<Transaction>,
 }
 
 impl RealBlockHandler {
     pub const MAX_PENDING_TRANSACTIONS: usize = 300_000;
+    pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
 
     pub fn new(committee: Arc<Committee>, authority: AuthorityIndex, config: &StorageDir) -> Self {
-        let rng = StdRng::seed_from_u64(authority);
         let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
         Self {
@@ -60,31 +58,42 @@ impl RealBlockHandler {
             committee,
             authority,
             transaction_certified_latency: Default::default(),
-            rng,
             pending_transactions: VecDeque::with_capacity(Self::MAX_PENDING_TRANSACTIONS * 2),
         }
     }
 }
 
 impl BlockHandler for RealBlockHandler {
-    fn handle_transactions(&mut self, transactions: Vec<Data<Transaction>>) {
+    fn handle_transactions(&mut self, transactions: Vec<Transaction>) {
         for transaction in transactions {
             if self.pending_transactions.len() >= Self::MAX_PENDING_TRANSACTIONS {
                 tracing::warn!("Too many pending transactions, dropping transaction");
             } else {
-                self.pending_transactions.push_back(transaction);
+                self.pending_transactions.push_front(transaction);
             }
         }
     }
 
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
-        let mut response = vec![];
-        let next_transaction = self.rng.next_u64();
-        response.push(BaseStatement::Share(next_transaction, next_transaction));
+        let transactions = if self.pending_transactions.is_empty() {
+            VecDeque::new()
+        } else if self.pending_transactions.len() > Self::MAX_TRANSACTIONS_PER_BLOCK {
+            self.pending_transactions
+                .split_off(Self::MAX_TRANSACTIONS_PER_BLOCK)
+        } else {
+            self.pending_transactions
+                .split_off(self.pending_transactions.len() - 1)
+        };
+
+        let mut response = Vec::new();
         let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(next_transaction, TimeInstant::now());
-        self.transaction_votes
-            .register(next_transaction, self.authority, &self.committee);
+        for transaction in &transactions {
+            self.transaction_votes
+                .register(*transaction, self.authority, &self.committee);
+            transaction_time.insert(*transaction, TimeInstant::now());
+            response.push(BaseStatement::Share(*transaction, *transaction));
+        }
+
         for block in blocks {
             let processed =
                 self.transaction_votes
@@ -154,7 +163,7 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
-    fn handle_transactions(&mut self, _transactions: Vec<Data<Transaction>>) {
+    fn handle_transactions(&mut self, _transactions: Vec<Transaction>) {
         unimplemented!("Transactions are self-generated when creating blocks")
     }
 

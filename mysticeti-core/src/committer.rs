@@ -336,7 +336,6 @@ mod test {
     use std::sync::Arc;
 
     use prometheus::default_registry;
-    use rand::RngCore;
 
     use crate::test_util::TestBlockWriter;
     use crate::{
@@ -344,16 +343,10 @@ mod test {
         data::Data,
         metrics::Metrics,
         test_util::{committee, test_metrics},
-        types::{BlockDigest, BlockReference, RoundNumber, StatementBlock},
+        types::{BlockReference, RoundNumber, StatementBlock},
     };
 
     use super::Committer;
-
-    /// Generate a random digest. It is essential that each block has its own digest.
-    fn random_digest() -> BlockDigest {
-        let mut rng = rand::thread_rng();
-        rng.next_u64()
-    }
 
     /// Build a fully interconnected dag up to the specified round. This function starts building the
     /// dag from the specified [`start`] references or from genesis if none are specified.
@@ -388,14 +381,14 @@ mod test {
             let (references, blocks): (Vec<_>, Vec<_>) = committee
                 .authorities()
                 .map(|authority| {
-                    let reference = BlockReference {
+                    let block = Data::new(StatementBlock::new(
                         authority,
                         round,
-                        digest: random_digest(),
-                    };
-                    let block =
-                        Data::new(StatementBlock::new(reference, includes.clone(), vec![], 0));
-                    (reference, block)
+                        includes.clone(),
+                        vec![],
+                        0,
+                    ));
+                    (*block.reference(), block)
                 })
                 .unzip();
             block_writer.add_blocks(blocks);
@@ -555,18 +548,14 @@ mod test {
             .authorities()
             .filter(|&authority| authority != leader_2)
             .map(|authority| {
-                let reference = BlockReference {
-                    authority,
-                    round: round_leader_2,
-                    digest: random_digest(),
-                };
                 let block = Data::new(StatementBlock::new(
-                    reference,
+                    authority,
+                    round_leader_2,
                     references.clone(),
                     vec![],
                     0,
                 ));
-                (reference, block)
+                (*block.reference(), block)
             })
             .unzip();
 

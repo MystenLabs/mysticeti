@@ -4,7 +4,7 @@
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::config::StorageDir;
-use crate::crypto::TransactionHash;
+use crate::crypto::TransactionDigest;
 use crate::data::Data;
 use crate::log::CertifiedTransactionLog;
 use crate::runtime::TimeInstant;
@@ -77,7 +77,7 @@ impl BlockHandler for RealBlockHandler {
             next_transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
         }
         let next_transaction = Transaction::new(next_transaction);
-        let next_transaction_id = TransactionHash::new(&next_transaction);
+        let next_transaction_id = TransactionDigest::new(&next_transaction);
         response.push(BaseStatement::Share(next_transaction_id, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(next_transaction_id, TimeInstant::now());
@@ -137,7 +137,7 @@ impl TestBlockHandler {
         self.transaction_votes.is_processed(&txid)
     }
 
-    pub fn last_transaction(&self) -> TransactionHash {
+    pub fn last_transaction(&self) -> TransactionDigest {
         Self::make_transaction_hash(self.last_transaction)
     }
 
@@ -145,8 +145,8 @@ impl TestBlockHandler {
         Transaction::new(i.to_le_bytes().to_vec())
     }
 
-    pub fn make_transaction_hash(i: u64) -> TransactionHash {
-        TransactionHash::new(&Self::make_transaction(i))
+    pub fn make_transaction_hash(i: u64) -> TransactionDigest {
+        TransactionDigest::new(&Self::make_transaction(i))
     }
 }
 
@@ -167,7 +167,7 @@ impl BlockHandler for TestBlockHandler {
         let mut response = vec![];
         self.last_transaction += 1;
         let next_transaction = Self::make_transaction(self.last_transaction);
-        let next_transaction_id = TransactionHash::new(&next_transaction);
+        let next_transaction_id = TransactionDigest::new(&next_transaction);
         response.push(BaseStatement::Share(next_transaction_id, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(next_transaction_id, TimeInstant::now());

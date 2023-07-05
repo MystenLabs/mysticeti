@@ -211,14 +211,9 @@ impl<H: BlockHandler> Core<H> {
             }
         }
 
-        let block_ref = BlockReference {
-            authority: self.authority,
-            round: clock_round,
-            digest: 0,
-        };
         assert!(!includes.is_empty());
         let time_ns = timestamp_utc().as_nanos();
-        let block = StatementBlock::new(block_ref, includes, statements, time_ns);
+        let block = StatementBlock::new(self.authority, clock_round, includes, statements, time_ns);
         assert_eq!(
             block.includes().get(0).unwrap().authority,
             self.authority,

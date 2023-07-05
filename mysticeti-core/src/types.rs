@@ -8,9 +8,9 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
-pub type TransactionId = crate::crypto::TransactionHash;
+pub type TransactionId = crate::crypto::TransactionDigest;
 pub type RoundNumber = u64;
-pub type BlockDigest = u64;
+pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
 pub type KeyPair = u64;
 pub type PublicKey = u64;
@@ -46,8 +46,8 @@ pub enum BaseStatement {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+// Important. Adding fields here requires updating BlockDigest::new
 pub struct StatementBlock {
-    // todo - derive digest instead of storing
     reference: BlockReference,
 
     //  A list of block references to other blocks that this block includes
@@ -68,24 +68,32 @@ pub struct AuthoritySet(u128); // todo - support more then 128 authorities
 pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
 
+const GENESIS_ROUND: RoundNumber = 0;
+
 impl StatementBlock {
     pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
-        Data::new(Self::new(
-            BlockReference::genesis_test(authority),
-            vec![],
-            vec![],
-            0,
-        ))
+        Data::new(Self::new(authority, GENESIS_ROUND, vec![], vec![], 0))
     }
 
     pub fn new(
-        reference: BlockReference,
+        authority: AuthorityIndex,
+        round: RoundNumber,
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
     ) -> Self {
         Self {
-            reference,
+            reference: BlockReference {
+                authority,
+                round,
+                digest: BlockDigest::new(
+                    authority,
+                    round,
+                    &includes,
+                    &statements,
+                    meta_creation_time_ns,
+                ),
+            },
             includes,
             statements,
             meta_creation_time_ns,
@@ -138,18 +146,14 @@ impl StatementBlock {
 impl BlockReference {
     #[cfg(test)]
     pub fn new_test(authority: AuthorityIndex, round: RoundNumber) -> Self {
-        Self {
-            authority,
-            round,
-            digest: 0,
-        }
-    }
-
-    pub fn genesis_test(authority: AuthorityIndex) -> Self {
-        Self {
-            authority,
-            round: 0,
-            digest: 0,
+        if round == 0 {
+            StatementBlock::new_genesis(authority).reference
+        } else {
+            Self {
+                authority,
+                round,
+                digest: Default::default(),
+            }
         }
     }
 
@@ -318,26 +322,15 @@ mod test {
             let Ok(round): Result<u64, _> = s[1..].parse() else {
                 panic!("Invalid block: {}", s);
             };
-            BlockReference {
-                authority: authority as u64,
-                round,
-                digest: 0,
-            }
+            BlockReference::new_test(authority as u64, round)
         }
 
         /// For each authority add a 0 round block if not present
         pub fn add_genesis_blocks(mut self) -> Self {
             for authority in self.authorities() {
-                let reference = BlockReference::genesis_test(authority);
-                let entry = self.0.entry(reference);
-                entry.or_insert_with(|| {
-                    Data::new(StatementBlock {
-                        reference,
-                        includes: vec![],
-                        statements: vec![],
-                        meta_creation_time_ns: 0,
-                    })
-                });
+                let block = StatementBlock::new_genesis(authority);
+                let entry = self.0.entry(*block.reference());
+                entry.or_insert_with(move || block);
             }
             self
         }

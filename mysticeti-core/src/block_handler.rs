@@ -4,6 +4,7 @@
 use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::config::StorageDir;
+use crate::crypto::TransactionHash;
 use crate::data::Data;
 use crate::log::CertifiedTransactionLog;
 use crate::runtime::TimeInstant;
@@ -18,8 +19,7 @@ use crate::{
 };
 use minibytes::Bytes;
 use parking_lot::Mutex;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
-use std::cmp::max;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +30,17 @@ pub trait BlockHandler: Send + Sync {
     fn state(&self) -> Bytes;
 
     fn recover_state(&mut self, _state: &Bytes);
+}
+
+const REAL_BLOCK_HANDLER_TXN_SIZE: usize = 512;
+const REAL_BLOCK_HANDLER_TXN_GEN_STEP: usize = 32;
+const _: () = assert_constants();
+
+#[allow(dead_code)]
+const fn assert_constants() {
+    if REAL_BLOCK_HANDLER_TXN_SIZE % REAL_BLOCK_HANDLER_TXN_GEN_STEP != 0 {
+        panic!("REAL_BLOCK_HANDLER_TXN_SIZE % REAL_BLOCK_HANDLER_TXN_GEN_STEP != 0")
+    }
 }
 
 pub struct RealBlockHandler {
@@ -61,15 +72,17 @@ impl RealBlockHandler {
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
-        let next_transaction = self.rng.next_u64();
-        response.push(BaseStatement::Share(
-            next_transaction,
-            Transaction::new(next_transaction.to_le_bytes().to_vec()),
-        ));
+        let mut next_transaction: Vec<u8> = Vec::with_capacity(REAL_BLOCK_HANDLER_TXN_SIZE);
+        while next_transaction.len() < REAL_BLOCK_HANDLER_TXN_SIZE {
+            next_transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
+        }
+        let next_transaction = Transaction::new(next_transaction);
+        let next_transaction_id = TransactionHash::new(&next_transaction);
+        response.push(BaseStatement::Share(next_transaction_id, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(next_transaction, TimeInstant::now());
+        transaction_time.insert(next_transaction_id, TimeInstant::now());
         self.transaction_votes
-            .register(next_transaction, self.authority, &self.committee);
+            .register(next_transaction_id, self.authority, &self.committee);
         for block in blocks {
             let processed =
                 self.transaction_votes
@@ -95,7 +108,7 @@ impl BlockHandler for RealBlockHandler {
 
 // Immediately votes and generates new transactions
 pub struct TestBlockHandler {
-    pub last_transaction: u64,
+    last_transaction: u64,
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
@@ -123,6 +136,18 @@ impl TestBlockHandler {
     pub fn is_certified(&self, txid: TransactionId) -> bool {
         self.transaction_votes.is_processed(&txid)
     }
+
+    pub fn last_transaction(&self) -> TransactionHash {
+        Self::make_transaction_hash(self.last_transaction)
+    }
+
+    pub fn make_transaction(i: u64) -> Transaction {
+        Transaction::new(i.to_le_bytes().to_vec())
+    }
+
+    pub fn make_transaction_hash(i: u64) -> TransactionHash {
+        TransactionHash::new(&Self::make_transaction(i))
+    }
 }
 
 impl BlockHandler for TestBlockHandler {
@@ -133,22 +158,21 @@ impl BlockHandler for TestBlockHandler {
                 // We can see our own block in handle_blocks - this can happen during core recovery
                 // Todo - we might also need to process pending Payload statements as well
                 for statement in block.statements() {
-                    if let BaseStatement::Share(id, _) = statement {
-                        self.last_transaction = max(self.last_transaction, *id);
+                    if let BaseStatement::Share(_, _) = statement {
+                        self.last_transaction += 1;
                     }
                 }
             }
         }
         let mut response = vec![];
         self.last_transaction += 1;
-        response.push(BaseStatement::Share(
-            self.last_transaction,
-            Transaction::new(self.last_transaction.to_le_bytes().to_vec()),
-        ));
+        let next_transaction = Self::make_transaction(self.last_transaction);
+        let next_transaction_id = TransactionHash::new(&next_transaction);
+        response.push(BaseStatement::Share(next_transaction_id, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(self.last_transaction, TimeInstant::now());
+        transaction_time.insert(next_transaction_id, TimeInstant::now());
         self.transaction_votes
-            .register(self.last_transaction, self.authority, &self.committee);
+            .register(next_transaction_id, self.authority, &self.committee);
         for block in blocks {
             println!("Processing {block:?}");
             let processed =

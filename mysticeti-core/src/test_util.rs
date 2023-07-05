@@ -69,7 +69,7 @@ pub fn committee_and_cores_persisted(
     (committee, cores)
 }
 
-fn first_transaction_for_authority(authority: AuthorityIndex) -> TransactionId {
+fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
     authority * 1_000_000
 }
 
@@ -77,7 +77,9 @@ pub fn first_n_transactions(committee: &Committee, n: u64) -> Vec<TransactionId>
     let mut result = vec![];
     for authority in committee.authorities() {
         let first = first_transaction_for_authority(authority);
-        result.extend(first + 1..first + n + 1)
+        for txn in first + 1..first + n + 1 {
+            result.push(TestBlockHandler::make_transaction_hash(txn));
+        }
     }
     result
 }

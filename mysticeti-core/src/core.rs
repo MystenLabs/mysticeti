@@ -363,7 +363,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction);
+            proposed_transactions.push(core.block_handler.last_transaction());
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
@@ -417,7 +417,7 @@ mod test {
                     .try_new_block()
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
-                proposed_transactions.push(core.block_handler.last_transaction);
+                proposed_transactions.push(core.block_handler.last_transaction());
                 eprintln!("{}: {}", core.authority, block);
                 assert!(
                     threshold_clock::threshold_clock_valid(&block, &committee),
@@ -464,7 +464,7 @@ mod test {
                 push_all(&mut pending, core.authority, &block);
                 if i < 20 {
                     // First 20 iterations we record proposed transactions
-                    proposed_transactions.push(core.block_handler.last_transaction);
+                    proposed_transactions.push(core.block_handler.last_transaction());
                 } else {
                     assert!(!proposed_transactions.is_empty());
                     // After 20 iterations we just wait for all transactions to be committed everywhere
@@ -499,7 +499,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction);
+            proposed_transactions.push(core.block_handler.last_transaction());
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }

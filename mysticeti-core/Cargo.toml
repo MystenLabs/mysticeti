@@ -28,6 +28,10 @@ tracing-core = "0.1.31"
 
 minibytes = { path = "../third-party/minibytes", default_features = false, features = ["frommmap"] }
 
+blake2 = "0.10.6"
+digest = "0.10.6"
+hex = "0.4.3"
+
 [dev-dependencies]
 reqwest = { workspace = true }
 tracing-test = "0.2.4"

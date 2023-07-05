@@ -8,7 +8,7 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
-pub type TransactionId = u64;
+pub type TransactionId = crate::crypto::TransactionHash;
 pub type RoundNumber = u64;
 pub type BlockDigest = u64;
 pub type Stake = u64;

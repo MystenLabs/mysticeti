@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub type AuthorityIndex = u64;
-pub type Transaction = u64;
+
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct Transaction {
+    data: Vec<u8>,
+}
+
 pub type TransactionId = u64;
 pub type RoundNumber = u64;
 pub type BlockDigest = u64;
@@ -238,6 +243,22 @@ impl fmt::Display for BaseStatement {
             BaseStatement::Vote(id, Vote::Accept) => write!(f, "+{id:08}"),
             BaseStatement::Vote(id, Vote::Reject(_)) => write!(f, "-{id:08}"),
         }
+    }
+}
+
+impl Transaction {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    #[allow(dead_code)]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    #[allow(dead_code)]
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
     }
 }
 

@@ -9,7 +9,9 @@ use crate::log::CertifiedTransactionLog;
 use crate::runtime::TimeInstant;
 use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
-use crate::types::{AuthorityIndex, BaseStatement, BlockReference, StatementBlock, TransactionId};
+use crate::types::{
+    AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionId,
+};
 use crate::{
     block_store::{BlockStore, CommitData},
     metrics::Metrics,
@@ -60,7 +62,10 @@ impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
         let next_transaction = self.rng.next_u64();
-        response.push(BaseStatement::Share(next_transaction, next_transaction));
+        response.push(BaseStatement::Share(
+            next_transaction,
+            Transaction::new(next_transaction.to_le_bytes().to_vec()),
+        ));
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(next_transaction, TimeInstant::now());
         self.transaction_votes
@@ -138,7 +143,7 @@ impl BlockHandler for TestBlockHandler {
         self.last_transaction += 1;
         response.push(BaseStatement::Share(
             self.last_transaction,
-            self.last_transaction,
+            Transaction::new(self.last_transaction.to_le_bytes().to_vec()),
         ));
         let mut transaction_time = self.transaction_time.lock();
         transaction_time.insert(self.last_transaction, TimeInstant::now());

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     fmt::Display,
     fs::{self},
     path::{Path, PathBuf},
@@ -100,7 +101,8 @@ impl Settings {
     {
         let reader = || -> Result<Self, std::io::Error> {
             let data = fs::read(path.clone())?;
-            let settings: Settings = serde_json::from_slice(data.as_slice())?;
+            let data = resolve_env(std::str::from_utf8(&data).unwrap());
+            let settings: Settings = serde_json::from_slice(data.as_bytes())?;
 
             fs::create_dir_all(&settings.results_dir)?;
             fs::create_dir_all(&settings.logs_dir)?;
@@ -195,6 +197,19 @@ impl Settings {
             logs_dir: "logs".into(),
         }
     }
+}
+
+// Resolves ${ENV} into it's value for each env variable.
+fn resolve_env(s: &str) -> String {
+    let mut s = s.to_string();
+    for (name, value) in env::vars() {
+        s = s.replace(&format!("${{{}}}", name), &value);
+    }
+    if s.contains("${") {
+        eprintln!("settings.json:\n{}\n", s);
+        panic!("Unresolved env variables in the settings.json");
+    }
+    s
 }
 
 #[cfg(test)]

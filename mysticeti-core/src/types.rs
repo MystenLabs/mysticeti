@@ -203,11 +203,11 @@ impl StatementBlock {
         );
         let pub_key = committee.get_public_key(self.author());
         let Some(pub_key) = pub_key else { bail!("Unknown block author {}", self.author()) };
-        if let Err(e) = pub_key.verify_block(self) {
-            bail!("Block signature verification has failed: {:?}", e);
-        }
         if round == GENESIS_ROUND {
             bail!("Genesis block should not go through verification");
+        }
+        if let Err(e) = pub_key.verify_block(self) {
+            bail!("Block signature verification has failed: {:?}", e);
         }
         for include in &self.includes {
             // Also check duplicate includes?

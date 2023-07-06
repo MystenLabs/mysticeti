@@ -96,3 +96,15 @@ impl fmt::Display for TransactionDigest {
         write!(f, "#{}", hex::encode(&self.0[..4]))
     }
 }
+
+impl fmt::Debug for BlockDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "@{}", hex::encode(self.0))
+    }
+}
+
+impl fmt::Display for BlockDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "@{}", hex::encode(&self.0[..4]))
+    }
+}

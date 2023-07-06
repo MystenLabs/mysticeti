@@ -415,7 +415,7 @@ mod test {
                 proposed_transactions.push(core.block_handler.last_transaction());
                 eprintln!("{}: {}", core.authority, block);
                 assert!(
-                    threshold_clock::threshold_clock_valid(&block, &committee),
+                    threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
                     "Invalid clock {}",
                     block
                 );
@@ -451,7 +451,7 @@ mod test {
                     continue;
                 };
                 assert!(
-                    threshold_clock::threshold_clock_valid(&block, &committee),
+                    threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
                     "Invalid clock {}",
                     block
                 );

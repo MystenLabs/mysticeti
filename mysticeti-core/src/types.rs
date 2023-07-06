@@ -8,14 +8,18 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
-pub type TransactionId = crate::crypto::TransactionDigest;
+pub type TransactionId = TransactionDigest;
 pub type RoundNumber = u64;
 pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
 pub type KeyPair = u64;
 pub type PublicKey = u64;
 
+use crate::committee::Committee;
+use crate::crypto::TransactionDigest;
 use crate::data::Data;
+use crate::threshold_clock::threshold_clock_valid_non_genesis;
+use eyre::{bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
@@ -46,7 +50,7 @@ pub enum BaseStatement {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-// Important. Adding fields here requires updating BlockDigest::new
+// Important. Adding fields here requires updating BlockDigest::new, and StatementBlock::verify
 pub struct StatementBlock {
     reference: BlockReference,
 
@@ -134,13 +138,65 @@ impl StatementBlock {
         let nanos = self.meta_creation_time_ns % NANOS_IN_SEC;
         Duration::new(secs as u64, nanos as u32)
     }
-    // /// Reference to the parent block made by the same authority
-    // pub fn own_parent(&self) -> Option<BlockReference> {
-    //     self.includes.get(0).map(|r| {
-    //         debug_assert_eq!(r.authority, self.author());
-    //         *r
-    //     })
-    // }
+
+    pub fn verify(&self, committee: &Committee) -> eyre::Result<()> {
+        let round = self.round();
+        let digest = BlockDigest::new(
+            self.author(),
+            round,
+            &self.includes,
+            &self.statements,
+            self.meta_creation_time_ns,
+        );
+        ensure!(
+            digest == self.digest(),
+            "Digest does not match, calculated {:?}, provided {:?}",
+            digest,
+            self.digest()
+        );
+        ensure!(
+            committee.known_authority(self.author()),
+            "Unknown block author {}",
+            self.author()
+        );
+        if round == GENESIS_ROUND {
+            bail!("Genesis block should not go through verification");
+        }
+        for include in &self.includes {
+            // Also check duplicate includes?
+            ensure!(
+                committee.known_authority(include.authority),
+                "Include {:?} references unknown authority",
+                include
+            );
+            ensure!(
+                include.round < round,
+                "Include {:?} round is greater or equal to own round {}",
+                include,
+                round
+            );
+        }
+        for statement in &self.statements {
+            // Also check duplicate statements?
+            match statement {
+                BaseStatement::Share(id, tx) => {
+                    let calculated_id = TransactionDigest::new(tx);
+                    ensure!(
+                        &calculated_id == id,
+                        "Transaction digest mismatch, calculated {:?}, provided {:?}",
+                        calculated_id,
+                        id
+                    );
+                }
+                BaseStatement::Vote(_, _) => {}
+            }
+        }
+        ensure!(
+            threshold_clock_valid_non_genesis(self, committee),
+            "Threshold clock is not valid"
+        );
+        Ok(())
+    }
 }
 
 impl BlockReference {

@@ -1,3 +1,4 @@
+use crate::committee::Committee;
 use crate::core::Core;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
@@ -24,6 +25,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     syncer: RwLock<Syncer<H, Arc<Notify>, C>>,
     notify: Arc<Notify>,
+    committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
 }
 
@@ -40,6 +42,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         // todo - ugly, probably need to merge syncer and core
         let (committed, state) = core.take_recovered_committed_blocks();
         commit_observer.recover_committed(committed, state);
+        let committee = core.committee().clone();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -54,6 +57,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
+            committee,
             stop: stop_sender,
         });
         let main_task = handle.spawn(Self::run(network, inner.clone()));
@@ -127,6 +131,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
+                    if let Err(e) = block.verify(&inner.committee) {
+                        tracing::warn!(
+                            "Rejected incorrect block {} from {}: {:?}",
+                            block.reference(),
+                            peer,
+                            e
+                        );
+                        // Terminate connection on receiving incorrect block
+                        return None;
+                    }
                     inner.syncer.write().add_blocks(vec![block]);
                 }
             }

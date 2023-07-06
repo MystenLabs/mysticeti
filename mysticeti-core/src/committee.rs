@@ -54,6 +54,10 @@ impl Committee {
         self.stake.get(authority as usize).copied()
     }
 
+    pub fn known_authority(&self, authority: AuthorityIndex) -> bool {
+        authority < self.len() as AuthorityIndex
+    }
+
     pub fn authorities(&self) -> Range<AuthorityIndex> {
         0u64..(self.stake.len() as AuthorityIndex)
     }

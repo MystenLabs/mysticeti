@@ -45,26 +45,26 @@ impl BlockDigest {
         for include in includes {
             hasher.update(include.authority.to_le_bytes());
             hasher.update(include.round.to_le_bytes());
-            hasher.update(include.digest.as_ref());
+            hasher.update(include.digest);
         }
         for statement in statements {
             match statement {
                 BaseStatement::Share(id, _) => {
                     hasher.update([0]);
-                    hasher.update(id.as_ref());
+                    hasher.update(id);
                 }
                 BaseStatement::Vote(id, Vote::Accept) => {
                     hasher.update([1]);
-                    hasher.update(id.as_ref());
+                    hasher.update(id);
                 }
                 BaseStatement::Vote(id, Vote::Reject(None)) => {
                     hasher.update([2]);
-                    hasher.update(id.as_ref());
+                    hasher.update(id);
                 }
                 BaseStatement::Vote(id, Vote::Reject(Some(other))) => {
                     hasher.update([3]);
-                    hasher.update(id.as_ref());
-                    hasher.update(other.as_ref());
+                    hasher.update(id);
+                    hasher.update(other);
                 }
             }
         }

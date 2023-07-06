@@ -1,26 +1,31 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::serde::{ByteRepr, BytesVisitor};
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, RoundNumber, TimestampNs, Transaction, Vote,
 };
 use blake2::Blake2b;
 use digest::Digest;
 use ed25519_consensus::Signature;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-#[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Serialize, Deserialize, Default, Hash)]
-pub struct TransactionDigest([u8; 32]); // todo - serialize performance
+pub const SIGNATURE_SIZE: usize = 64;
+pub const TRANSACTION_DIGEST_SIZE: usize = 32;
+pub const BLOCK_DIGEST_SIZE: usize = 32;
 
-#[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Serialize, Deserialize, Default, Hash)]
-pub struct BlockDigest([u8; 32]); // todo - serialize performance
+#[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
+pub struct TransactionDigest([u8; TRANSACTION_DIGEST_SIZE]);
+
+#[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
+pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
 pub struct PublicKey(ed25519_consensus::VerificationKey);
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Hash)]
-pub struct SignatureBytes([u8; 64]); // todo - serialize performance
+pub struct SignatureBytes([u8; SIGNATURE_SIZE]);
 
 type TransactionHasher = Blake2b<digest::consts::U32>;
 type BlockHasher = Blake2b<digest::consts::U32>;
@@ -130,6 +135,84 @@ impl fmt::Display for BlockDigest {
 impl Default for SignatureBytes {
     fn default() -> Self {
         Self([0u8; 64])
+    }
+}
+
+impl ByteRepr for SignatureBytes {
+    fn try_copy_from_slice<E: de::Error>(v: &[u8]) -> Result<Self, E> {
+        if v.len() != SIGNATURE_SIZE {
+            return Err(E::custom(format!("Invalid signature length: {}", v.len())));
+        }
+        let mut inner = [0u8; SIGNATURE_SIZE];
+        inner.copy_from_slice(v);
+        Ok(Self(inner))
+    }
+}
+
+impl Serialize for SignatureBytes {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SignatureBytes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_bytes(BytesVisitor::new())
+    }
+}
+
+impl ByteRepr for TransactionDigest {
+    fn try_copy_from_slice<E: de::Error>(v: &[u8]) -> Result<Self, E> {
+        if v.len() != TRANSACTION_DIGEST_SIZE {
+            return Err(E::custom(format!(
+                "Invalid transaction digest length: {}",
+                v.len()
+            )));
+        }
+        let mut inner = [0u8; TRANSACTION_DIGEST_SIZE];
+        inner.copy_from_slice(v);
+        Ok(Self(inner))
+    }
+}
+
+impl Serialize for TransactionDigest {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for TransactionDigest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_bytes(BytesVisitor::new())
+    }
+}
+
+impl ByteRepr for BlockDigest {
+    fn try_copy_from_slice<E: de::Error>(v: &[u8]) -> Result<Self, E> {
+        if v.len() != BLOCK_DIGEST_SIZE {
+            return Err(E::custom(format!(
+                "Invalid block digest length: {}",
+                v.len()
+            )));
+        }
+        let mut inner = [0u8; BLOCK_DIGEST_SIZE];
+        inner.copy_from_slice(v);
+        Ok(Self(inner))
+    }
+}
+
+impl Serialize for BlockDigest {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockDigest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_bytes(BytesVisitor::new())
     }
 }
 

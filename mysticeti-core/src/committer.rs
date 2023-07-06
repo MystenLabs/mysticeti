@@ -387,6 +387,7 @@ mod test {
                         includes.clone(),
                         vec![],
                         0,
+                        Default::default(),
                     ));
                     (*block.reference(), block)
                 })
@@ -554,6 +555,7 @@ mod test {
                     references.clone(),
                     vec![],
                     0,
+                    Default::default(),
                 ));
                 (*block.reference(), block)
             })

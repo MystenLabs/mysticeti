@@ -16,6 +16,7 @@ pub type KeyPair = u64;
 pub type PublicKey = crate::crypto::PublicKey;
 
 use crate::committee::Committee;
+use crate::crypto::{SignatureBytes, Signer};
 use crate::data::Data;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
 use eyre::{bail, ensure};
@@ -63,6 +64,9 @@ pub struct StatementBlock {
 
     // Creation time of the block as reported by creator, currently not enforced
     meta_creation_time_ns: TimestampNs,
+
+    // Signature by the block author
+    signature: SignatureBytes,
 }
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
@@ -75,7 +79,39 @@ const GENESIS_ROUND: RoundNumber = 0;
 
 impl StatementBlock {
     pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
-        Data::new(Self::new(authority, GENESIS_ROUND, vec![], vec![], 0))
+        Data::new(Self::new(
+            authority,
+            GENESIS_ROUND,
+            vec![],
+            vec![],
+            0,
+            SignatureBytes::default(),
+        ))
+    }
+
+    pub fn new_with_signer(
+        authority: AuthorityIndex,
+        round: RoundNumber,
+        includes: Vec<BlockReference>,
+        statements: Vec<BaseStatement>,
+        meta_creation_time_ns: TimestampNs,
+        signer: &Signer,
+    ) -> Self {
+        let signature = signer.sign_block(
+            authority,
+            round,
+            &includes,
+            &statements,
+            meta_creation_time_ns,
+        );
+        Self::new(
+            authority,
+            round,
+            includes,
+            statements,
+            meta_creation_time_ns,
+            signature,
+        )
     }
 
     pub fn new(
@@ -84,6 +120,7 @@ impl StatementBlock {
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
+        signature: SignatureBytes,
     ) -> Self {
         Self {
             reference: BlockReference {
@@ -95,11 +132,13 @@ impl StatementBlock {
                     &includes,
                     &statements,
                     meta_creation_time_ns,
+                    &signature,
                 ),
             },
             includes,
             statements,
             meta_creation_time_ns,
+            signature,
         }
     }
 
@@ -131,6 +170,14 @@ impl StatementBlock {
         self.reference.author_round()
     }
 
+    pub fn signature(&self) -> &SignatureBytes {
+        &self.signature
+    }
+
+    pub fn meta_creation_time_ns(&self) -> TimestampNs {
+        self.meta_creation_time_ns
+    }
+
     pub fn meta_creation_time(&self) -> Duration {
         // Some context: https://github.com/rust-lang/rust/issues/51107
         let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
@@ -146,6 +193,7 @@ impl StatementBlock {
             &self.includes,
             &self.statements,
             self.meta_creation_time_ns,
+            &self.signature,
         );
         ensure!(
             digest == self.digest(),
@@ -153,11 +201,11 @@ impl StatementBlock {
             digest,
             self.digest()
         );
-        ensure!(
-            committee.known_authority(self.author()),
-            "Unknown block author {}",
-            self.author()
-        );
+        let pub_key = committee.get_public_key(self.author());
+        let Some(pub_key) = pub_key else { bail!("Unknown block author {}", self.author()) };
+        if let Err(e) = pub_key.verify_block(self) {
+            bail!("Block signature verification has failed: {:?}", e);
+        }
         if round == GENESIS_ROUND {
             bail!("Genesis block should not go through verification");
         }
@@ -365,6 +413,7 @@ mod test {
                 includes,
                 statements: vec![],
                 meta_creation_time_ns: 0,
+                signature: Default::default(),
             }
         }
 

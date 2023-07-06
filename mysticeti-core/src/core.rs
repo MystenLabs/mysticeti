@@ -3,6 +3,7 @@ use crate::block_store::{
     WAL_ENTRY_STATE,
 };
 use crate::committee::Committee;
+use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
@@ -33,6 +34,7 @@ pub struct Core<H: BlockHandler> {
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     options: CoreOptions,
+    signer: Signer,
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
 }
@@ -121,6 +123,7 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
+            signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
         };
 
@@ -213,7 +216,14 @@ impl<H: BlockHandler> Core<H> {
 
         assert!(!includes.is_empty());
         let time_ns = timestamp_utc().as_nanos();
-        let block = StatementBlock::new(self.authority, clock_round, includes, statements, time_ns);
+        let block = StatementBlock::new_with_signer(
+            self.authority,
+            clock_round,
+            includes,
+            statements,
+            time_ns,
+            &self.signer,
+        );
         assert_eq!(
             block.includes().get(0).unwrap().authority,
             self.authority,

@@ -8,15 +8,14 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
-pub type TransactionId = TransactionDigest;
+pub type TransactionId = crate::crypto::TransactionDigest;
 pub type RoundNumber = u64;
 pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
 pub type KeyPair = u64;
-pub type PublicKey = u64;
+pub type PublicKey = crate::crypto::PublicKey;
 
 use crate::committee::Committee;
-use crate::crypto::TransactionDigest;
 use crate::data::Data;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
 use eyre::{bail, ensure};
@@ -180,7 +179,7 @@ impl StatementBlock {
             // Also check duplicate statements?
             match statement {
                 BaseStatement::Share(id, tx) => {
-                    let calculated_id = TransactionDigest::new(tx);
+                    let calculated_id = TransactionId::new(tx);
                     ensure!(
                         &calculated_id == id,
                         "Transaction digest mismatch, calculated {:?}, provided {:?}",

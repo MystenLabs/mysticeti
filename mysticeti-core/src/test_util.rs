@@ -31,7 +31,7 @@ pub fn test_metrics() -> Arc<Metrics> {
 }
 
 pub fn committee(n: usize) -> Arc<Committee> {
-    Committee::new(vec![1; n])
+    Committee::new_test(vec![1; n])
 }
 
 pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {

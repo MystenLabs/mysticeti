@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::crypto::{dummy_public_key, PublicKey};
 use crate::types::{
     AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionId, Vote,
 };
@@ -19,7 +20,7 @@ use std::sync::Arc;
 
 #[derive(Serialize, Deserialize)]
 pub struct Committee {
-    stake: Vec<Stake>,
+    authorities: Vec<Authority>,
     validity_threshold: Stake, // The minimum stake required for validity
     quorum_threshold: Stake,   // The minimum stake required for quorum
 }
@@ -27,31 +28,45 @@ pub struct Committee {
 impl Committee {
     pub const DEFAULT_FILENAME: &'static str = "committee.yaml";
 
-    pub fn new(stake: Vec<Stake>) -> Arc<Self> {
+    pub fn new_test(stake: Vec<Stake>) -> Arc<Self> {
+        let authorities = stake.into_iter().map(Authority::test_from_stake).collect();
+        Self::new(authorities)
+    }
+
+    pub fn new(authorities: Vec<Authority>) -> Arc<Self> {
+        // todo - check duplicate public keys
         // Ensure the list is not empty
-        assert!(!stake.is_empty());
+        assert!(!authorities.is_empty());
 
         // Ensure all stakes are positive
-        assert!(stake.iter().all(|stake| *stake > 0));
-        assert!(stake.len() <= 128); // For now AuthoritySet only supports up to 128 authorities
+        assert!(authorities.iter().all(|a| a.stake() > 0));
+        assert!(authorities.len() <= 128); // For now AuthoritySet only supports up to 128 authorities
 
         let mut total_stake: Stake = 0;
-        for stake in stake.iter() {
+        for a in authorities.iter() {
             total_stake = total_stake
-                .checked_add(*stake)
+                .checked_add(a.stake())
                 .expect("Total stake overflow");
         }
         let validity_threshold = total_stake / 3;
         let quorum_threshold = 2 * total_stake / 3;
         Arc::new(Committee {
-            stake,
+            authorities,
             validity_threshold,
             quorum_threshold,
         })
     }
 
     pub fn get_stake(&self, authority: AuthorityIndex) -> Option<Stake> {
-        self.stake.get(authority as usize).copied()
+        self.authorities
+            .get(authority as usize)
+            .map(Authority::stake)
+    }
+
+    pub fn get_public_key(&self, authority: AuthorityIndex) -> Option<&PublicKey> {
+        self.authorities
+            .get(authority as usize)
+            .map(Authority::public_key)
     }
 
     pub fn known_authority(&self, authority: AuthorityIndex) -> bool {
@@ -59,7 +74,7 @@ impl Committee {
     }
 
     pub fn authorities(&self) -> Range<AuthorityIndex> {
-        0u64..(self.stake.len() as AuthorityIndex)
+        0u64..(self.authorities.len() as AuthorityIndex)
     }
 
     /// Return own genesis block and other genesis blocks
@@ -92,14 +107,14 @@ impl Committee {
     pub fn get_total_stake<A: Borrow<AuthorityIndex>>(&self, authorities: &HashSet<A>) -> Stake {
         let mut total_stake = 0;
         for authority in authorities {
-            total_stake += self.stake[*authority.borrow() as usize];
+            total_stake += self.authorities[*authority.borrow() as usize].stake();
         }
         total_stake
     }
 
     // TODO: fix to select by stake
     pub fn elect_leader(&self, r: u64) -> AuthorityIndex {
-        (r % self.stake.len() as u64) as AuthorityIndex
+        (r % self.authorities.len() as u64) as AuthorityIndex
     }
 
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {
@@ -107,12 +122,35 @@ impl Committee {
     }
 
     pub fn len(&self) -> usize {
-        self.stake.len()
+        self.authorities.len()
     }
 
     pub fn new_for_benchmarks(committee_size: usize) -> Arc<Self> {
         let stake = vec![1; committee_size];
-        Self::new(stake)
+        Self::new_test(stake)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Authority {
+    stake: Stake,
+    public_key: PublicKey,
+}
+
+impl Authority {
+    pub fn test_from_stake(stake: Stake) -> Self {
+        Self {
+            stake,
+            public_key: dummy_public_key(),
+        }
+    }
+
+    pub fn stake(&self) -> Stake {
+        self.stake
+    }
+
+    pub fn public_key(&self) -> &PublicKey {
+        &self.public_key
     }
 }
 

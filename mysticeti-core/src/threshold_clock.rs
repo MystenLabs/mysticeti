@@ -85,7 +85,7 @@ mod tests {
     // it succeeds
     #[test]
     fn test_threshold_clock_valid() {
-        let committee = Committee::new(vec![1, 1, 1, 1]);
+        let committee = Committee::new_test(vec![1, 1, 1, 1]);
         assert!(!threshold_clock_valid_non_genesis(
             &Dag::draw_block("A1:[]"),
             &committee
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_threshold_clock_aggregator() {
-        let committee = Committee::new(vec![1, 1, 1, 1]);
+        let committee = Committee::new_test(vec![1, 1, 1, 1]);
         let mut aggregator = ThresholdClockAggregator::new(0);
 
         aggregator.add_block(BlockReference::new_test(0, 0), &committee);

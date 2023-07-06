@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use crate::crypto::dummy_public_key;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::types::{AuthorityIndex, KeyPair, PublicKey, RoundNumber};
@@ -53,7 +54,7 @@ impl Parameters {
         let benchmark_port_offset = ips.len() as u16;
         let mut identifiers = Vec::new();
         for (i, ip) in ips.into_iter().enumerate() {
-            let public_key = i as PublicKey;
+            let public_key = dummy_public_key(); // todo - fix
             let network_port = Self::BENCHMARK_PORT_OFFSET + i as u16;
             let metrics_port = benchmark_port_offset + network_port;
             let network_address = SocketAddr::new(ip, network_port);

@@ -51,13 +51,19 @@ impl Validator {
 
         // Boot the prometheus server.
         let registry = Registry::new();
-        let metrics = Arc::new(Metrics::new(&registry));
+        let (metrics, reporter) = Metrics::new(&registry);
+        reporter.start();
+
         let metrics_handle =
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Boot the validator node.
-        let block_handler =
-            RealBlockHandler::new(committee.clone(), authority, private_config.storage());
+        let block_handler = RealBlockHandler::new(
+            committee.clone(),
+            authority,
+            private_config.storage(),
+            metrics.clone(),
+        );
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             block_handler.transaction_time.clone(),

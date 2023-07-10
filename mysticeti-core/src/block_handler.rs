@@ -8,7 +8,6 @@ use crate::crypto::TransactionDigest;
 use crate::data::Data;
 use crate::log::CertifiedTransactionLog;
 use crate::runtime::TimeInstant;
-use crate::stat::PreciseHistogram;
 use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionId,
@@ -49,12 +48,17 @@ pub struct RealBlockHandler {
     pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
-    pub transaction_certified_latency: PreciseHistogram<Duration>,
+    metrics: Arc<Metrics>,
     rng: StdRng,
 }
 
 impl RealBlockHandler {
-    pub fn new(committee: Arc<Committee>, authority: AuthorityIndex, config: &StorageDir) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        authority: AuthorityIndex,
+        config: &StorageDir,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         let rng = StdRng::seed_from_u64(authority);
         let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
@@ -63,10 +67,16 @@ impl RealBlockHandler {
             transaction_time: Default::default(),
             committee,
             authority,
-            transaction_certified_latency: Default::default(),
+            metrics,
             rng,
         }
     }
+    //
+    // pub fn report_metrics(&mut self) -> Option<()> {
+    //     let [p50, p90] = self.transaction_certified_latency.pcts([500, 900])?;
+    //     tracing::info!("transaction_certified_latency: p50={:?}, p90={:?}", p50, p90 );
+    //     None
+    // }
 }
 
 impl BlockHandler for RealBlockHandler {
@@ -89,7 +99,8 @@ impl BlockHandler for RealBlockHandler {
                     .process_block(block, Some(&mut response), &self.committee);
             for processed_id in processed {
                 if let Some(instant) = transaction_time.get(&processed_id) {
-                    self.transaction_certified_latency
+                    self.metrics
+                        .transaction_certified_latency
                         .observe(instant.elapsed());
                 }
             }
@@ -114,7 +125,7 @@ pub struct TestBlockHandler {
     committee: Arc<Committee>,
     authority: AuthorityIndex,
 
-    pub transaction_certified_latency: PreciseHistogram<Duration>,
+    metrics: Arc<Metrics>,
 }
 
 impl TestBlockHandler {
@@ -122,6 +133,7 @@ impl TestBlockHandler {
         last_transaction: u64,
         committee: Arc<Committee>,
         authority: AuthorityIndex,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             last_transaction,
@@ -129,7 +141,7 @@ impl TestBlockHandler {
             transaction_time: Default::default(),
             committee,
             authority,
-            transaction_certified_latency: Default::default(),
+            metrics,
         }
     }
 
@@ -180,7 +192,8 @@ impl BlockHandler for TestBlockHandler {
                     .process_block(block, Some(&mut response), &self.committee);
             for processed_id in processed {
                 if let Some(instant) = transaction_time.get(&processed_id) {
-                    self.transaction_certified_latency
+                    self.metrics
+                        .transaction_certified_latency
                         .observe(instant.elapsed());
                 }
             }
@@ -212,8 +225,6 @@ pub struct TestCommitHandler {
 
     start_time: TimeInstant,
     transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
-    pub certificate_committed_latency: PreciseHistogram<Duration>,
-    pub transaction_committed_latency: PreciseHistogram<Duration>,
 
     metrics: Arc<Metrics>,
 }
@@ -233,8 +244,6 @@ impl TestCommitHandler {
 
             start_time: TimeInstant::now(),
             transaction_time,
-            certificate_committed_latency: Default::default(),
-            transaction_committed_latency: Default::default(),
 
             metrics,
         }
@@ -284,7 +293,9 @@ impl CommitObserver for TestCommitHandler {
                     .process_block(block, None, &self.committee);
                 for processed_id in processed {
                     if let Some(instant) = transaction_time.get(&processed_id) {
-                        self.certificate_committed_latency
+                        // todo - batch send data points
+                        self.metrics
+                            .certificate_committed_latency
                             .observe(instant.elapsed());
                     }
                 }
@@ -293,7 +304,10 @@ impl CommitObserver for TestCommitHandler {
                         if let Some(instant) = transaction_time.get(id) {
                             let timestamp = instant.elapsed();
                             self.update_metrics(&timestamp);
-                            self.transaction_committed_latency.observe(timestamp);
+                            // todo - batch send data points
+                            self.metrics
+                                .transaction_committed_latency
+                                .observe(timestamp);
                         }
                     }
                 }

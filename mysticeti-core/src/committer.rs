@@ -333,8 +333,7 @@ impl Committer {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
+    use super::*;
     use prometheus::default_registry;
 
     use crate::test_util::TestBlockWriter;
@@ -345,8 +344,6 @@ mod test {
         test_util::{committee, test_metrics},
         types::{BlockReference, RoundNumber, StatementBlock},
     };
-
-    use super::Committer;
 
     /// Build a fully interconnected dag up to the specified round. This function starts building the
     /// dag from the specified [`start`] references or from genesis if none are specified.
@@ -448,7 +445,7 @@ mod test {
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
-        let metrics = Arc::new(Metrics::new(default_registry()));
+        let (metrics, _) = Metrics::new(default_registry());
         let committee = committee(4);
         let wave_length = 3;
 

@@ -8,6 +8,7 @@ use crate::core::{Core, CoreOptions};
 use crate::data::Data;
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
+use crate::metrics::MetricReporter;
 use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
@@ -27,28 +28,43 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub fn test_metrics() -> Arc<Metrics> {
-    Arc::new(Metrics::new(&Registry::new()))
+    Metrics::new(&Registry::new()).0
 }
 
 pub fn committee(n: usize) -> Arc<Committee> {
     Committee::new_test(vec![1; n])
 }
 
-pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
+pub fn committee_and_cores(
+    n: usize,
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
     committee_and_cores_persisted(n, None)
 }
 
 pub fn committee_and_cores_persisted(
     n: usize,
     path: Option<&Path>,
-) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
     let committee = committee(n);
     let cores: Vec<_> = committee
         .authorities()
         .map(|authority| {
             let last_transaction = first_transaction_for_authority(authority);
-            let block_handler =
-                TestBlockHandler::new(last_transaction, committee.clone(), authority);
+            let (metrics, reporter) = Metrics::new(&Registry::new());
+            let block_handler = TestBlockHandler::new(
+                last_transaction,
+                committee.clone(),
+                authority,
+                metrics.clone(),
+            );
             let wal_file = if let Some(path) = path {
                 let wal_path = path.join(format!("{:03}.wal", authority));
                 open_file_for_wal(&wal_path).unwrap()
@@ -56,17 +72,19 @@ pub fn committee_and_cores_persisted(
                 tempfile::tempfile().unwrap()
             };
             println!("Opening core {authority}");
-            Core::open(
+            let core = Core::open(
                 block_handler,
                 authority,
                 committee.clone(),
-                test_metrics(),
+                metrics,
                 wal_file,
                 CoreOptions::test(),
-            )
+            );
+            (core, reporter)
         })
         .collect();
-    (committee, cores)
+    let (cores, reporters) = cores.into_iter().unzip();
+    (committee, cores, reporters)
 }
 
 fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
@@ -90,7 +108,7 @@ pub fn committee_and_syncers(
     Arc<Committee>,
     Vec<Syncer<TestBlockHandler, bool, TestCommitHandler>>,
 ) {
-    let (committee, cores) = committee_and_cores(n);
+    let (committee, cores, _) = committee_and_cores(n);
     (
         committee.clone(),
         cores
@@ -126,26 +144,27 @@ pub fn simulated_network_syncers(
 ) -> (
     SimulatedNetwork,
     Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    Vec<MetricReporter>,
 ) {
-    let (committee, cores) = committee_and_cores(n);
+    let (committee, cores, reporters) = committee_and_cores(n);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
-            test_metrics(),
+            core.metrics.clone(),
         );
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         drop(node_context);
         network_syncers.push(network_syncer);
     }
-    (simulated_network, network_syncers)
+    (simulated_network, network_syncers, reporters)
 }
 
 pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    let (committee, cores) = committee_and_cores(n);
+    let (committee, cores, _) = committee_and_cores(n);
     let (networks, _) = networks_and_addresses(cores.len()).await;
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
@@ -192,36 +211,38 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
 }
 
 #[allow(dead_code)]
-pub fn print_stats<S: SyncerSignals>(syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>]) {
+pub fn print_stats<S: SyncerSignals>(
+    syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>],
+    reporters: &mut [MetricReporter],
+) {
+    assert_eq!(syncers.len(), reporters.len());
     eprintln!("val ||    cert(ms)   ||cert commit(ms)|| tx commit(ms) |");
     eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ||  p90  |  avg  |");
-    syncers.iter().for_each(|s| {
-        let b = s.core().block_handler();
-        let c = s.commit_observer();
+    syncers.iter().zip(reporters.iter_mut()).for_each(|(s, r)| {
         eprintln!(
             "  {} || {:05} | {:05} || {:05} | {:05} || {:05} | {:05} |",
             format_authority_index(s.core().authority()),
-            b.transaction_certified_latency
+            r.transaction_certified_latency
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            b.transaction_certified_latency
+            r.transaction_certified_latency
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),
-            c.certificate_committed_latency
+            r.certificate_committed_latency
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            c.certificate_committed_latency
+            r.certificate_committed_latency
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),
-            c.transaction_committed_latency
+            r.transaction_committed_latency
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            c.transaction_committed_latency
+            r.transaction_committed_latency
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),

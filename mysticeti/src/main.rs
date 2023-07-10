@@ -11,6 +11,8 @@ use std::{
 use clap::{command, Parser};
 use eyre::{eyre, Context, Result};
 use futures::future;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use mysticeti_core::{
     committee::Committee,
@@ -69,7 +71,10 @@ enum Operation {
 async fn main() -> Result<()> {
     // Nice colored error messages.
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    fmt().with_env_filter(filter).init();
 
     // Parse the command line arguments.
     match Args::parse().operation {

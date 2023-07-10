@@ -69,7 +69,7 @@ enum Operation {
 async fn main() -> Result<()> {
     // Nice colored error messages.
     color_eyre::install()?;
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     // Parse the command line arguments.
     match Args::parse().operation {

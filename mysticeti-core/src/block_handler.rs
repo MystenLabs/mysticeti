@@ -71,12 +71,6 @@ impl RealBlockHandler {
             rng,
         }
     }
-    //
-    // pub fn report_metrics(&mut self) -> Option<()> {
-    //     let [p50, p90] = self.transaction_certified_latency.pcts([500, 900])?;
-    //     tracing::info!("transaction_certified_latency: p50={:?}, p90={:?}", p50, p90 );
-    //     None
-    // }
 }
 
 impl BlockHandler for RealBlockHandler {

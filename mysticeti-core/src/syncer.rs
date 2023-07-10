@@ -38,7 +38,6 @@ pub trait CommitObserver: Send + Sync {
     fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
 }
 
-#[allow(dead_code)]
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     pub fn new(
         core: Core<H>,

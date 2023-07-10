@@ -26,7 +26,6 @@ use std::time::Duration;
 #[cfg(test)]
 pub use test::Dag;
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
     Accept,
@@ -40,7 +39,6 @@ pub struct BlockReference {
     pub digest: BlockDigest,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.

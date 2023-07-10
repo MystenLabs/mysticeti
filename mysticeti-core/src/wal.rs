@@ -39,6 +39,7 @@ pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
 }
 
 /// Opens file with mode suitable for walf
+#[cfg(test)]
 pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
@@ -69,6 +70,7 @@ pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
 ///
 /// In order to completely "close" the wal file(for example to allow to delete/reclaim space), user need to drop
 /// the wal reader, wal writer, **and** drop all the buffers returned by WalReader::read().
+#[allow(dead_code)]
 pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
     let file = OpenOptions::new()
         .create(true)
@@ -107,6 +109,7 @@ const HEADER_LEN_BYTES: u64 = 8 + 8;
 // CRC and length
 const HEADER_LEN_BYTES_USIZE: usize = HEADER_LEN_BYTES as usize;
 
+#[allow(dead_code)]
 const fn assert_constants() {
     if u64::MAX - MAP_MASK != MAP_SIZE - 1 {
         panic!("MAP_MASK and MAP_SIZE do not match");

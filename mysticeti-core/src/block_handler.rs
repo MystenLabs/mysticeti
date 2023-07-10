@@ -203,7 +203,6 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
-#[allow(dead_code)]
 pub struct TestCommitHandler {
     commit_interpreter: CommitInterpreter,
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,

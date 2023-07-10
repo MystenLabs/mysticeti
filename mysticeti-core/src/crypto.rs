@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::serde::{ByteRepr, BytesVisitor};
+#[cfg(not(test))]
+use crate::types::Vote;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock, TimestampNs,
-    Transaction, Vote,
+    Transaction,
 };
-use blake2::Blake2b;
+#[cfg(not(test))]
 use digest::Digest;
 #[cfg(not(test))]
 use ed25519_consensus::Signature;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+#[cfg(test)]
+use std::hash::Hasher;
 use zeroize::Zeroize;
 
 pub const SIGNATURE_SIZE: usize = 64;
@@ -33,22 +37,36 @@ pub struct SignatureBytes([u8; SIGNATURE_SIZE]);
 // Box ensures value is not copied in memory when Signer itself is moved around for better security
 pub struct Signer(Box<ed25519_consensus::SigningKey>);
 
-type TransactionHasher = Blake2b<digest::consts::U32>;
-type BlockHasher = Blake2b<digest::consts::U32>;
+#[cfg(not(test))]
+type TransactionHasher = blake2::Blake2b<digest::consts::U32>;
+#[cfg(not(test))]
+type BlockHasher = blake2::Blake2b<digest::consts::U32>;
 
 impl TransactionDigest {
     pub fn new(transaction: &Transaction) -> Self {
         Self::from(transaction.data())
     }
 
+    #[cfg(not(test))]
     pub fn from(data: &[u8]) -> Self {
         let mut hasher = TransactionHasher::default();
         hasher.update(data);
         Self(hasher.finalize().into())
     }
+
+    #[cfg(test)]
+    pub fn from(data: &[u8]) -> Self {
+        let mut hasher = seahash::SeaHasher::default();
+        hasher.write(data);
+        let bytes = hasher.finish().to_le_bytes();
+        let mut b = [0u8; TRANSACTION_DIGEST_SIZE];
+        (&mut b[..8]).copy_from_slice(&bytes);
+        Self(b)
+    }
 }
 
 impl BlockDigest {
+    #[cfg(not(test))]
     pub fn new(
         authority: AuthorityIndex,
         round: RoundNumber,
@@ -70,6 +88,18 @@ impl BlockDigest {
         Self(hasher.finalize().into())
     }
 
+    #[cfg(test)]
+    pub fn new(
+        _authority: AuthorityIndex,
+        _round: RoundNumber,
+        _includes: &[BlockReference],
+        _statements: &[BaseStatement],
+        _meta_creation_time_ns: TimestampNs,
+        _signature: &SignatureBytes,
+    ) -> Self {
+        Default::default()
+    }
+
     /// There is a bit of a complexity around what is considered block digest and what is being signed
     ///
     /// * Block signature covers all the fields in the block, except for signature and reference.digest
@@ -77,6 +107,7 @@ impl BlockDigest {
     ///
     /// This is not very beautiful, but it allows to optimize block synchronization,
     /// by skipping signature verification for all the descendants of the certified block.
+    #[cfg(not(test))]
     fn digest_without_signature(
         hasher: &mut BlockHasher,
         authority: AuthorityIndex,

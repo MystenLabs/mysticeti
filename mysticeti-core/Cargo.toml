@@ -38,6 +38,7 @@ zeroize = "1.6.0"
 reqwest = { workspace = true }
 tracing-test = "0.2.4"
 tempdir = "0.3.7"
+seahash = "4.1.0"
 
 [features]
 simulator = []

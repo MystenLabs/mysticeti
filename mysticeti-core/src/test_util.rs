@@ -219,6 +219,7 @@ pub fn print_stats<S: SyncerSignals>(
     eprintln!("val ||    cert(ms)   ||cert commit(ms)|| tx commit(ms) |");
     eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ||  p90  |  avg  |");
     syncers.iter().zip(reporters.iter_mut()).for_each(|(s, r)| {
+        r.receive_all();
         eprintln!(
             "  {} || {:05} | {:05} || {:05} | {:05} || {:05} | {:05} |",
             format_authority_index(s.core().authority()),

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::runtime;
+use crate::runtime::TimeInstant;
 use crate::stat::{histogram, HistogramSender, PreciseHistogram};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
@@ -35,9 +36,12 @@ pub struct Metrics {
 }
 
 pub struct MetricReporter {
+    // When adding field here make sure to update
+    // MetricsReporter::receive_all and MetricsReporter::run_report.
     pub transaction_certified_latency: PreciseHistogram<Duration>,
     pub certificate_committed_latency: PreciseHistogram<Duration>,
     pub transaction_committed_latency: PreciseHistogram<Duration>,
+    started: TimeInstant,
 }
 
 impl Metrics {
@@ -49,6 +53,7 @@ impl Metrics {
             transaction_certified_latency: transaction_certified_latency_hist,
             certificate_committed_latency: certificate_committed_latency_hist,
             transaction_committed_latency: transaction_committed_latency_hist,
+            started: TimeInstant::now(),
         };
         let metrics = Self {
             benchmark_duration: register_int_counter_with_registry!(
@@ -100,6 +105,12 @@ impl MetricReporter {
         runtime::Handle::current().spawn(self.run());
     }
 
+    pub fn receive_all(&mut self) {
+        self.transaction_certified_latency.receive_all();
+        self.certificate_committed_latency.receive_all();
+        self.transaction_committed_latency.receive_all();
+    }
+
     // todo - this task never stops
     async fn run(mut self) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(10);
@@ -112,26 +123,41 @@ impl MetricReporter {
     }
 
     async fn run_report(&mut self) {
+        let elapsed = self.started.elapsed();
         Self::report_hist(
             "transaction_certified_latency",
             &mut self.transaction_certified_latency,
+            elapsed,
         );
         Self::report_hist(
             "certificate_committed_latency",
             &mut self.certificate_committed_latency,
+            elapsed,
         );
         Self::report_hist(
             "transaction_committed_latency",
             &mut self.transaction_committed_latency,
+            elapsed,
         );
     }
 
-    fn report_hist(name: &str, h: &mut PreciseHistogram<Duration>) -> Option<()> {
+    fn report_hist(
+        name: &str,
+        h: &mut PreciseHistogram<Duration>,
+        elapsed: Duration,
+    ) -> Option<()> {
         let [p50, p90, p99] = h.pcts([500, 900, 999])?;
         let avg = h.avg()?;
+        let count = h.count();
+        let tps = if elapsed.as_secs() > 0 {
+            count / elapsed.as_secs() as usize
+        } else {
+            0
+        };
         tracing::info!(
-            "{}: avg={:?}, p50={:?}, p90={:?}, p99={:?}",
+            "{}: tps={}, avg={:?}, p50={:?}, p90={:?}, p99={:?}",
             name,
+            tps,
             avg,
             p50,
             p90,

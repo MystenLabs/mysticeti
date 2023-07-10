@@ -45,8 +45,11 @@ impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy + Default> PreciseHistogra
         Some(self.sum / self.points.len() as u32)
     }
 
+    pub fn count(&mut self) -> usize {
+        self.points.len()
+    }
+
     pub fn pcts<const N: usize>(&mut self, pct: [usize; N]) -> Option<[T; N]> {
-        self.receive_all();
         if self.points.is_empty() {
             return None;
         }
@@ -65,9 +68,9 @@ impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy + Default> PreciseHistogra
         self.pcts([pct1000]).map(|[p]| p)
     }
 
-    fn receive_all(&mut self) {
+    pub fn receive_all(&mut self) {
         while let Ok(d) = self.receiver.try_recv() {
-            self.points.push(d);
+            self.observe(d);
         }
     }
 

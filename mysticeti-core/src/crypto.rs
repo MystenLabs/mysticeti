@@ -8,6 +8,7 @@ use crate::types::{
 };
 use blake2::Blake2b;
 use digest::Digest;
+#[cfg(not(test))]
 use ed25519_consensus::Signature;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -118,6 +119,7 @@ impl BlockDigest {
 }
 
 impl PublicKey {
+    #[cfg(not(test))]
     pub fn verify_block(&self, block: &StatementBlock) -> Result<(), ed25519_consensus::Error> {
         let signature = Signature::from(block.signature().0);
         let mut hasher = BlockHasher::default();
@@ -132,10 +134,15 @@ impl PublicKey {
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
         self.0.verify(&signature, digest.as_ref())
     }
+
+    #[cfg(test)]
+    pub fn verify_block(&self, _block: &StatementBlock) -> Result<(), ed25519_consensus::Error> {
+        Ok(())
+    }
 }
 
 impl Signer {
-    // todo - dummy implementation for the simulator tests
+    #[cfg(not(test))]
     pub fn sign_block(
         &self,
         authority: AuthorityIndex,
@@ -156,6 +163,18 @@ impl Signer {
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
         let signature = self.0.sign(digest.as_ref());
         SignatureBytes(signature.to_bytes())
+    }
+
+    #[cfg(test)]
+    pub fn sign_block(
+        &self,
+        _authority: AuthorityIndex,
+        _round: RoundNumber,
+        _includes: &[BlockReference],
+        _statements: &[BaseStatement],
+        _meta_creation_time_ns: TimestampNs,
+    ) -> SignatureBytes {
+        Default::default()
     }
 
     pub fn public_key(&self) -> PublicKey {

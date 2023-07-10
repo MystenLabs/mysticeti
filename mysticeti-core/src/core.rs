@@ -232,6 +232,13 @@ impl<H: BlockHandler> Core<H> {
         );
 
         let block = Data::new(block);
+        if block.serialized_bytes().len() > 12 * 1024 {
+            // Sanity check for now
+            panic!(
+                "Created an oversized block(check all limits set properly!): {:?}",
+                block.detailed()
+            );
+        }
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
             *pos
         } else {

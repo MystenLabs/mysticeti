@@ -242,6 +242,10 @@ impl StatementBlock {
         );
         Ok(())
     }
+
+    pub fn detailed(&self) -> Detailed {
+        Detailed(self)
+    }
 }
 
 impl BlockReference {
@@ -312,6 +316,27 @@ pub fn format_authority_index(i: AuthorityIndex) -> char {
 impl fmt::Debug for StatementBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+pub struct Detailed<'a>(&'a StatementBlock);
+
+impl<'a> fmt::Debug for Detailed<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StatementBlock {:?} {{", self.0.reference())?;
+        write!(
+            f,
+            "includes({})={:?},",
+            self.0.includes().len(),
+            self.0.includes()
+        )?;
+        write!(
+            f,
+            "statements({})={:?}",
+            self.0.statements.len(),
+            self.0.statements()
+        )?;
+        writeln!(f, "}}")
     }
 }
 

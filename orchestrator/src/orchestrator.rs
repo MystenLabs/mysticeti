@@ -221,19 +221,19 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             "sudo apt-get -y autoremove",
             // Disable "pending kernel upgrade" message.
             "sudo apt-get -y remove needrestart",
-            // The following dependencies prevent the error: [error: linker `cc` not found].
-            "sudo apt-get -y install build-essential",
-            // Install prometheus.
-            "sudo apt-get -y install prometheus",
+            // The following dependencies
+            // * build-essential: prevent the error: [error: linker `cc` not found].
+            // * sysstat - for getting disk stats
+            // * iftop - for getting network stats
+            // * prometheus - for metrics
+            // * libssl-dev - Required to compile the orchestrator, todo remove this dependency
+            "sudo apt-get -y install build-essential sysstat iftop prometheus libssl-dev",
             "sudo chmod 777 -R /var/lib/prometheus/",
             // Install rust (non-interactive).
             "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",
             "source $HOME/.cargo/env",
             "rustup default stable",
-            // Required to compile the orchestrator.
-            // TODO: remove this dependency.
-            "sudo apt-get -y install libssl-dev",
             // Create the working directory.
             &format!("mkdir -p {working_dir}"),
             // Clone the repo.

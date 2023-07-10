@@ -232,7 +232,7 @@ impl<H: BlockHandler> Core<H> {
         );
 
         let block = Data::new(block);
-        if block.serialized_bytes().len() > 12 * 1024 {
+        if block.serialized_bytes().len() > 32 * 1024 {
             // Sanity check for now
             panic!(
                 "Created an oversized block(check all limits set properly!): {:?}",

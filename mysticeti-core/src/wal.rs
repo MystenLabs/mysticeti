@@ -96,11 +96,18 @@ fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
     Ok((writer, reader))
 }
 
-const MAP_SIZE: u64 = 0x10_000;
-// 16 pages
+#[cfg(not(test))]
+const MAP_SIZE: u64 = 0x100_000; // ~0.5 Mb
+#[cfg(not(test))]
+const MAP_MASK: u64 = !0xf_ffff;
+#[cfg(test)]
+const MAP_SIZE: u64 = 0x10_000; // 16 pages
+#[cfg(test)]
 const MAP_MASK: u64 = !0xffff;
 const ZERO_MAP: [u8; MAP_SIZE as usize] = [0u8; MAP_SIZE as usize];
 const _: () = assert_constants();
+
+pub const MAX_ENTRY_SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize;
 
 const CRC: Crc<u64> = Crc::<u64>::new(
     &CRC_64_MS, /*selection of algorithm here is mostly random*/

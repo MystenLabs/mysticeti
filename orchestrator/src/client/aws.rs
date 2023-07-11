@@ -161,14 +161,17 @@ impl AwsClient {
         Self::check_but_ignore_duplicates(response)?;
 
         // Authorize all traffic on the security group.
-        for protocol in ["tcp", "udp"] {
-            let request = client
+        for protocol in ["tcp", "udp", "icmp", "icmpv6"] {
+            let mut request = client
                 .authorize_security_group_ingress()
                 .group_name(&self.settings.testbed_id)
                 .ip_protocol(protocol)
-                .cidr_ip("0.0.0.0/0")
-                .from_port(0)
-                .to_port(65535);
+                .cidr_ip("0.0.0.0/0"); // todo - allowing 0.0.0.0 seem a bit wild?
+            if protocol == "icmp" || protocol == "icmpv6" {
+                request = request.from_port(-1).to_port(-1);
+            } else {
+                request = request.from_port(0).to_port(65535);
+            }
 
             let response = request.send().await;
             Self::check_but_ignore_duplicates(response)?;

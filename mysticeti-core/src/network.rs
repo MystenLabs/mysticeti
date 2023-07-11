@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
-use crate::{config::Parameters, data::Data};
+use crate::{config::Parameters, data::Data, runtime};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,7 @@ impl Network {
                     peer_id: id,
                     connection_sender: connection_sender.clone(),
                     bind_addr: bind_addr(local_addr),
+                    active_immediately: id < our_id,
                 }
                 .run(receiver),
             );
@@ -153,6 +154,7 @@ struct Worker {
     peer_id: usize,
     connection_sender: mpsc::Sender<Connection>,
     bind_addr: SocketAddr,
+    active_immediately: bool,
 }
 
 struct WorkerConnection {
@@ -167,12 +169,19 @@ impl Worker {
     const MAX_SIZE: u32 = 1024 * 1024;
 
     async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
-        let mut work = self.connect_and_handle(self.peer).boxed();
+        let initial_delay = if self.active_immediately {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(1)
+        };
+        let mut work = self.connect_and_handle(initial_delay, self.peer).boxed();
         loop {
             match select(work, receiver.recv().boxed()).await {
                 Either::Left((_work, _receiver)) => {
-                    // restart work (todo - need sleep / wait?)
-                    work = self.connect_and_handle(self.peer).boxed();
+                    // todo - randomize delay
+                    work = self
+                        .connect_and_handle(Duration::from_secs(1), self.peer)
+                        .boxed();
                 }
                 Either::Right((received, _work)) => {
                     if let Some(received) = received {
@@ -187,7 +196,9 @@ impl Worker {
         }
     }
 
-    async fn connect_and_handle(&self, peer: SocketAddr) -> io::Result<()> {
+    async fn connect_and_handle(&self, delay: Duration, peer: SocketAddr) -> io::Result<()> {
+        // this is critical to avoid race between active and passive connections
+        runtime::sleep(delay).await;
         let mut stream = loop {
             let socket = if self.bind_addr.is_ipv4() {
                 TcpSocket::new_v4().unwrap()

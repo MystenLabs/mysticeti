@@ -158,6 +158,7 @@ struct Worker {
 struct WorkerConnection {
     sender: mpsc::Sender<NetworkMessage>,
     receiver: mpsc::Receiver<NetworkMessage>,
+    peer_id: usize,
 }
 
 impl Worker {
@@ -175,6 +176,7 @@ impl Worker {
                 }
                 Either::Right((received, _work)) => {
                     if let Some(received) = received {
+                        tracing::debug!("Replaced connection for {}", self.peer_id);
                         work = self.handle_passive_stream(received).boxed();
                     } else {
                         // Channel closed, server is terminated
@@ -229,11 +231,17 @@ impl Worker {
     }
 
     async fn handle_stream(stream: TcpStream, connection: WorkerConnection) -> io::Result<()> {
-        let WorkerConnection { sender, receiver } = connection;
+        let WorkerConnection {
+            sender,
+            receiver,
+            peer_id,
+        } = connection;
+        tracing::debug!("Connected to {}", peer_id);
         let (reader, writer) = stream.into_split();
         let write_fut = Self::handle_write_stream(writer, receiver).boxed();
         let read_fut = Self::handle_read_stream(reader, sender).boxed();
         let (r, _, _) = select_all([write_fut, read_fut]).await;
+        tracing::debug!("Disconnected from {}", peer_id);
         r
     }
 
@@ -291,6 +299,7 @@ impl Worker {
         Some(WorkerConnection {
             sender: network_in_sender,
             receiver: network_out_receiver,
+            peer_id: self.peer_id,
         })
     }
 }

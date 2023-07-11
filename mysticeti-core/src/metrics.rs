@@ -123,6 +123,7 @@ impl MetricReporter {
     }
 
     async fn run_report(&mut self) {
+        self.receive_all();
         let elapsed = self.started.elapsed();
         Self::report_hist(
             "transaction_certified_latency",

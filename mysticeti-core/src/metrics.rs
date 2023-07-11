@@ -11,6 +11,7 @@ use prometheus::{
     register_int_counter_vec_with_registry, register_int_counter_with_registry, CounterVec,
     HistogramVec, IntCounter, IntCounterVec, Registry,
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tabled::{Table, Tabled};
@@ -160,7 +161,7 @@ impl MetricReporter {
                 latencies.push(report);
             }
         }
-        tracing::info!("\n{}", Table::new(latencies));
+        tracing::info!("Network latency report:\n{}", Table::new(latencies));
     }
 
     fn latency_report(peer: usize, hist: &mut PreciseHistogram<Duration>) -> Option<LatencyReport> {
@@ -199,6 +200,24 @@ impl MetricReporter {
         );
         None
     }
+}
+
+pub fn print_network_address_table(addresses: &[SocketAddr]) {
+    let table: Vec<_> = addresses
+        .iter()
+        .enumerate()
+        .map(|(peer, address)| NetworkAddressTable {
+            peer: format_authority_index(peer as AuthorityIndex),
+            address: address.to_string(),
+        })
+        .collect();
+    tracing::info!("Network address table:\n{}", Table::new(table));
+}
+
+#[derive(Tabled)]
+struct NetworkAddressTable {
+    peer: char,
+    address: String,
 }
 
 #[derive(Tabled)]

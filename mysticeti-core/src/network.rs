@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::metrics::Metrics;
+use crate::metrics::{print_network_address_table, Metrics};
 use crate::stat::HistogramSender;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
@@ -57,6 +57,7 @@ impl Network {
         metrics: Arc<Metrics>,
     ) -> Self {
         let addresses = parameters.all_network_addresses().collect::<Vec<_>>();
+        print_network_address_table(&addresses);
         Self::from_socket_addresses(&addresses, our_id as usize, local_addr, metrics).await
     }
 

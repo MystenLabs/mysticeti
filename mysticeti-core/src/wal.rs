@@ -121,6 +121,26 @@ const fn assert_constants() {
     if u64::MAX - MAP_MASK != MAP_SIZE - 1 {
         panic!("MAP_MASK and MAP_SIZE do not match");
     }
+    // Checks mask is in form 1...10....0
+    check_zeroes(MAP_MASK);
+}
+
+const fn check_zeroes(m: u64) {
+    if m & 1 == 1 {
+        check_ones(m >> 1);
+    } else {
+        check_zeroes(m >> 1);
+    }
+}
+
+const fn check_ones(m: u64) {
+    if m == 0 {
+        return;
+    }
+    if m & 1 != 1 {
+        panic!("Invalid mask");
+    }
+    check_ones(m >> 1);
 }
 
 fn offset(p: u64) -> u64 {

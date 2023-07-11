@@ -203,7 +203,9 @@ impl<C: ServerProviderClient> Testbed<C> {
         display::action("Stopping instances");
 
         // Stop all instances.
-        self.client.stop_instances(self.instances.iter()).await?;
+        self.client
+            .stop_instances(self.instances.iter().filter(|i| i.is_active()))
+            .await?;
 
         // Wait until the instances are stopped.
         loop {

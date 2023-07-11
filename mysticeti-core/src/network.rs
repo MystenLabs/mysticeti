@@ -5,10 +5,13 @@ use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
+use rand::prelude::ThreadRng;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::ops::Range;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -172,16 +175,14 @@ impl Worker {
         let initial_delay = if self.active_immediately {
             Duration::ZERO
         } else {
-            Duration::from_secs(1)
+            sample_delay(Duration::from_secs(1)..Duration::from_secs(5))
         };
         let mut work = self.connect_and_handle(initial_delay, self.peer).boxed();
         loop {
             match select(work, receiver.recv().boxed()).await {
                 Either::Left((_work, _receiver)) => {
-                    // todo - randomize delay
-                    work = self
-                        .connect_and_handle(Duration::from_secs(1), self.peer)
-                        .boxed();
+                    let delay = sample_delay(Duration::from_secs(1)..Duration::from_secs(5));
+                    work = self.connect_and_handle(delay, self.peer).boxed();
                 }
                 Either::Right((received, _work)) => {
                     if let Some(received) = received {
@@ -313,6 +314,10 @@ impl Worker {
             peer_id: self.peer_id,
         })
     }
+}
+
+fn sample_delay(range: Range<Duration>) -> Duration {
+    ThreadRng::default().gen_range(range)
 }
 
 #[cfg(test)]

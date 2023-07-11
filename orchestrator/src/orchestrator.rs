@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::future::select_all;
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self},
@@ -8,9 +9,11 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use tokio::select;
 
 use tokio::time::{self, Instant};
 
+use crate::monitor::NodeMonitorHandle;
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -187,7 +190,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         &self,
         instances: Vec<Instance>,
         parameters: &BenchmarkParameters<T>,
-    ) -> TestbedResult<()> {
+    ) -> TestbedResult<NodeMonitorHandle> {
         // Run one node per instance.
         let targets = self
             .protocol_commands
@@ -203,10 +206,44 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             .await?;
 
         // Wait until all nodes are reachable.
-        let commands = self.protocol_commands.nodes_metrics_command(instances);
+        let commands = self
+            .protocol_commands
+            .nodes_metrics_command(instances.clone());
         self.ssh_manager.wait_for_success(commands).await;
 
-        Ok(())
+        self.start_monitor(instances)
+    }
+
+    /// Monitors node process running on the instances,
+    /// Prints error message and terminates test if a node panics
+    fn start_monitor(&self, instances: Vec<Instance>) -> TestbedResult<NodeMonitorHandle> {
+        let targets = self.protocol_commands.monitor_command(instances);
+        let (handle, mut receiver) = NodeMonitorHandle::new();
+        let ssh_manager = self.ssh_manager.clone();
+        tokio::spawn(async move {
+            let monitor = Self::run_monitor(ssh_manager, targets);
+            select! {
+                _ = monitor => {
+                    unreachable!()
+                }
+                _ = receiver.recv() => {
+                    // do nothing
+                }
+            }
+        });
+        Ok(handle)
+    }
+
+    async fn run_monitor(ssh_manager: SshConnectionManager, targets: Vec<(Instance, String)>) {
+        let r = ssh_manager.run_per_instance(targets, CommandContext::new());
+        let (output, i, _) = select_all(r).await;
+        let output = output.unwrap();
+        let (instance, result) = match output {
+            Ok(output) => output,
+            Err(err) => panic!("Monitor command on {} failed: {:?}", i, err),
+        };
+        eprintln!("Node {} failed:\n{}", instance, result);
+        std::process::exit(1);
     }
 
     /// Install the codebase and its dependencies on the testbed.
@@ -343,17 +380,20 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
     }
 
     /// Deploy the nodes.
-    pub async fn run_nodes(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
+    pub async fn run_nodes(
+        &self,
+        parameters: &BenchmarkParameters<T>,
+    ) -> TestbedResult<NodeMonitorHandle> {
         display::action("Deploying validators");
 
         // Select the instances to run.
         let (_, nodes) = self.select_instances(parameters)?;
 
         // Boot one node per instance.
-        self.boot_nodes(nodes, parameters).await?;
+        let monitor = self.boot_nodes(nodes, parameters).await?;
 
         display::done();
-        Ok(())
+        Ok(monitor)
     }
 
     /// Deploy the load generators.
@@ -439,7 +479,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                         self.ssh_manager.kill(action.kill.clone(), "node").await?;
                     }
                     if !action.boot.is_empty() {
-                        self.boot_nodes(action.boot.clone(), parameters).await?;
+                        // Monitor not yet supported for this
+                        let _: NodeMonitorHandle = self.boot_nodes(action.boot.clone(), parameters).await?;
                     }
                     if !action.kill.is_empty() || !action.boot.is_empty() {
                         display::newline();
@@ -561,7 +602,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             }
 
             // Deploy the validators.
-            self.run_nodes(&parameters).await?;
+            let monitor = self.run_nodes(&parameters).await?;
 
             // Deploy the load generators.
             self.run_clients(&parameters).await?;
@@ -570,6 +611,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             let aggregator = self.run(&parameters).await?;
             aggregator.display_summary();
             generator.register_result(aggregator);
+            drop(monitor);
 
             // Kill the nodes and clients (without deleting the log files).
             self.cleanup(false).await?;

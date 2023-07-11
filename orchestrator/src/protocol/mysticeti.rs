@@ -90,6 +90,21 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         ["source $HOME/.cargo/env", &genesis].join(" && ")
     }
 
+    fn monitor_command<I>(&self, instances: I) -> Vec<(Instance, String)>
+    where
+        I: IntoIterator<Item = Instance>,
+    {
+        instances
+            .into_iter()
+            .map(|i| {
+                (
+                    i,
+                    "tail -f --pid=$(pidof mysticeti) -f /dev/null; tail -100 node.log".to_string(),
+                )
+            })
+            .collect()
+    }
+
     fn node_command<I>(
         &self,
         instances: I,

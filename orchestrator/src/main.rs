@@ -22,6 +22,7 @@ pub mod error;
 pub mod faults;
 pub mod logs;
 pub mod measurement;
+mod monitor;
 pub mod orchestrator;
 pub mod protocol;
 pub mod settings;

@@ -51,7 +51,7 @@ impl Validator {
 
         // Boot the prometheus server.
         let registry = Registry::new();
-        let (metrics, reporter) = Metrics::new(&registry);
+        let (metrics, reporter) = Metrics::new(&registry, Some(&committee));
         reporter.start();
 
         let metrics_handle =
@@ -77,7 +77,13 @@ impl Validator {
             tempfile::tempfile().unwrap(),
             CoreOptions::test(),
         );
-        let network = Network::load(parameters, authority, binding_network_address).await;
+        let network = Network::load(
+            parameters,
+            authority,
+            binding_network_address,
+            metrics.clone(),
+        )
+        .await;
         let network_synchronizer = NetworkSyncer::start(
             network,
             core,

@@ -28,7 +28,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub fn test_metrics() -> Arc<Metrics> {
-    Metrics::new(&Registry::new()).0
+    Metrics::new(&Registry::new(), None).0
 }
 
 pub fn committee(n: usize) -> Arc<Committee> {
@@ -58,7 +58,7 @@ pub fn committee_and_cores_persisted(
         .authorities()
         .map(|authority| {
             let last_transaction = first_transaction_for_authority(authority);
-            let (metrics, reporter) = Metrics::new(&Registry::new());
+            let (metrics, reporter) = Metrics::new(&Registry::new(), Some(&committee));
             let block_handler = TestBlockHandler::new(
                 last_transaction,
                 committee.clone(),
@@ -125,15 +125,19 @@ pub fn committee_and_syncers(
     )
 }
 
-pub async fn networks_and_addresses(n: usize) -> (Vec<Network>, Vec<SocketAddr>) {
+pub async fn networks_and_addresses(metrics: &[Arc<Metrics>]) -> (Vec<Network>, Vec<SocketAddr>) {
     let host = Ipv4Addr::LOCALHOST;
-    let addresses: Vec<_> = (0..n)
+    let addresses: Vec<_> = (0..metrics.len())
         .map(|i| SocketAddr::V4(SocketAddrV4::new(host, 5001 + i as u16)))
         .collect();
-    let networks = addresses
-        .iter()
-        .enumerate()
-        .map(|(i, address)| Network::from_socket_addresses(&addresses, i, *address));
+    let networks =
+        addresses
+            .iter()
+            .zip(metrics.iter())
+            .enumerate()
+            .map(|(i, (address, metrics))| {
+                Network::from_socket_addresses(&addresses, i, *address, metrics.clone())
+            });
     let networks = join_all(networks).await;
     (networks, addresses)
 }
@@ -165,7 +169,8 @@ pub fn simulated_network_syncers(
 
 pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
     let (committee, cores, _) = committee_and_cores(n);
-    let (networks, _) = networks_and_addresses(cores.len()).await;
+    let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
+    let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitHandler::new(

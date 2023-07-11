@@ -1,9 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::committee::Committee;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::stat::{histogram, HistogramSender, PreciseHistogram};
+use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry, CounterVec,
@@ -11,6 +13,7 @@ use prometheus::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tabled::{Table, Tabled};
 use tokio::time::Instant;
 
 const LATENCY_SEC_BUCKETS: &[f64] = &[
@@ -33,6 +36,7 @@ pub struct Metrics {
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
     pub transaction_committed_latency: HistogramSender<Duration>,
+    pub connection_latency_sender: Vec<HistogramSender<Duration>>,
 }
 
 pub struct MetricReporter {
@@ -41,18 +45,23 @@ pub struct MetricReporter {
     pub transaction_certified_latency: PreciseHistogram<Duration>,
     pub certificate_committed_latency: PreciseHistogram<Duration>,
     pub transaction_committed_latency: PreciseHistogram<Duration>,
+    pub connection_latency: Vec<PreciseHistogram<Duration>>,
     started: TimeInstant,
 }
 
 impl Metrics {
-    pub fn new(registry: &Registry) -> (Arc<Self>, MetricReporter) {
+    pub fn new(registry: &Registry, committee: Option<&Committee>) -> (Arc<Self>, MetricReporter) {
         let (transaction_certified_latency_hist, transaction_certified_latency) = histogram();
         let (certificate_committed_latency_hist, certificate_committed_latency) = histogram();
         let (transaction_committed_latency_hist, transaction_committed_latency) = histogram();
+        let commitee_size = committee.map(Committee::len).unwrap_or_default();
+        let (connection_latency_hist, connection_latency_sender) =
+            (0..commitee_size).map(|_| histogram()).unzip();
         let reporter = MetricReporter {
             transaction_certified_latency: transaction_certified_latency_hist,
             certificate_committed_latency: certificate_committed_latency_hist,
             transaction_committed_latency: transaction_committed_latency_hist,
+            connection_latency: connection_latency_hist,
             started: TimeInstant::now(),
         };
         let metrics = Self {
@@ -94,6 +103,7 @@ impl Metrics {
             transaction_certified_latency,
             certificate_committed_latency,
             transaction_committed_latency,
+            connection_latency_sender,
         };
 
         (Arc::new(metrics), reporter)
@@ -109,6 +119,9 @@ impl MetricReporter {
         self.transaction_certified_latency.receive_all();
         self.certificate_committed_latency.receive_all();
         self.transaction_committed_latency.receive_all();
+        self.connection_latency
+            .iter_mut()
+            .for_each(PreciseHistogram::receive_all);
     }
 
     // todo - this task never stops
@@ -140,6 +153,26 @@ impl MetricReporter {
             &mut self.transaction_committed_latency,
             elapsed,
         );
+
+        let mut latencies = vec![];
+        for (peer, hist) in self.connection_latency.iter_mut().enumerate() {
+            if let Some(report) = Self::latency_report(peer, hist) {
+                latencies.push(report);
+            }
+        }
+        tracing::info!("{}", Table::new(latencies));
+    }
+
+    fn latency_report(peer: usize, hist: &mut PreciseHistogram<Duration>) -> Option<LatencyReport> {
+        let [p50, p90, p99] = hist.pcts([500, 900, 999])?;
+        let avg = hist.avg()?;
+        Some(LatencyReport {
+            peer: format_authority_index(peer as AuthorityIndex),
+            p50: p50.as_millis() as u64,
+            p90: p90.as_millis() as u64,
+            p99: p99.as_millis() as u64,
+            avg: avg.as_millis() as u64,
+        })
     }
 
     fn report_hist(
@@ -166,4 +199,13 @@ impl MetricReporter {
         );
         None
     }
+}
+
+#[derive(Tabled)]
+struct LatencyReport {
+    peer: char,
+    p50: u64,
+    p90: u64,
+    p99: u64,
+    avg: u64,
 }

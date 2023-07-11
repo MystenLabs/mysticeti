@@ -445,7 +445,7 @@ mod test {
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
-        let (metrics, _) = Metrics::new(default_registry());
+        let (metrics, _) = Metrics::new(default_registry(), None);
         let committee = committee(4);
         let wave_length = 3;
 

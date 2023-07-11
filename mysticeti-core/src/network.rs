@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::metrics::Metrics;
+use crate::stat::HistogramSender;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
 use futures::future::{select, select_all, Either};
@@ -12,12 +14,17 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::runtime::Handle;
+use tokio::select;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
+
+const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
@@ -47,9 +54,10 @@ impl Network {
         parameters: &Parameters,
         our_id: AuthorityIndex,
         local_addr: SocketAddr,
+        metrics: Arc<Metrics>,
     ) -> Self {
         let addresses = parameters.all_network_addresses().collect::<Vec<_>>();
-        Self::from_socket_addresses(&addresses, our_id as usize, local_addr).await
+        Self::from_socket_addresses(&addresses, our_id as usize, local_addr, metrics).await
     }
 
     pub fn connection_receiver(&mut self) -> &mut mpsc::Receiver<Connection> {
@@ -60,6 +68,7 @@ impl Network {
         addresses: &[SocketAddr],
         our_id: usize,
         local_addr: SocketAddr,
+        metrics: Arc<Metrics>,
     ) -> Self {
         if our_id >= addresses.len() {
             panic!(
@@ -91,6 +100,7 @@ impl Network {
                     connection_sender: connection_sender.clone(),
                     bind_addr: bind_addr(local_addr),
                     active_immediately: id < our_id,
+                    latency_sender: metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone()
                 }
                 .run(receiver),
             );
@@ -158,12 +168,14 @@ struct Worker {
     connection_sender: mpsc::Sender<Connection>,
     bind_addr: SocketAddr,
     active_immediately: bool,
+    latency_sender: HistogramSender<Duration>,
 }
 
 struct WorkerConnection {
     sender: mpsc::Sender<NetworkMessage>,
     receiver: mpsc::Receiver<NetworkMessage>,
     peer_id: usize,
+    latency_sender: HistogramSender<Duration>,
 }
 
 impl Worker {
@@ -247,11 +259,14 @@ impl Worker {
             sender,
             receiver,
             peer_id,
+            latency_sender,
         } = connection;
         tracing::debug!("Connected to {}", peer_id);
         let (reader, writer) = stream.into_split();
-        let write_fut = Self::handle_write_stream(writer, receiver).boxed();
-        let read_fut = Self::handle_read_stream(reader, sender).boxed();
+        let (pong_sender, pong_receiver) = mpsc::channel(16);
+        let write_fut =
+            Self::handle_write_stream(writer, receiver, pong_receiver, latency_sender).boxed();
+        let read_fut = Self::handle_read_stream(reader, sender, pong_sender).boxed();
         let (r, _, _) = select_all([write_fut, read_fut]).await;
         tracing::debug!("Disconnected from {}", peer_id);
         r
@@ -260,19 +275,82 @@ impl Worker {
     async fn handle_write_stream(
         mut writer: OwnedWriteHalf,
         mut receiver: mpsc::Receiver<NetworkMessage>,
+        mut pong_receiver: mpsc::Receiver<i64>,
+        latency_sender: HistogramSender<Duration>,
     ) -> io::Result<()> {
-        // todo - pass signal to break main loop
-        while let Some(message) = receiver.recv().await {
-            let serialized = bincode::serialize(&message).expect("Serialization should not fail");
-            writer.write_u32(serialized.len() as u32).await?;
-            writer.write_all(&serialized).await?;
+        let start = Instant::now();
+        let mut ping_deadline = start + PING_INTERVAL;
+        loop {
+            select! {
+                _deadline = tokio::time::sleep_until(ping_deadline) => {
+                    ping_deadline += PING_INTERVAL;
+                    let ping_time = start.elapsed().as_micros() as i64;
+                    // because we wait for PING_INTERVAL the interval it can't be 0
+                    assert!(ping_time > 0);
+                    let ping = encode_ping(ping_time);
+                    writer.write_all(&ping).await?;
+                }
+                received = pong_receiver.recv() => {
+                    // We have an embedded ping-pong protocol for measuring RTT:
+                    //
+                    // Every PING_INTERVAL node emits a "ping", positive number encoding some local time
+                    // On receiving positive ping, node replies with "pong" which is negative number (e.g. "ping".neg())
+                    // On receiving negative number we can calculate RTT(by negating it again and getting original ping time)
+                    // todo - we trust remote peer here, might want to enforce ping (not critical for safety though)
+
+                    let Some(ping) = received else {return Ok(())}; // todo - pass signal? (pong_sender closed)
+                    if ping == 0 {
+                        tracing::warn!("Invalid ping: {ping}");
+                        return Ok(());
+                    }
+                    if ping > 0 {
+                        match ping.checked_neg() {
+                            Some(pong) => {
+                                let pong = encode_ping(pong);
+                                writer.write_all(&pong).await?;
+                            },
+                            None => {
+                                tracing::warn!("Invalid ping: {ping}");
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        match ping.checked_neg().and_then(|n|u64::try_from(n).ok()) {
+                            Some(our_ping) => {
+                                let time = start.elapsed().as_micros() as u64;
+                                match time.checked_sub(our_ping) {
+                                    Some(delay) => {
+                                        latency_sender.observe(Duration::from_micros(delay));
+                                    },
+                                    None => {
+                                        tracing::warn!("Invalid ping: {ping}, greater then current time {time}");
+                                        return Ok(());
+                                    }
+                                }
+
+                            },
+                            None => {
+                                tracing::warn!("Invalid pong: {ping}");
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                received = receiver.recv() => {
+                    // todo - pass signal to break main loop
+                    let Some(message) = received else {return Ok(())};
+                    let serialized = bincode::serialize(&message).expect("Serialization should not fail");
+                    writer.write_u32(serialized.len() as u32).await?;
+                    writer.write_all(&serialized).await?;
+                }
+            }
         }
-        Ok(())
     }
 
     async fn handle_read_stream(
         mut stream: OwnedReadHalf,
         sender: mpsc::Sender<NetworkMessage>,
+        pong_sender: mpsc::Sender<i64>,
     ) -> io::Result<()> {
         let mut buf = Box::new([0u8; Self::MAX_SIZE as usize]);
         loop {
@@ -280,6 +358,17 @@ impl Worker {
             if size > Self::MAX_SIZE {
                 tracing::warn!("Invalid size: {size}");
                 return Ok(());
+            }
+            if size == 0 {
+                // ping message
+                let buf = &mut buf[..PING_SIZE - 4 /*Already read size(u32)*/];
+                let read = stream.read_exact(buf).await?;
+                assert_eq!(read, buf.len());
+                let pong = decode_ping(buf);
+                if pong_sender.send(pong).await.is_err() {
+                    return Ok(()); // write stream closed
+                }
+                continue;
             }
             let buf = &mut buf[..size as usize];
             let read = stream.read_exact(buf).await?;
@@ -312,6 +401,7 @@ impl Worker {
             sender: network_in_sender,
             receiver: network_out_receiver,
             peer_id: self.peer_id,
+            latency_sender: self.latency_sender.clone(),
         })
     }
 }
@@ -320,15 +410,36 @@ fn sample_delay(range: Range<Duration>) -> Duration {
     ThreadRng::default().gen_range(range)
 }
 
+const PING_SIZE: usize = 12;
+fn encode_ping(message: i64) -> [u8; PING_SIZE] {
+    let mut m = [0u8; 12];
+    m[4..].copy_from_slice(&message.to_le_bytes());
+    m
+}
+
+fn decode_ping(message: &[u8]) -> i64 {
+    let mut m = [0u8; 8];
+    m.copy_from_slice(message); // asserts message.len() == 8
+    i64::from_le_bytes(m)
+}
+
 #[cfg(test)]
 mod test {
+    use crate::committee::Committee;
+    use crate::metrics::Metrics;
     use crate::test_util::networks_and_addresses;
+    use prometheus::Registry;
     use std::collections::HashSet;
 
     #[ignore]
     #[tokio::test]
     async fn network_connect_test() {
-        let (networks, addresses) = networks_and_addresses(3).await;
+        let committee = Committee::new_test(vec![1, 1, 1]);
+        let metrics: Vec<_> = committee
+            .authorities()
+            .map(|_| Metrics::new(&Registry::default(), Some(&committee)).0)
+            .collect();
+        let (networks, addresses) = networks_and_addresses(&metrics).await;
         for (mut network, address) in networks.into_iter().zip(addresses.iter()) {
             let mut waiting_peers: HashSet<_> = HashSet::from_iter(addresses.iter().copied());
             waiting_peers.remove(address);

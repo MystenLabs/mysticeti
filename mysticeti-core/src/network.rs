@@ -228,6 +228,7 @@ impl Worker {
                 }
             }
         };
+        stream.set_nodelay(true)?;
         stream.write_u64(Self::ACTIVE_HANDSHAKE).await?;
         let handshake = stream.read_u64().await?;
         if handshake != Self::PASSIVE_HANDSHAKE {
@@ -242,6 +243,7 @@ impl Worker {
     }
 
     async fn handle_passive_stream(&self, mut stream: TcpStream) -> io::Result<()> {
+        stream.set_nodelay(true)?;
         stream.write_u64(Self::PASSIVE_HANDSHAKE).await?;
         let handshake = stream.read_u64().await?;
         if handshake != Self::ACTIVE_HANDSHAKE {

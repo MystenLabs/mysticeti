@@ -160,7 +160,7 @@ impl MetricReporter {
                 latencies.push(report);
             }
         }
-        tracing::info!("{}", Table::new(latencies));
+        tracing::info!("\n{}", Table::new(latencies));
     }
 
     fn latency_report(peer: usize, hist: &mut PreciseHistogram<Duration>) -> Option<LatencyReport> {

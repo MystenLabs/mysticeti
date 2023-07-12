@@ -13,7 +13,6 @@ use tokio::select;
 
 use tokio::time::{self, Instant};
 
-use crate::error::SshError;
 use crate::monitor::NodeMonitorHandle;
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
@@ -27,6 +26,7 @@ use crate::{
     settings::Settings,
     ssh::{CommandContext, CommandStatus, SshConnectionManager},
 };
+use crate::{error::SshError, monitor::PrometheusConfigs};
 
 /// An orchestrator to run benchmarks on a testbed.
 pub struct Orchestrator<P, T> {
@@ -302,6 +302,27 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         let active = self.instances.iter().filter(|x| x.is_active()).cloned();
         let context = CommandContext::default();
         self.ssh_manager.execute(active, command, context).await?;
+
+        display::done();
+        Ok(())
+    }
+
+    /// Reload prometheus on all instances.
+    pub async fn prometheus(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
+        display::action("Reloading prometheus instances");
+
+        let (clients, nodes) = self.select_instances(parameters)?;
+        let instances = if self.dedicated_clients != 0 {
+            clients.into_iter().chain(nodes).collect()
+        } else {
+            nodes
+        };
+
+        let prometheus_configs = PrometheusConfigs::new(instances, &self.protocol_commands);
+        let commands = prometheus_configs.print_commands();
+        self.ssh_manager
+            .execute_per_instance(commands, CommandContext::default())
+            .await?;
 
         display::done();
         Ok(())
@@ -587,19 +608,6 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         if !self.skip_testbed_update {
             self.install().await?;
             self.update().await?;
-
-            //
-            let prometheus_configs = crate::monitor::PrometheusConfigs::new(
-                self.instances.clone(),
-                &self.protocol_commands,
-            );
-            let commands = prometheus_configs.print_commands();
-            self.ssh_manager
-                .execute_per_instance(commands, CommandContext::default())
-                .await?;
-
-            return Ok(());
-            //
         }
 
         // Run all benchmarks.
@@ -613,6 +621,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
             // Cleanup the testbed (in case the previous run was not completed).
             self.cleanup(true).await?;
+            self.prometheus(&parameters).await?;
 
             // Configure all instances (if needed).
             if !self.skip_testbed_configuration && latest_committee_size != parameters.nodes {

@@ -271,7 +271,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             // * prometheus - for metrics
             // * libssl-dev - Required to compile the orchestrator, todo remove this dependency
             "sudo apt-get -y install build-essential sysstat iftop prometheus libssl-dev",
-            "sudo chmod 777 -R /var/lib/prometheus/",
+            "sudo chmod 777 -R /var/lib/prometheus/ /etc/prometheus/",
             // Install rust (non-interactive).
             "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",

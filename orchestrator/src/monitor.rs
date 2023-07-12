@@ -58,14 +58,13 @@ impl PrometheusConfigs {
                         "\tscrape_interval: 5s",
                         "\tscrape_timeout: 5s",
                         "scrape_configs:",
-                        "scrape_configs:",
                         "\t- job_name: 'prometheus'",
                         "\t\tstatic_configs:",
                         &format!("\t\t\t- targets: ['localhost:{port}']"),
                     ]
                     .join("\n");
 
-                    let config = Self::config_string(port);
+                    // let config = Self::config_string(port);
 
                     (instance, config)
                     // serde_yaml::from_str(&config).unwrap();

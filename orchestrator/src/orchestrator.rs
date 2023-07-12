@@ -587,6 +587,13 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         if !self.skip_testbed_update {
             self.install().await?;
             self.update().await?;
+
+            let prometheus_configs = crate::monitor::PrometheusConfigs::new(
+                self.instances.clone(),
+                &self.protocol_commands,
+            );
+            prometheus_configs.print_commands();
+            return Ok(());
         }
 
         // Run all benchmarks.

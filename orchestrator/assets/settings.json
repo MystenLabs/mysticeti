@@ -7,6 +7,6 @@
     "specs": "m5d.8xlarge",
     "repository": {
         "url": "https://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@github.com/mystenlabs/project-mysticeti.git",
-        "commit": "main"
+        "commit": "prometheus"
     }
 }

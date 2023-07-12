@@ -55,12 +55,12 @@ impl PrometheusConfigs {
 
                     let config = [
                         "global:",
-                        "\tscrape_interval: 5s",
-                        "\tevaluation_interval: 5s",
+                        " scrape_interval: 5s",
+                        " evaluation_interval: 5s",
                         "scrape_configs:",
-                        "\t- job_name: 'prometheus'",
-                        "\t\tstatic_configs:",
-                        &format!("\t\t\t- targets: ['localhost:{port}']"),
+                        " - job_name: 'prometheus'",
+                        "  static_configs:",
+                        &format!("   - targets: ['localhost:{port}']"),
                     ]
                     .join("\n");
 

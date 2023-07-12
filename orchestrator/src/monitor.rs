@@ -56,7 +56,7 @@ impl PrometheusConfigs {
                     let config = [
                         "global:",
                         "\tscrape_interval: 5s",
-                        "\tscrape_timeout: 5s",
+                        "\tevaluation_interval: 5s",
                         "scrape_configs:",
                         "\t- job_name: 'prometheus'",
                         "\t\tstatic_configs:",

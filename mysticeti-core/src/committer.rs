@@ -127,6 +127,7 @@ impl Committer {
             return None;
         }
         for include in from.includes() {
+            // Weak links may point to blocks with lower round numbers than strong links.
             if include.round() < round {
                 continue;
             }

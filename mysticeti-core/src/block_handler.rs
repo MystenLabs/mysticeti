@@ -81,7 +81,7 @@ impl BlockHandler for RealBlockHandler {
         let mut response = vec![];
         let mut transaction_time = self.transaction_time.lock();
         while let Ok(data) = self.receiver.try_recv() {
-            // todo - limit block size?
+            // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
             for (id, tx) in data {
                 response.push(BaseStatement::Share(id, tx));
                 transaction_time.insert(id, TimeInstant::now());

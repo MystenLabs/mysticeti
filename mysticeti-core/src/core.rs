@@ -239,6 +239,7 @@ impl<H: BlockHandler> Core<H> {
                 block.detailed()
             );
         }
+        self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
             *pos
         } else {
@@ -255,6 +256,24 @@ impl<H: BlockHandler> Core<H> {
         }
 
         Some(block)
+    }
+
+    fn proposed_block_stats(&self, block: &Data<StatementBlock>) {
+        self.metrics
+            .proposed_block_size_bytes
+            .observe(block.serialized_bytes().len());
+        let mut votes = 0usize;
+        let mut transactions = 0usize;
+        for statement in block.statements() {
+            match statement {
+                BaseStatement::Share(_, _) => transactions += 1,
+                BaseStatement::Vote(_, _) => votes += 1,
+            }
+        }
+        self.metrics
+            .proposed_block_transaction_count
+            .observe(transactions);
+        self.metrics.proposed_block_vote_count.observe(votes);
     }
 
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {

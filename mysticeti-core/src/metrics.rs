@@ -37,6 +37,11 @@ pub struct Metrics {
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
     pub transaction_committed_latency: HistogramSender<Duration>,
+
+    pub proposed_block_size_bytes: HistogramSender<usize>,
+    pub proposed_block_transaction_count: HistogramSender<usize>,
+    pub proposed_block_vote_count: HistogramSender<usize>,
+
     pub connection_latency_sender: Vec<HistogramSender<Duration>>,
 }
 
@@ -46,7 +51,13 @@ pub struct MetricReporter {
     pub transaction_certified_latency: PreciseHistogram<Duration>,
     pub certificate_committed_latency: PreciseHistogram<Duration>,
     pub transaction_committed_latency: PreciseHistogram<Duration>,
+
+    pub proposed_block_size_bytes: PreciseHistogram<usize>,
+    pub proposed_block_transaction_count: PreciseHistogram<usize>,
+    pub proposed_block_vote_count: PreciseHistogram<usize>,
+
     pub connection_latency: Vec<PreciseHistogram<Duration>>,
+
     started: TimeInstant,
 }
 
@@ -55,6 +66,11 @@ impl Metrics {
         let (transaction_certified_latency_hist, transaction_certified_latency) = histogram();
         let (certificate_committed_latency_hist, certificate_committed_latency) = histogram();
         let (transaction_committed_latency_hist, transaction_committed_latency) = histogram();
+
+        let (proposed_block_size_bytes_hist, proposed_block_size_bytes) = histogram();
+        let (proposed_block_transaction_count_hist, proposed_block_transaction_count) = histogram();
+        let (proposed_block_vote_count_hist, proposed_block_vote_count) = histogram();
+
         let commitee_size = committee.map(Committee::len).unwrap_or_default();
         let (connection_latency_hist, connection_latency_sender) =
             (0..commitee_size).map(|_| histogram()).unzip();
@@ -62,7 +78,13 @@ impl Metrics {
             transaction_certified_latency: transaction_certified_latency_hist,
             certificate_committed_latency: certificate_committed_latency_hist,
             transaction_committed_latency: transaction_committed_latency_hist,
+
+            proposed_block_size_bytes: proposed_block_size_bytes_hist,
+            proposed_block_transaction_count: proposed_block_transaction_count_hist,
+            proposed_block_vote_count: proposed_block_vote_count_hist,
+
             connection_latency: connection_latency_hist,
+
             started: TimeInstant::now(),
         };
         let metrics = Self {
@@ -104,6 +126,11 @@ impl Metrics {
             transaction_certified_latency,
             certificate_committed_latency,
             transaction_committed_latency,
+
+            proposed_block_size_bytes,
+            proposed_block_transaction_count,
+            proposed_block_vote_count,
+
             connection_latency_sender,
         };
 
@@ -120,6 +147,11 @@ impl MetricReporter {
         self.transaction_certified_latency.receive_all();
         self.certificate_committed_latency.receive_all();
         self.transaction_committed_latency.receive_all();
+
+        self.proposed_block_size_bytes.receive_all();
+        self.proposed_block_transaction_count.receive_all();
+        self.proposed_block_vote_count.receive_all();
+
         self.connection_latency
             .iter_mut()
             .for_each(PreciseHistogram::receive_all);
@@ -154,6 +186,18 @@ impl MetricReporter {
             &mut self.transaction_committed_latency,
             elapsed,
         );
+        Self::report_size_hist(
+            "proposed_block_size_bytes",
+            &mut self.proposed_block_size_bytes,
+        );
+        Self::report_size_hist(
+            "proposed_block_transaction_count",
+            &mut self.proposed_block_transaction_count,
+        );
+        Self::report_size_hist(
+            "proposed_block_vote_count",
+            &mut self.proposed_block_vote_count,
+        );
 
         let mut latencies = vec![];
         for (peer, hist) in self.connection_latency.iter_mut().enumerate() {
@@ -174,6 +218,20 @@ impl MetricReporter {
             p99: p99.as_millis() as u64,
             avg: avg.as_millis() as u64,
         })
+    }
+
+    fn report_size_hist(name: &str, h: &mut PreciseHistogram<usize>) -> Option<()> {
+        let [p50, p90, p99] = h.pcts([500, 900, 999])?;
+        let avg = h.avg()?;
+        tracing::info!(
+            "{}: avg={:?}, p50={:?}, p90={:?}, p99={:?}",
+            name,
+            avg,
+            p50,
+            p90,
+            p99
+        );
+        None
     }
 
     fn report_hist(

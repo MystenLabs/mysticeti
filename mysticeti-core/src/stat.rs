@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ops::{AddAssign, Div};
+use std::ops::AddAssign;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub struct PreciseHistogram<T> {
@@ -32,7 +33,7 @@ impl<T: Send> HistogramSender<T> {
     }
 }
 
-impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy + Default> PreciseHistogram<T> {
+impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
     pub fn observe(&mut self, point: T) {
         self.points.push(point);
         self.sum += point;
@@ -42,7 +43,7 @@ impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy + Default> PreciseHistogra
         if self.points.is_empty() {
             return None;
         }
-        Some(self.sum / self.points.len() as u32)
+        Some(self.sum.div_usize(self.points.len()))
     }
 
     pub fn count(&mut self) -> usize {
@@ -77,5 +78,21 @@ impl<T: Ord + AddAssign + Div<u32, Output = T> + Copy + Default> PreciseHistogra
     fn pct1000_index(&self, pct1000: usize) -> usize {
         debug_assert!(pct1000 < 1000);
         self.points.len() * pct1000 / 1000
+    }
+}
+
+pub trait DivUsize {
+    fn div_usize(&self, u: usize) -> Self;
+}
+
+impl DivUsize for Duration {
+    fn div_usize(&self, u: usize) -> Self {
+        *self / u as u32
+    }
+}
+
+impl DivUsize for usize {
+    fn div_usize(&self, u: usize) -> Self {
+        self / u
     }
 }

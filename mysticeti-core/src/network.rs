@@ -182,7 +182,7 @@ struct WorkerConnection {
 impl Worker {
     const ACTIVE_HANDSHAKE: u64 = 0xFEFE0000;
     const PASSIVE_HANDSHAKE: u64 = 0x0000AEAE;
-    const MAX_SIZE: u32 = 1024 * 1024;
+    const MAX_SIZE: u32 = 16 * 1024 * 1024;
 
     async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
         let initial_delay = if self.active_immediately {
@@ -355,7 +355,10 @@ impl Worker {
         sender: mpsc::Sender<NetworkMessage>,
         pong_sender: mpsc::Sender<i64>,
     ) -> io::Result<()> {
-        let mut buf = Box::new([0u8; Self::MAX_SIZE as usize]);
+        // stdlib has a special fast implementation for generating n-size byte vectors,
+        // see impl SpecFromElem for u8
+        // Note that Box::new([0u8; Self::MAX_SIZE as usize]); does not work with large MAX_SIZE
+        let mut buf = vec![0u8; Self::MAX_SIZE as usize].into_boxed_slice();
         loop {
             let size = stream.read_u32().await?;
             if size > Self::MAX_SIZE {

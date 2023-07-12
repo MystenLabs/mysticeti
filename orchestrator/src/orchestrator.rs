@@ -588,12 +588,18 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             self.install().await?;
             self.update().await?;
 
+            //
             let prometheus_configs = crate::monitor::PrometheusConfigs::new(
                 self.instances.clone(),
                 &self.protocol_commands,
             );
-            prometheus_configs.print_commands();
+            let commands = prometheus_configs.print_commands();
+            self.ssh_manager
+                .execute_per_instance(commands, CommandContext::default())
+                .await?;
+
             return Ok(());
+            //
         }
 
         // Run all benchmarks.

@@ -7,6 +7,7 @@ use crate::config::StorageDir;
 use crate::crypto::TransactionDigest;
 use crate::data::Data;
 use crate::log::CertifiedTransactionLog;
+use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
 use crate::types::{
@@ -22,6 +23,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
@@ -49,7 +51,7 @@ pub struct RealBlockHandler {
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     metrics: Arc<Metrics>,
-    rng: StdRng,
+    receiver: mpsc::Receiver<Vec<(TransactionId, Transaction)>>,
 }
 
 impl RealBlockHandler {
@@ -58,35 +60,35 @@ impl RealBlockHandler {
         authority: AuthorityIndex,
         config: &StorageDir,
         metrics: Arc<Metrics>,
-    ) -> Self {
-        let rng = StdRng::seed_from_u64(authority);
+    ) -> (Self, mpsc::Sender<Vec<(TransactionId, Transaction)>>) {
+        let (sender, receiver) = mpsc::channel(1024);
         let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
-        Self {
+        let this = Self {
             transaction_votes: TransactionAggregator::with_handler(transaction_log),
             transaction_time: Default::default(),
             committee,
             authority,
             metrics,
-            rng,
-        }
+            receiver,
+        };
+        (this, sender)
     }
 }
 
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
-        let mut next_transaction: Vec<u8> = Vec::with_capacity(REAL_BLOCK_HANDLER_TXN_SIZE);
-        while next_transaction.len() < REAL_BLOCK_HANDLER_TXN_SIZE {
-            next_transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
-        }
-        let next_transaction = Transaction::new(next_transaction);
-        let next_transaction_id = TransactionDigest::new(&next_transaction);
-        response.push(BaseStatement::Share(next_transaction_id, next_transaction));
         let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(next_transaction_id, TimeInstant::now());
-        self.transaction_votes
-            .register(next_transaction_id, self.authority, &self.committee);
+        while let Ok(data) = self.receiver.try_recv() {
+            // todo - limit block size?
+            for (id, tx) in data {
+                response.push(BaseStatement::Share(id, tx));
+                transaction_time.insert(id, TimeInstant::now());
+                self.transaction_votes
+                    .register(id, self.authority, &self.committee);
+            }
+        }
         for block in blocks {
             let processed =
                 self.transaction_votes
@@ -207,6 +209,49 @@ impl BlockHandler for TestBlockHandler {
             .expect("Failed to deserialize transaction aggregator state");
         self.transaction_votes.with_state(&transaction_votes);
         self.last_transaction = last_transaction;
+    }
+}
+
+pub struct TransactionGenerator {
+    sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
+    rng: StdRng,
+    transactions_per_100ms: usize,
+}
+
+impl TransactionGenerator {
+    pub fn start(
+        sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
+        seed: AuthorityIndex,
+        transactions_per_100ms: usize,
+    ) {
+        let rng = StdRng::seed_from_u64(seed);
+        let this = TransactionGenerator {
+            sender,
+            rng,
+            transactions_per_100ms,
+        };
+        runtime::Handle::current().spawn(this.run());
+    }
+
+    pub async fn run(mut self) {
+        loop {
+            runtime::sleep(Duration::from_millis(100)).await;
+            let mut block = Vec::with_capacity(self.transactions_per_100ms);
+
+            for _ in 0..self.transactions_per_100ms {
+                let mut transaction: Vec<u8> = Vec::with_capacity(REAL_BLOCK_HANDLER_TXN_SIZE);
+                while transaction.len() < REAL_BLOCK_HANDLER_TXN_SIZE {
+                    transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
+                }
+                let transaction = Transaction::new(transaction);
+                let id = TransactionDigest::new(&transaction);
+                block.push((id, transaction));
+            }
+
+            if self.sender.send(block).await.is_err() {
+                break;
+            }
+        }
     }
 }
 

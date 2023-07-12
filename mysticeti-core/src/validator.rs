@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
 };
@@ -9,6 +10,7 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
+use crate::block_handler::TransactionGenerator;
 use crate::core::CoreOptions;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
@@ -58,12 +60,18 @@ impl Validator {
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Boot the validator node.
-        let block_handler = RealBlockHandler::new(
+        let (block_handler, block_sender) = RealBlockHandler::new(
             committee.clone(),
             authority,
             private_config.storage(),
             metrics.clone(),
         );
+        let tps = env::var("TPS");
+        let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
+        let tps = tps.unwrap_or(10);
+        let transactions_per_100ms = (tps + 9) / 10;
+        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms");
+        TransactionGenerator::start(block_sender, authority, transactions_per_100ms);
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             block_handler.transaction_time.clone(),

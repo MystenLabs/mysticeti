@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     fmt::{Debug, Display},
     net::IpAddr,
     path::PathBuf,
@@ -133,7 +134,9 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                 .iter()
                 .collect();
 
+                let env = env::var("ENV").unwrap_or_default();
                 let run = [
+                    &env,
                     "cargo run --release --bin mysticeti --",
                     "run",
                     &format!(

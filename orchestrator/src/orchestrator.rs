@@ -13,7 +13,7 @@ use tokio::select;
 
 use tokio::time::{self, Instant};
 
-use crate::monitor::NodeMonitorHandle;
+use crate::monitor::{GrafanaConfigs, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -318,11 +318,15 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             nodes
         };
 
-        let prometheus_configs = PrometheusConfigs::new(instances, &self.protocol_commands);
+        let prometheus_configs = PrometheusConfigs::new(instances.clone(), &self.protocol_commands);
         let commands = prometheus_configs.print_commands();
         self.ssh_manager
             .execute_per_instance(commands, CommandContext::default())
             .await?;
+
+        //
+        let grafana_configs = GrafanaConfigs::new(instances);
+        grafana_configs.execute();
 
         display::done();
         Ok(())

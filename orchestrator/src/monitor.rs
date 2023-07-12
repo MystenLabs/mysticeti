@@ -47,6 +47,7 @@ impl PrometheusConfigs {
                         "  evaluation_interval: 5s",
                         "scrape_configs:",
                         "  - job_name: prometheus",
+                        &format!("    metrics_path: /{path}"),
                         "    static_configs:",
                         "      - targets:",
                         &format!("        - localhost:{port}"),

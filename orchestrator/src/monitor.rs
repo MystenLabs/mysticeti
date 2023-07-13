@@ -5,7 +5,12 @@ use std::{fs, net::SocketAddr, path::PathBuf};
 
 use tokio::sync::mpsc;
 
-use crate::{client::Instance, protocol::ProtocolMetrics};
+use crate::{
+    client::Instance,
+    error::{MonitorError, MonitorResult},
+    protocol::ProtocolMetrics,
+    ssh::{CommandContext, SshConnectionManager},
+};
 
 #[must_use]
 pub struct NodeMonitorHandle(mpsc::Sender<()>);
@@ -17,6 +22,74 @@ impl NodeMonitorHandle {
     }
 }
 
+pub struct Monitor {
+    clients: Vec<Instance>,
+    nodes: Vec<Instance>,
+    ssh_manager: SshConnectionManager,
+    dedicated_clients: bool,
+}
+
+impl Monitor {
+    /// Create a new monitor.
+    pub fn new(
+        clients: Vec<Instance>,
+        nodes: Vec<Instance>,
+        ssh_manager: SshConnectionManager,
+        dedicated_clients: bool,
+    ) -> Self {
+        Self {
+            clients,
+            nodes,
+            ssh_manager,
+            dedicated_clients,
+        }
+    }
+
+    /// Start a prometheus instance on each remote machine.
+    pub async fn start_prometheus<P: ProtocolMetrics>(
+        &self,
+        protocol_commands: &P,
+    ) -> MonitorResult<()> {
+        // Select the instances to monitor.
+        let instances: Vec<_> = if self.dedicated_clients {
+            self.clients
+                .iter()
+                .cloned()
+                .chain(self.nodes.iter().cloned())
+                .collect()
+        } else {
+            self.nodes.clone()
+        };
+
+        // Configure and reload prometheus.
+        let commands = Prometheus::setup_commands(instances, protocol_commands);
+        self.ssh_manager
+            .execute_per_instance(commands, CommandContext::default())
+            .await?;
+
+        Ok(())
+    }
+
+    /// Start grafana on the local host.
+    pub fn start_grafana(&self) -> MonitorResult<()> {
+        // Select the instances to monitor.
+        let instances: Vec<_> = if self.dedicated_clients {
+            self.clients
+                .iter()
+                .cloned()
+                .chain(self.nodes.iter().cloned())
+                .collect()
+        } else {
+            self.nodes.clone()
+        };
+
+        // Configure and reload grafana.
+        Grafana::run(instances)?;
+
+        Ok(())
+    }
+}
+
 /// Generate the commands to setup prometheus on the given instances.
 /// TODO: Modify the configuration to also get client metrics.
 pub struct Prometheus;
@@ -24,6 +97,8 @@ pub struct Prometheus;
 impl Prometheus {
     /// The default prometheus configuration path.
     const DEFAULT_PROMETHEUS_CONFIG_PATH: &'static str = "/etc/prometheus/prometheus.yml";
+    /// The default prometheus port.
+    pub const DEFAULT_PORT: u16 = 9090;
 
     /// Generate the commands to update the prometheus configuration and restart prometheus.
     pub fn setup_commands<I, P>(instances: I, protocol: &P) -> Vec<(Instance, String)>
@@ -86,7 +161,7 @@ impl Grafana {
     pub const DEFAULT_PORT: u16 = 3000;
 
     /// Configure grafana to connect to the given instances. Only for macOS.
-    pub fn run<I>(instances: I)
+    pub fn run<I>(instances: I) -> MonitorResult<()>
     where
         I: IntoIterator<Item = Instance>,
     {
@@ -102,8 +177,9 @@ impl Grafana {
         for (i, instance) in instances.into_iter().enumerate() {
             let mut file = path.clone();
             file.push(format!("instance-{}.yml", i));
-            fs::write(&file, Self::datasource(&instance, i))
-                .expect("Failed to write grafana datasource");
+            fs::write(&file, Self::datasource(&instance, i)).map_err(|e| {
+                MonitorError::GrafanaError(format!("Failed to write grafana datasource ({e})"))
+            })?;
         }
 
         // Restart grafana.
@@ -113,7 +189,9 @@ impl Grafana {
             .arg("restart")
             .arg("grafana")
             .spawn()
-            .expect("Grafana failed to start");
+            .map_err(|e| MonitorError::GrafanaError(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Generate the content of the datasource file for the given instance.
@@ -129,7 +207,11 @@ impl Grafana {
             "    type: prometheus",
             "    access: proxy",
             "    orgId: 1",
-            &format!("    url: http://{}:9090", instance.main_ip),
+            &format!(
+                "    url: http://{}:{}",
+                instance.main_ip,
+                Prometheus::DEFAULT_PORT
+            ),
             "    editable: true",
             &format!("    uid: UID-{index}"),
         ]

@@ -13,7 +13,8 @@ use tokio::select;
 
 use tokio::time::{self, Instant};
 
-use crate::monitor::{Grafana, NodeMonitorHandle};
+use crate::error::SshError;
+use crate::monitor::{Grafana, Monitor, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -26,7 +27,6 @@ use crate::{
     settings::Settings,
     ssh::{CommandContext, CommandStatus, SshConnectionManager},
 };
-use crate::{error::SshError, monitor::Prometheus};
 
 /// An orchestrator to run benchmarks on a testbed.
 pub struct Orchestrator<P, T> {
@@ -56,6 +56,9 @@ pub struct Orchestrator<P, T> {
     /// Number of instances running only load generators (not nodes). If this value is set
     /// to zero, the orchestrator runs a load generate collocated with each node.
     dedicated_clients: usize,
+    /// Whether to start a grafana install on the local machine to monitor the nodes.
+    /// Only available on macOS, homebrew install.
+    boot_grafana: bool,
 }
 
 impl<P, T> Orchestrator<P, T> {
@@ -85,6 +88,7 @@ impl<P, T> Orchestrator<P, T> {
             skip_testbed_configuration: false,
             log_processing: false,
             dedicated_clients: 0,
+            boot_grafana: false,
         }
     }
 
@@ -100,7 +104,7 @@ impl<P, T> Orchestrator<P, T> {
         self
     }
 
-    /// Whether to skip testbed updates before running benchmarks.
+    /// Set whether to skip testbed updates before running benchmarks.
     pub fn skip_testbed_updates(mut self, skip_testbed_update: bool) -> Self {
         self.skip_testbed_update = skip_testbed_update;
         self
@@ -112,7 +116,7 @@ impl<P, T> Orchestrator<P, T> {
         self
     }
 
-    /// Whether to download and analyze the client and node log files.
+    /// Set whether to download and analyze the client and node log files.
     pub fn with_log_processing(mut self, log_processing: bool) -> Self {
         self.log_processing = log_processing;
         self
@@ -121,6 +125,12 @@ impl<P, T> Orchestrator<P, T> {
     /// Set the number of instances running exclusively load generators.
     pub fn with_dedicated_clients(mut self, dedicated_clients: usize) -> Self {
         self.dedicated_clients = dedicated_clients;
+        self
+    }
+
+    /// Set whether to boot grafana on the local machine to monitor the nodes.
+    pub fn boot_grafana(mut self, boot_grafana: bool) -> Self {
+        self.boot_grafana = boot_grafana;
         self
     }
 
@@ -308,25 +318,32 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
     }
 
     /// Reload prometheus on all instances.
-    pub async fn prometheus(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
-        display::action("Reloading prometheus instances");
+    pub async fn start_monitoring(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
+        display::action("Start monitoring instances");
 
         let (clients, nodes) = self.select_instances(parameters)?;
-        let instances = if self.dedicated_clients != 0 {
-            clients.into_iter().chain(nodes).collect()
+        let monitor = Monitor::new(
+            clients,
+            nodes,
+            self.ssh_manager.clone(),
+            self.dedicated_clients != 0,
+        );
+
+        // Start prometheus on all instances.
+        monitor.start_prometheus(&self.protocol_commands).await?;
+
+        // Start grafana on the localhost (only macOs, homebrew install).
+        if self.boot_grafana && cfg!(target_os = "macos") {
+            monitor.start_grafana()?;
+            display::done();
+            display::config(
+                "Grafana address",
+                format!("http://localhost:{}", Grafana::DEFAULT_PORT),
+            );
         } else {
-            nodes
-        };
+            display::done();
+        }
 
-        let commands = Prometheus::setup_commands(instances.clone(), &self.protocol_commands);
-        self.ssh_manager
-            .execute_per_instance(commands, CommandContext::default())
-            .await?;
-
-        //
-        Grafana::run(instances);
-
-        display::done();
         Ok(())
     }
 
@@ -623,7 +640,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
             // Cleanup the testbed (in case the previous run was not completed).
             self.cleanup(true).await?;
-            self.prometheus(&parameters).await?;
+            // Start the instance monitoring tools.
+            self.start_monitoring(&parameters).await?;
 
             // Configure all instances (if needed).
             if !self.skip_testbed_configuration && latest_committee_size != parameters.nodes {

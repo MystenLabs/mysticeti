@@ -9,7 +9,7 @@ use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
-use crate::wal::{walf, WalPosition, WalWriter};
+use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use minibytes::Bytes;
@@ -256,6 +256,12 @@ impl<H: BlockHandler> Core<H> {
         }
 
         Some(block)
+    }
+
+    pub fn wal_syncer(&self) -> WalSyncer {
+        self.wal_writer
+            .syncer()
+            .expect("Failed to create wal syncer")
     }
 
     fn proposed_block_stats(&self, block: &Data<StatementBlock>) {

@@ -24,6 +24,10 @@ pub struct WalReader {
     maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
+pub struct WalSyncer {
+    file: File,
+}
+
 #[derive(
     Clone, Copy, Eq, PartialEq, Debug, Ord, PartialOrd, Hash, Default, Serialize, Deserialize,
 )]
@@ -81,6 +85,7 @@ pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
 }
 
 fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
+    // todo - replace dup with File::try_clone()
     let fd = unsafe { libc::dup(file.as_raw_fd()) };
     if fd <= 0 {
         return Err(io::Error::last_os_error());
@@ -192,7 +197,23 @@ impl WalWriter {
         Ok(position)
     }
 
-    pub fn sync(&mut self) -> io::Result<()> {
+    pub fn sync(&self) -> io::Result<()> {
+        self.file.sync_data()
+    }
+
+    /// Allow to retrieve a 'syncer' instance that allows
+    /// to fsync wal to disk without acquiring a lock on wal itself.
+    ///
+    /// In mysticeti specifically this allows to have an independent syncer thread that
+    /// does not share locks with consensus thread.
+    pub fn syncer(&self) -> io::Result<WalSyncer> {
+        let file = self.file.try_clone()?;
+        Ok(WalSyncer { file })
+    }
+}
+
+impl WalSyncer {
+    pub fn sync(&self) -> io::Result<()> {
         self.file.sync_data()
     }
 }

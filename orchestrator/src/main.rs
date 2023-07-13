@@ -107,6 +107,11 @@ pub enum Operation {
         #[clap(long, value_name = "INT", default_value = "0", global = true)]
         dedicated_clients: usize,
 
+        /// Whether boot a grafana instance on the local machine to monitor the benchmark.
+        /// Only available for macOS, homebrew install.
+        #[clap(long, action, default_value = "true", global = true)]
+        boot_grafana: bool,
+
         /// The timeout duration for ssh commands (in seconds).
         #[clap(long, action, value_parser = parse_duration, default_value = "30", global = true)]
         timeout: Duration,
@@ -266,6 +271,7 @@ async fn run<C: ServerProviderClient>(settings: Settings, client: C, opts: Opts)
             skip_testbed_configuration,
             log_processing,
             dedicated_clients,
+            boot_grafana,
             timeout,
             retries,
             load_type,
@@ -328,6 +334,7 @@ async fn run<C: ServerProviderClient>(settings: Settings, client: C, opts: Opts)
             .skip_testbed_configuration(skip_testbed_configuration)
             .with_log_processing(log_processing)
             .with_dedicated_clients(dedicated_clients)
+            .boot_grafana(boot_grafana)
             .run_benchmarks(generator)
             .await
             .wrap_err("Failed to run benchmarks")?;

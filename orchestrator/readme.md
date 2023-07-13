@@ -96,13 +96,3 @@ cargo run --bin orchestrator -- benchmark --committee 10 fixed-load --loads 200 
 ```
 
 In a network of 10 validators, each with a corresponding load generator, each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the Prometheus metrics exposed by the load generators. The `orchestrator` binary provides additional commands to run a specific number of load generators on separate machines.
-
-## Step 5. Analyzing results
-
-Benchmarks results are automatically saved in the folder specified by the settings file. To generate a basic L-graph that provides a quick overview of the system's performance, use the following command:
-
-```bash
-cargo run --bin orchestrator -- plot
-```
-
-For more advanced and visually appealing plots, you can use the Python script located at `./assets/plots.py`.

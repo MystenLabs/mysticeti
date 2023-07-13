@@ -127,7 +127,7 @@ impl Prometheus {
     /// Generate the prometheus configuration from the given metrics path.
     /// NOTE: The configuration file is a yaml file so spaces are important.
     fn configuration(nodes_metrics_path: &str) -> String {
-        let parts: Vec<_> = nodes_metrics_path.split("/").collect();
+        let parts: Vec<_> = nodes_metrics_path.split('/').collect();
         let port = parts[0].parse::<SocketAddr>().unwrap().port();
         let path = parts[1];
 

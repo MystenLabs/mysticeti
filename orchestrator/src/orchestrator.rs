@@ -13,7 +13,7 @@ use tokio::select;
 
 use tokio::time::{self, Instant};
 
-use crate::monitor::{GrafanaConfigs, NodeMonitorHandle};
+use crate::monitor::{Grafana, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -26,7 +26,7 @@ use crate::{
     settings::Settings,
     ssh::{CommandContext, CommandStatus, SshConnectionManager},
 };
-use crate::{error::SshError, monitor::PrometheusConfigs};
+use crate::{error::SshError, monitor::Prometheus};
 
 /// An orchestrator to run benchmarks on a testbed.
 pub struct Orchestrator<P, T> {
@@ -318,15 +318,13 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             nodes
         };
 
-        let prometheus_configs = PrometheusConfigs::new(instances.clone(), &self.protocol_commands);
-        let commands = prometheus_configs.print_commands();
+        let commands = Prometheus::setup_commands(instances.clone(), &self.protocol_commands);
         self.ssh_manager
             .execute_per_instance(commands, CommandContext::default())
             .await?;
 
         //
-        let grafana_configs = GrafanaConfigs::new(instances);
-        grafana_configs.execute();
+        Grafana::run(instances);
 
         display::done();
         Ok(())

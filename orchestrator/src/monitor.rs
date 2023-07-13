@@ -187,7 +187,7 @@ impl Grafana {
             .arg("services")
             .arg("restart")
             .arg("grafana")
-            .arg("--q")
+            .arg("-q")
             .spawn()
             .map_err(|e| MonitorError::GrafanaError(e.to_string()))?;
 

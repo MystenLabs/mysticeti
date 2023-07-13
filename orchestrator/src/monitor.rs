@@ -184,10 +184,10 @@ impl Grafana {
 
         // Restart grafana.
         std::process::Command::new("brew")
-            .arg("--quiet")
             .arg("services")
             .arg("restart")
             .arg("grafana")
+            .arg("--q")
             .spawn()
             .map_err(|e| MonitorError::GrafanaError(e.to_string()))?;
 

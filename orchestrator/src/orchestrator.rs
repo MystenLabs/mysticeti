@@ -340,6 +340,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                 "Grafana address",
                 format!("http://localhost:{}", Grafana::DEFAULT_PORT),
             );
+            display::newline();
         } else {
             display::done();
         }

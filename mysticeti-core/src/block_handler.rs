@@ -216,6 +216,7 @@ pub struct TransactionGenerator {
     sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
     rng: StdRng,
     transactions_per_100ms: usize,
+    initial_delay: Duration,
 }
 
 impl TransactionGenerator {
@@ -223,17 +224,20 @@ impl TransactionGenerator {
         sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
         seed: AuthorityIndex,
         transactions_per_100ms: usize,
+        initial_delay: Duration,
     ) {
         let rng = StdRng::seed_from_u64(seed);
         let this = TransactionGenerator {
             sender,
             rng,
             transactions_per_100ms,
+            initial_delay,
         };
         runtime::Handle::current().spawn(this.run());
     }
 
     pub async fn run(mut self) {
+        runtime::sleep(self.initial_delay).await;
         loop {
             runtime::sleep(Duration::from_millis(100)).await;
             let mut block = Vec::with_capacity(self.transactions_per_100ms);

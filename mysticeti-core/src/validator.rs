@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr},
@@ -70,8 +71,20 @@ impl Validator {
         let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
         let tps = tps.unwrap_or(10);
         let transactions_per_100ms = (tps + 9) / 10;
-        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms");
-        TransactionGenerator::start(block_sender, authority, transactions_per_100ms);
+        let initial_delay = env::var("INITIAL_DELAY");
+        let initial_delay = initial_delay.map(|t| {
+            t.parse::<u64>()
+                .expect("Failed to parse INITIAL_DELAY variable")
+        });
+        let initial_delay = initial_delay.unwrap_or(10);
+        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms, initial delay {initial_delay} sec");
+        let initial_delay = Duration::from_secs(initial_delay);
+        TransactionGenerator::start(
+            block_sender,
+            authority,
+            transactions_per_100ms,
+            initial_delay,
+        );
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             block_handler.transaction_time.clone(),

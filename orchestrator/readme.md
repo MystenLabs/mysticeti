@@ -96,3 +96,13 @@ cargo run --bin orchestrator -- benchmark --committee 10 fixed-load --loads 200 
 ```
 
 In a network of 10 validators, each with a corresponding load generator, each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the Prometheus metrics exposed by the load generators. The `orchestrator` binary provides additional commands to run a specific number of load generators on separate machines.
+
+## Step 5. Monitoring
+
+The orchestrator provides facilities to monitor metrics on clients and nodes. It deploys a [Prometheus](https://prometheus.io) instance on each remote machine. On macOS only, the orchestrator can also run with the flag `--boot-grafana` to locally provision and run a [Grafana](https://grafana.com) instance. Grafana must however be installed through [homebrew](https://brew.sh):
+
+```bash
+brew install grafana
+```
+
+Grafana is then available on `http://localhost:3000`. You can either create a [new dashboard](https://grafana.com/docs/grafana/latest/getting-started/build-first-dashboard/) or [import](https://grafana.com/docs/grafana/latest/dashboards/manage-dashboards/#import-a-dashboard) the example dashboard located in the `./assets` folder.

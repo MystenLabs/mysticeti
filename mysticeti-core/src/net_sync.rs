@@ -7,6 +7,7 @@ use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::{AuthorityIndex, RoundNumber};
+use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -14,11 +15,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
+    syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
 }
 
@@ -43,6 +45,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let (committed, state) = core.take_recovered_committed_blocks();
         commit_observer.recover_committed(committed, state);
         let committee = core.committee().clone();
+        let wal_syncer = core.wal_syncer();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -58,13 +61,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             notify,
             syncer,
             committee,
-            stop: stop_sender,
+            stop: stop_sender.clone(),
         });
         let main_task = handle.spawn(Self::run(network, inner.clone()));
+        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         Self {
             inner,
             main_task,
             stop: stop_receiver,
+            syncer_task,
         }
     }
 
@@ -72,6 +77,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         drop(self.stop);
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
+        self.syncer_task.await.ok();
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
@@ -222,6 +228,55 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
 impl SyncerSignals for Arc<Notify> {
     fn new_block_ready(&mut self) {
         self.notify_waiters();
+    }
+}
+
+pub struct AsyncWalSyncer {
+    wal_syncer: WalSyncer,
+    stop: mpsc::Sender<()>,
+    _sender: oneshot::Sender<()>,
+}
+
+impl AsyncWalSyncer {
+    #[cfg(not(feature = "simulator"))]
+    pub fn start(wal_syncer: WalSyncer, stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        let this = Self {
+            wal_syncer,
+            stop,
+            _sender: sender,
+        };
+        std::thread::Builder::new()
+            .name("wal-syncer".to_string())
+            .spawn(move || this.run())
+            .expect("Failed to spawn wal-syncer");
+        receiver
+    }
+
+    #[cfg(feature = "simulator")]
+    pub fn start(_wal_syncer: WalSyncer, _stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+        oneshot::channel().1
+    }
+
+    pub fn run(mut self) {
+        loop {
+            if tokio::runtime::Handle::current().block_on(self.wait_next()) {
+                return;
+            }
+            self.wal_syncer.sync().expect("Failed to sync wal");
+        }
+    }
+
+    // Returns true to stop the task
+    async fn wait_next(&mut self) -> bool {
+        select! {
+            _wait = runtime::sleep(Duration::from_secs(1)) => {
+                false
+            }
+            _signal = self.stop.send(()) => {
+                true
+            }
+        }
     }
 }
 

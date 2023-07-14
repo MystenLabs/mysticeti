@@ -22,6 +22,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     main_task: JoinHandle<()>,
     syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
+    _timeout_calculator_task: JoinHandle<()>,
 }
 
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
@@ -29,6 +30,7 @@ struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
+    tx_timeout_config: mpsc::Sender<oneshot::Sender<Duration>>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -51,25 +53,32 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             commit_period,
             notify.clone(),
             commit_observer,
-            metrics,
+            metrics.clone(),
         );
         syncer.force_new_block(0);
         let syncer = RwLock::new(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
+        let (tx_timeout_config, rx_timeout_config) = mpsc::channel(1);
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
             committee,
             stop: stop_sender.clone(),
+            tx_timeout_config,
         });
+
         let main_task = handle.spawn(Self::run(network, inner.clone()));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
+        let timeout_calculator_task =
+            handle.spawn(Self::timeout_calculator_task(metrics, rx_timeout_config));
+
         Self {
             inner,
             main_task,
             stop: stop_receiver,
             syncer_task,
+            _timeout_calculator_task: timeout_calculator_task,
         }
     }
 
@@ -175,7 +184,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     }
 
     async fn leader_timeout_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
-        let leader_timeout = Duration::from_secs(1);
+        let mut leader_timeout = Duration::from_secs(1);
         loop {
             let notified = inner.notify.notified();
             let round = inner
@@ -192,11 +201,25 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 _notified = notified => {
                     // restart loop
+                    let (sender, receiver) = oneshot::channel();
+                    inner.tx_timeout_config.send(sender).await.unwrap();
+                    leader_timeout = receiver.await.unwrap();
+
                 }
                 _stopped = inner.stopped() => {
                     return None;
                 }
             }
+        }
+    }
+
+    async fn timeout_calculator_task(
+        metrics: Arc<Metrics>,
+        mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
+    ) {
+        let timeout = Duration::from_secs(1);
+        while let Some(sender) = rx_timeout_config.recv().await {
+            sender.send(timeout).unwrap();
         }
     }
 
@@ -304,11 +327,20 @@ mod tests {
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod sim_tests {
-    use crate::future_simulator::SimulatedExecutorState;
-    use crate::runtime;
-    use crate::simulator_tracing::setup_simulator_tracing;
-    use crate::test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers};
+    use crate::{
+        block_handler::TestBlockHandler,
+        metrics::MetricReporter,
+        test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers},
+    };
+    use crate::{
+        block_handler::TestCommitHandler,
+        future_simulator::{OverrideNodeContext, SimulatedExecutorState},
+    };
+    use crate::{runtime, test_util::test_metrics};
+    use crate::{simulated_network::SimulatedNetwork, simulator_tracing::setup_simulator_tracing};
     use std::time::Duration;
+
+    use super::NetworkSyncer;
 
     #[test]
     fn test_network_sync_sim_all_up() {
@@ -352,5 +384,59 @@ mod sim_tests {
 
         check_commits(&syncers);
         print_stats(&syncers, &mut reporters);
+    }
+
+    // TEST
+
+    #[test]
+    fn test_rl_network_sync() {
+        setup_simulator_tracing();
+        SimulatedExecutorState::run(rng_at_seed(0), test_rl_network_sync_sim());
+    }
+
+    async fn test_rl_network_sync_sim() {
+        let (simulated_network, network_syncers, mut reporters) =
+            custom_simulated_network_syncers(10);
+        simulated_network.connect_all().await;
+
+        println!("Started");
+        runtime::sleep(Duration::from_secs(6000)).await;
+        println!("Done");
+
+        let mut syncers = vec![];
+        for network_syncer in network_syncers {
+            let syncer = network_syncer.shutdown().await;
+            syncers.push(syncer);
+        }
+
+        check_commits(&syncers);
+        print_stats(&syncers, &mut reporters);
+    }
+
+    fn custom_simulated_network_syncers(
+        n: usize,
+    ) -> (
+        SimulatedNetwork,
+        Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+        Vec<MetricReporter>,
+    ) {
+        let (committee, cores, reporters) = crate::test_util::committee_and_cores(n);
+        let (mut simulated_network, networks) = SimulatedNetwork::new(&committee);
+        simulated_network
+            .set_latency_range(Duration::from_millis(50)..Duration::from_millis(10_000));
+        let mut network_syncers = vec![];
+        for (network, core) in networks.into_iter().zip(cores.into_iter()) {
+            let commit_handler = TestCommitHandler::new(
+                committee.clone(),
+                core.block_handler().transaction_time.clone(),
+                core.metrics.clone(),
+            );
+            let node_context = OverrideNodeContext::enter(Some(core.authority()));
+            let network_syncer =
+                NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+            drop(node_context);
+            network_syncers.push(network_syncer);
+        }
+        (simulated_network, network_syncers, reporters)
     }
 }

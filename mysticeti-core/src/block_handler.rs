@@ -182,7 +182,7 @@ impl BlockHandler for TestBlockHandler {
         self.transaction_votes
             .register(next_transaction_id, self.authority, &self.committee);
         for block in blocks {
-            println!("Processing {block:?}");
+            // println!("Processing {block:?}");
             let processed =
                 self.transaction_votes
                     .process_block(block, Some(&mut response), &self.committee);

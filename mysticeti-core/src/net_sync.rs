@@ -71,7 +71,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let main_task = handle.spawn(Self::run(network, inner.clone()));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         let timeout_calculator_task =
-            handle.spawn(Self::timeout_calculator_task(metrics, rx_timeout_config));
+            handle.spawn(timeout_calculator_task(metrics, rx_timeout_config));
 
         Self {
             inner,
@@ -210,16 +210,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     return None;
                 }
             }
-        }
-    }
-
-    async fn timeout_calculator_task(
-        metrics: Arc<Metrics>,
-        mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
-    ) {
-        let timeout = Duration::from_secs(1);
-        while let Some(sender) = rx_timeout_config.recv().await {
-            sender.send(timeout).unwrap();
         }
     }
 
@@ -387,6 +377,11 @@ mod sim_tests {
     }
 
     // TEST
+    // $ cargo test -p mysticeti-core --features simulator test_rl -- --nocapture
+    // parameters:
+    const EXPERIMENT_DURATION: Duration = Duration::from_secs(6000);
+    const EXPERIMENT_LATENCY_RANGE: std::ops::Range<Duration> =
+        Duration::from_millis(400)..Duration::from_secs(10);
 
     #[test]
     fn test_rl_network_sync() {
@@ -400,7 +395,7 @@ mod sim_tests {
         simulated_network.connect_all().await;
 
         println!("Started");
-        runtime::sleep(Duration::from_secs(6000)).await;
+        runtime::sleep(EXPERIMENT_DURATION).await;
         println!("Done");
 
         let mut syncers = vec![];
@@ -422,8 +417,7 @@ mod sim_tests {
     ) {
         let (committee, cores, reporters) = crate::test_util::committee_and_cores(n);
         let (mut simulated_network, networks) = SimulatedNetwork::new(&committee);
-        simulated_network
-            .set_latency_range(Duration::from_millis(50)..Duration::from_millis(10_000));
+        simulated_network.set_latency_range(EXPERIMENT_LATENCY_RANGE);
         let mut network_syncers = vec![];
         for (network, core) in networks.into_iter().zip(cores.into_iter()) {
             let commit_handler = TestCommitHandler::new(
@@ -438,5 +432,16 @@ mod sim_tests {
             network_syncers.push(network_syncer);
         }
         (simulated_network, network_syncers, reporters)
+    }
+}
+
+// Here goes the magic
+async fn timeout_calculator_task(
+    metrics: Arc<Metrics>,
+    mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
+) {
+    let timeout = Duration::from_millis(500);
+    while let Some(sender) = rx_timeout_config.recv().await {
+        sender.send(timeout).unwrap();
     }
 }

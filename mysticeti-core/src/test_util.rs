@@ -148,37 +148,46 @@ pub fn simulated_network_syncers(
 ) -> (
     SimulatedNetwork,
     Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
-    Vec<MetricReporter>,
 ) {
     let (committee, cores, reporters) = committee_and_cores(n);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
-    for (network, core) in networks.into_iter().zip(cores.into_iter()) {
+    for ((network, core), reporter) in networks
+        .into_iter()
+        .zip(cores.into_iter())
+        .zip(reporters.into_iter())
+    {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
             core.metrics.clone(),
         );
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+        let network_syncer =
+            NetworkSyncer::start(network, core, 3, commit_handler, test_metrics(), reporter);
         drop(node_context);
         network_syncers.push(network_syncer);
     }
-    (simulated_network, network_syncers, reporters)
+    (simulated_network, network_syncers)
 }
 
 pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    let (committee, cores, _) = committee_and_cores(n);
+    let (committee, cores, reporters) = committee_and_cores(n);
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
-    for (network, core) in networks.into_iter().zip(cores.into_iter()) {
+    for ((network, core), reporter) in networks
+        .into_iter()
+        .zip(cores.into_iter())
+        .zip(reporters.into_iter())
+    {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
             test_metrics(),
         );
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+        let network_syncer =
+            NetworkSyncer::start(network, core, 3, commit_handler, test_metrics(), reporter);
         network_syncers.push(network_syncer);
     }
     network_syncers

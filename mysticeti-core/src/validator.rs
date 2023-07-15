@@ -55,7 +55,7 @@ impl Validator {
         // Boot the prometheus server.
         let registry = Registry::new();
         let (metrics, reporter) = Metrics::new(&registry, Some(&committee));
-        reporter.start();
+        // reporter.start();
 
         let metrics_handle =
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
@@ -111,6 +111,7 @@ impl Validator {
             parameters.wave_length(),
             commit_handler,
             metrics,
+            reporter,
         );
 
         tracing::info!("Validator {authority} listening on {network_address}");

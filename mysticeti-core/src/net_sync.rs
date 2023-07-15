@@ -8,7 +8,10 @@ use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::{AuthorityIndex, RoundNumber};
 use crate::wal::WalSyncer;
-use crate::{block_handler::BlockHandler, metrics::Metrics};
+use crate::{
+    block_handler::BlockHandler,
+    metrics::{MetricReporter, Metrics},
+};
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -25,12 +28,13 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     _timeout_calculator_task: JoinHandle<()>,
 }
 
-struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
+pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     syncer: RwLock<Syncer<H, Arc<Notify>, C>>,
     notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
     tx_timeout_config: mpsc::Sender<oneshot::Sender<Duration>>,
+    reporter: RwLock<MetricReporter>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -40,6 +44,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         commit_period: u64,
         mut commit_observer: C,
         metrics: Arc<Metrics>,
+        reporter: MetricReporter,
     ) -> Self {
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
@@ -53,7 +58,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             commit_period,
             notify.clone(),
             commit_observer,
-            metrics.clone(),
+            metrics,
         );
         syncer.force_new_block(0);
         let syncer = RwLock::new(syncer);
@@ -66,12 +71,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             committee,
             stop: stop_sender.clone(),
             tx_timeout_config,
+            reporter: RwLock::new(reporter),
         });
 
         let main_task = handle.spawn(Self::run(network, inner.clone()));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
-        let timeout_calculator_task =
-            handle.spawn(timeout_calculator_task(metrics, rx_timeout_config));
+        let timeout_calculator_task = handle.spawn(Self::timeout_calculator_task(
+            inner.clone(),
+            rx_timeout_config,
+        ));
 
         Self {
             inner,
@@ -82,7 +90,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
-    pub async fn shutdown(self) -> Syncer<H, Arc<Notify>, C> {
+    pub async fn shutdown(self) -> NetworkSyncerInner<H, C> {
         drop(self.stop);
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
@@ -90,7 +98,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
-        inner.syncer.into_inner()
+        inner
     }
 
     async fn run(mut network: Network, inner: Arc<NetworkSyncerInner<H, C>>) {
@@ -213,6 +221,32 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
+    /// Adjust the leader timeout
+    async fn timeout_calculator_task(
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
+    ) {
+        let timeout = Duration::from_millis(500);
+        loop {
+            tokio::select! {
+                Some(sender) = rx_timeout_config.recv() => {
+                    inner.reporter.write().receive_all();
+
+                    let tx_commit_avg = inner.reporter.read().transaction_committed_latency.avg();
+                    let cert_commit_avg = inner.reporter.read().certificate_committed_latency.avg();
+                    // println!("tx_commit_avg: {:?}, cert_commit_avg: {:?}", tx_commit_avg, cert_commit_avg);
+
+                    // todo
+
+                    sender.send(timeout).unwrap();
+                }
+                _stopped = inner.stopped() => {
+                    return;
+                }
+            }
+        }
+    }
+
     pub async fn await_completion(self) -> Result<(), JoinError> {
         self.main_task.await
     }
@@ -306,7 +340,8 @@ mod tests {
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {
-            let syncer = network_syncer.shutdown().await;
+            let inner = network_syncer.shutdown().await;
+            let syncer = inner.syncer.into_inner();
             syncers.push(syncer);
         }
 
@@ -319,7 +354,6 @@ mod tests {
 mod sim_tests {
     use crate::{
         block_handler::TestBlockHandler,
-        metrics::MetricReporter,
         test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers},
     };
     use crate::{
@@ -339,13 +373,17 @@ mod sim_tests {
     }
 
     async fn test_network_sync_sim_all_up_async() {
-        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
+        let (simulated_network, network_syncers) = simulated_network_syncers(10);
         simulated_network.connect_all().await;
         runtime::sleep(Duration::from_secs(20)).await;
         let mut syncers = vec![];
+        let mut reporters = vec![];
         for network_syncer in network_syncers {
-            let syncer = network_syncer.shutdown().await;
+            let inner = network_syncer.shutdown().await;
+            let syncer = inner.syncer.into_inner();
             syncers.push(syncer);
+            let reporter = inner.reporter;
+            reporters.push(reporter.into_inner());
         }
 
         check_commits(&syncers);
@@ -361,15 +399,19 @@ mod sim_tests {
     // All peers except for peer A are connected in this test
     // Peer A is disconnected from everything
     async fn test_network_sync_sim_one_down_async() {
-        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
+        let (simulated_network, network_syncers) = simulated_network_syncers(10);
         simulated_network.connect_some(|a, _b| a != 0).await;
         println!("Started");
         runtime::sleep(Duration::from_secs(40)).await;
         println!("Done");
         let mut syncers = vec![];
+        let mut reporters = vec![];
         for network_syncer in network_syncers {
-            let syncer = network_syncer.shutdown().await;
+            let inner = network_syncer.shutdown().await;
+            let syncer = inner.syncer.into_inner();
             syncers.push(syncer);
+            let reporter = inner.reporter;
+            reporters.push(reporter.into_inner());
         }
 
         check_commits(&syncers);
@@ -390,8 +432,7 @@ mod sim_tests {
     }
 
     async fn test_rl_network_sync_sim() {
-        let (simulated_network, network_syncers, mut reporters) =
-            custom_simulated_network_syncers(10);
+        let (simulated_network, network_syncers) = custom_simulated_network_syncers(10);
         simulated_network.connect_all().await;
 
         println!("Started");
@@ -399,9 +440,13 @@ mod sim_tests {
         println!("Done");
 
         let mut syncers = vec![];
+        let mut reporters = vec![];
         for network_syncer in network_syncers {
-            let syncer = network_syncer.shutdown().await;
+            let inner = network_syncer.shutdown().await;
+            let syncer = inner.syncer.into_inner();
             syncers.push(syncer);
+            let reporter = inner.reporter;
+            reporters.push(reporter.into_inner());
         }
 
         check_commits(&syncers);
@@ -413,13 +458,16 @@ mod sim_tests {
     ) -> (
         SimulatedNetwork,
         Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
-        Vec<MetricReporter>,
     ) {
         let (committee, cores, reporters) = crate::test_util::committee_and_cores(n);
         let (mut simulated_network, networks) = SimulatedNetwork::new(&committee);
         simulated_network.set_latency_range(EXPERIMENT_LATENCY_RANGE);
         let mut network_syncers = vec![];
-        for (network, core) in networks.into_iter().zip(cores.into_iter()) {
+        for ((network, core), reporter) in networks
+            .into_iter()
+            .zip(cores.into_iter())
+            .zip(reporters.into_iter())
+        {
             let commit_handler = TestCommitHandler::new(
                 committee.clone(),
                 core.block_handler().transaction_time.clone(),
@@ -427,21 +475,10 @@ mod sim_tests {
             );
             let node_context = OverrideNodeContext::enter(Some(core.authority()));
             let network_syncer =
-                NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+                NetworkSyncer::start(network, core, 3, commit_handler, test_metrics(), reporter);
             drop(node_context);
             network_syncers.push(network_syncer);
         }
-        (simulated_network, network_syncers, reporters)
-    }
-}
-
-// Here goes the magic
-async fn timeout_calculator_task(
-    metrics: Arc<Metrics>,
-    mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
-) {
-    let timeout = Duration::from_millis(500);
-    while let Some(sender) = rx_timeout_config.recv().await {
-        sender.send(timeout).unwrap();
+        (simulated_network, network_syncers)
     }
 }

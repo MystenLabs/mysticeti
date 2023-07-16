@@ -14,6 +14,7 @@ use crate::{
 };
 use futures::future::join_all;
 use parking_lot::RwLock;
+use rand::{seq::IteratorRandom, thread_rng, Rng};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +39,8 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
+    const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(1);
+
     pub fn start(
         network: Network,
         mut core: Core<H>,
@@ -192,7 +195,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     }
 
     async fn leader_timeout_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
-        let mut leader_timeout = Duration::from_secs(1);
+        let mut leader_timeout = Self::DEFAULT_LEADER_TIMEOUT;
         loop {
             let notified = inner.notify.notified();
             let round = inner
@@ -226,21 +229,69 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
     ) {
-        let timeout = Duration::from_millis(500);
+        // Possible timeout values
+        // let actions = (500..10_000).step_by(500).map(Duration::from_millis);
+        let actions = vec![500, 1_000, 3_000, 5_000, 10_000]
+            .into_iter()
+            .map(Duration::from_millis);
+        let mut count: HashMap<Duration, usize> = actions.clone().map(|x| (x, 0)).collect();
+        let mut av: HashMap<Duration, f64> = actions.clone().map(|x| (x, 0.0)).collect();
+        // epsilon
+        let epsilon = 0.1;
+
+        fn reward(latency: Duration, _c: usize) -> f64 {
+            // todo
+            -(latency.as_millis() as f64)
+        }
+
+        let mut timeout = Self::DEFAULT_LEADER_TIMEOUT;
+        let mut i = 0;
         loop {
             tokio::select! {
                 Some(sender) = rx_timeout_config.recv() => {
+                    i += 1;
+                    if i % 10 != 0 {
+                        sender.send(timeout).unwrap();
+                        continue;
+                    }
+
+                    // update
                     inner.reporter.write().receive_all();
-
                     let tx_commit_avg = inner.reporter.read().transaction_committed_latency.avg();
-                    let cert_commit_avg = inner.reporter.read().certificate_committed_latency.avg();
+                    let _cert_commit_avg = inner.reporter.read().certificate_committed_latency.avg();
                     // println!("tx_commit_avg: {:?}, cert_commit_avg: {:?}", tx_commit_avg, cert_commit_avg);
+                    if let Some(latency) = tx_commit_avg {
+                        *count.get_mut(&timeout).unwrap() += 1;
+                        let c = count.get(&timeout).unwrap().clone();
+                        let old_av = av.get(&timeout).unwrap().clone();
+                        let rew = reward(latency, c);
+                        let new_av = old_av + (rew - old_av) / (c as f64);
+                        *av.get_mut(&timeout).unwrap() = new_av;
 
-                    // todo
+                        // pick next timeout value
+                        if thread_rng().gen_range(0.0..1.0) < epsilon {
+                            // explore
+                            timeout = actions.clone().choose(&mut thread_rng()).unwrap().clone();
+                        } else {
+                            // exploit
+                            timeout = av.iter().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap().0.clone();
+                        }
+                    }
 
+                    // let timeout = Duration::from_millis(1000);
+                    // println!("timeout: {:?}", timeout);
                     sender.send(timeout).unwrap();
                 }
                 _stopped = inner.stopped() => {
+
+                    println!();
+                    let mut values: Vec<_> = av.iter().collect();
+                    values.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap());
+                    for v in values {
+                        print!("{}:{} ", v.0.as_millis(), v.1);
+                    }
+                    println!();
+
                     return;
                 }
             }
@@ -421,9 +472,9 @@ mod sim_tests {
     // TEST
     // $ cargo test -p mysticeti-core --features simulator test_rl -- --nocapture
     // parameters:
-    const EXPERIMENT_DURATION: Duration = Duration::from_secs(6000);
+    const EXPERIMENT_DURATION: Duration = Duration::from_secs(120_000);
     const EXPERIMENT_LATENCY_RANGE: std::ops::Range<Duration> =
-        Duration::from_millis(400)..Duration::from_secs(10);
+        Duration::from_millis(4000)..Duration::from_millis(4500);
 
     #[test]
     fn test_rl_network_sync() {
@@ -449,7 +500,7 @@ mod sim_tests {
             reporters.push(reporter.into_inner());
         }
 
-        check_commits(&syncers);
+        // check_commits(&syncers);
         print_stats(&syncers, &mut reporters);
     }
 

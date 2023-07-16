@@ -54,6 +54,13 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
         if self.points.is_empty() {
             return None;
         }
+
+        // Only keep the last 10% of the points
+        if self.points.len() > 10 {
+            let keep = self.points.len() / 10;
+            self.points = self.points.split_off(self.points.len() - keep);
+        }
+
         // Current sort algorithm in rust works faster on pre-sorted data.
         // So we sort inside current vector, instead of cloning a new one every time,
         // to make subsequent calls faster.

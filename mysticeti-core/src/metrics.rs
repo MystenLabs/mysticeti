@@ -40,6 +40,9 @@ pub struct Metrics {
 
     pub wal_mappings: IntGauge,
 
+    pub core_lock_util: IntCounter,
+    pub core_lock_wait: IntCounter,
+
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
     pub transaction_committed_latency: HistogramSender<Duration>,
@@ -145,6 +148,19 @@ impl Metrics {
             wal_mappings: register_int_gauge_with_registry!(
                 "wal_mappings",
                 "Number of mappings retained by the wal",
+                registry,
+            )
+            .unwrap(),
+
+            core_lock_util: register_int_counter_with_registry!(
+                "core_lock_util",
+                "Utilization of core write lock",
+                registry,
+            )
+            .unwrap(),
+            core_lock_wait: register_int_counter_with_registry!(
+                "core_lock_wait",
+                "Time to wait for core lock",
                 registry,
             )
             .unwrap(),
@@ -296,6 +312,30 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
         })
         .collect();
     tracing::info!("Network address table:\n{}", Table::new(table));
+}
+
+pub trait UtilizationTimerExt {
+    fn utilization_timer(&self) -> UtilizationTimer;
+}
+
+impl UtilizationTimerExt for IntCounter {
+    fn utilization_timer(&self) -> UtilizationTimer {
+        UtilizationTimer {
+            metric: self,
+            start: Instant::now(),
+        }
+    }
+}
+
+pub struct UtilizationTimer<'a> {
+    metric: &'a IntCounter,
+    start: Instant,
+}
+
+impl<'a> Drop for UtilizationTimer<'a> {
+    fn drop(&mut self) {
+        self.metric.inc_by(self.start.elapsed().as_micros() as u64);
+    }
 }
 
 #[derive(Tabled)]

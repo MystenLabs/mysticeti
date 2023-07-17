@@ -32,6 +32,7 @@ mod wal;
 
 mod block_store;
 mod crypto;
+mod lock;
 mod log;
 mod serde;
 #[cfg(feature = "simulator")]

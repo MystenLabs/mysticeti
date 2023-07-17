@@ -1,5 +1,6 @@
 use crate::committee::Committee;
 use crate::core::Core;
+use crate::lock::MonitoredRwLock;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
 use crate::runtime::Handle;
@@ -10,7 +11,6 @@ use crate::types::{AuthorityIndex, RoundNumber};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use futures::future::join_all;
-use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,7 +25,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 }
 
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
-    syncer: RwLock<Syncer<H, Arc<Notify>, C>>,
+    syncer: MonitoredRwLock<Syncer<H, Arc<Notify>, C>>,
     notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
@@ -51,10 +51,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             commit_period,
             notify.clone(),
             commit_observer,
-            metrics,
+            metrics.clone(),
         );
         syncer.force_new_block(0);
-        let syncer = RwLock::new(syncer);
+        let syncer = MonitoredRwLock::new(
+            syncer,
+            metrics.core_lock_util.clone(),
+            metrics.core_lock_wait.clone(),
+        );
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {

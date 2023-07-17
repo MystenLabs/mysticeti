@@ -373,9 +373,9 @@ impl fmt::Debug for BaseStatement {
 
 impl CryptoHash for BlockReference {
     fn crypto_hash(&self, state: &mut impl Digest) {
-        state.update(self.authority.to_le_bytes());
-        state.update(self.round.to_le_bytes());
-        state.update(self.digest);
+        self.authority.crypto_hash(state);
+        self.round.crypto_hash(state);
+        self.digest.crypto_hash(state);
     }
 }
 

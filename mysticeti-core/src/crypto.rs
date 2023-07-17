@@ -115,38 +115,75 @@ impl BlockDigest {
         statements: &[BaseStatement],
         meta_creation_time_ns: TimestampNs,
     ) {
-        hasher.update(authority.to_le_bytes());
-        hasher.update(round.to_le_bytes());
+        authority.crypto_hash(hasher);
+        round.crypto_hash(hasher);
         for include in includes {
             include.crypto_hash(hasher);
         }
         for statement in statements {
             match statement {
                 BaseStatement::Share(id, _) => {
-                    hasher.update([0]);
-                    hasher.update(id);
+                    [0].crypto_hash(hasher);
+                    id.crypto_hash(hasher);
                 }
                 BaseStatement::Vote(id, Vote::Accept) => {
-                    hasher.update([1]);
-                    hasher.update(id);
+                    [1].crypto_hash(hasher);
+                    id.crypto_hash(hasher);
                 }
                 BaseStatement::Vote(id, Vote::Reject(None)) => {
-                    hasher.update([2]);
-                    hasher.update(id);
+                    [2].crypto_hash(hasher);
+                    id.crypto_hash(hasher);
                 }
                 BaseStatement::Vote(id, Vote::Reject(Some(other))) => {
-                    hasher.update([3]);
-                    hasher.update(id);
-                    hasher.update(other);
+                    [3].crypto_hash(hasher);
+                    id.crypto_hash(hasher);
+                    other.crypto_hash(hasher);
                 }
             }
         }
-        hasher.update(meta_creation_time_ns.to_le_bytes())
+        meta_creation_time_ns.crypto_hash(hasher);
+    }
+}
+
+pub trait AsBytes {
+    // This is pretty much same as AsRef<[u8]>
+    //
+    // We need this separate trait because we want to impl CryptoHash
+    // for primitive types(u64, etc) and types like XxxDigest that implement AsRef<[u8]>.
+    //
+    // Rust unfortunately does not allow to impl trait for AsRef<[u8]> and primitive types like u64.
+    //
+    // While AsRef<[u8]> is not implemented for u64, it seem to be reserved in compiler,
+    // so `impl CryptoHash for u64` and `impl<T: AsRef<[u8]>> CryptoHash for T` collide.
+    fn as_bytes(&self) -> &[u8];
+}
+
+impl<const N: usize> AsBytes for [u8; N] {
+    fn as_bytes(&self) -> &[u8] {
+        self
     }
 }
 
 pub trait CryptoHash {
     fn crypto_hash(&self, state: &mut impl Digest);
+}
+
+impl CryptoHash for u64 {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        state.update(self.to_be_bytes());
+    }
+}
+
+impl CryptoHash for u128 {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        state.update(self.to_be_bytes());
+    }
+}
+
+impl<T: AsBytes> CryptoHash for T {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        state.update(self.as_bytes());
+    }
 }
 
 impl PublicKey {
@@ -227,6 +264,24 @@ impl AsRef<[u8]> for TransactionDigest {
 
 impl AsRef<[u8]> for SignatureBytes {
     fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsBytes for BlockDigest {
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsBytes for TransactionDigest {
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsBytes for SignatureBytes {
+    fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }

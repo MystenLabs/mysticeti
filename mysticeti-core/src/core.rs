@@ -307,6 +307,8 @@ impl<H: BlockHandler> Core<H> {
             self.last_commit_round
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );
+
+        self.block_handler.cleanup();
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,

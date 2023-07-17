@@ -31,6 +31,8 @@ pub trait BlockHandler: Send + Sync {
     fn state(&self) -> Bytes;
 
     fn recover_state(&mut self, _state: &Bytes);
+
+    fn cleanup(&self) {}
 }
 
 const REAL_BLOCK_HANDLER_TXN_SIZE: usize = 512;
@@ -110,6 +112,12 @@ impl BlockHandler for RealBlockHandler {
 
     fn recover_state(&mut self, state: &Bytes) {
         self.transaction_votes.with_state(state);
+    }
+
+    fn cleanup(&self) {
+        // todo - all of this should go away and we should measure tx latency differently
+        let mut l = self.transaction_time.lock();
+        l.retain(|_k, v| v.elapsed() < Duration::from_secs(10));
     }
 }
 

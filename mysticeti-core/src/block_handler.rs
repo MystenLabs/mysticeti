@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
+use crate::commit_interpreter::CommitInterpreter;
 use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
 use crate::config::StorageDir;
 use crate::crypto::TransactionDigest;
@@ -272,8 +272,7 @@ pub struct TestCommitHandler {
     transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
-    committed_dags: Vec<CommittedSubDag>,
-
+    // committed_dags: Vec<CommittedSubDag>,
     start_time: TimeInstant,
     transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
 
@@ -291,8 +290,7 @@ impl TestCommitHandler {
             transaction_votes: Default::default(),
             committee,
             committed_leaders: vec![],
-            committed_dags: vec![],
-
+            // committed_dags: vec![],
             start_time: TimeInstant::now(),
             transaction_time,
 
@@ -364,7 +362,7 @@ impl CommitObserver for TestCommitHandler {
                 }
             }
             commit_data.push(CommitData::from(&commit));
-            self.committed_dags.push(commit);
+            // self.committed_dags.push(commit);
         }
         commit_data
     }

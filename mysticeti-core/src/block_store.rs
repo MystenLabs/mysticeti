@@ -98,6 +98,7 @@ impl BlockStore {
 
     pub fn get_block(&self, reference: BlockReference) -> Option<Data<StatementBlock>> {
         let entry = self.inner.read().get_block(reference);
+        // todo - consider adding loaded entries back to cache
         entry.map(|pos| self.read_index(pos))
     }
 

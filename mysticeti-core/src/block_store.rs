@@ -220,6 +220,7 @@ impl BlockStoreInner {
     // todo - also specify LRU criteria
     /// Unload all entries from below or equal threshold_round
     pub fn unload_below_round(&mut self, threshold_round: RoundNumber) {
+        let mut unloaded = 0usize;
         for (round, map) in self.index.iter_mut() {
             // todo - try BTreeMap for self.index?
             if *round > threshold_round {
@@ -229,8 +230,14 @@ impl BlockStoreInner {
                 match entry {
                     IndexEntry::WalPosition(_) => {}
                     // Unload entry
-                    IndexEntry::Loaded(position, _) => *entry = IndexEntry::WalPosition(*position),
+                    IndexEntry::Loaded(position, _) => {
+                        unloaded += 1;
+                        *entry = IndexEntry::WalPosition(*position);
+                    }
                 }
+            }
+            if unloaded > 0 {
+                tracing::info!("Unloaded {unloaded} entries from block store cache");
             }
         }
     }

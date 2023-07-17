@@ -3,6 +3,7 @@
 
 use crate::commit_interpreter::CommittedSubDag;
 use crate::data::Data;
+use crate::metrics::Metrics;
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -19,6 +20,7 @@ use std::time::Instant;
 pub struct BlockStore {
     inner: Arc<RwLock<BlockStoreInner>>,
     block_wal_reader: Arc<WalReader>,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Default)]
@@ -39,7 +41,11 @@ enum IndexEntry {
 }
 
 impl BlockStore {
-    pub fn open(block_wal_reader: Arc<WalReader>, wal_writer: &WalWriter) -> RecoveredState {
+    pub fn open(
+        block_wal_reader: Arc<WalReader>,
+        wal_writer: &WalWriter,
+        metrics: Arc<Metrics>,
+    ) -> RecoveredState {
         let mut inner = BlockStoreInner::default();
         let mut builder = RecoveredStateBuilder::new();
         let mut replay_started: Option<Instant> = None;
@@ -88,6 +94,7 @@ impl BlockStore {
         let this = Self {
             block_wal_reader,
             inner: Arc::new(RwLock::new(inner)),
+            metrics,
         };
         builder.build(this)
     }
@@ -148,13 +155,18 @@ impl BlockStore {
         if threshold_round == 0 {
             return;
         }
-        self.inner.write().unload_below_round(threshold_round);
-        self.block_wal_reader.cleanup();
+        let unloaded = self.inner.write().unload_below_round(threshold_round);
+        self.metrics
+            .block_store_unloaded_blocks
+            .inc_by(unloaded as u64);
+        let retained_maps = self.block_wal_reader.cleanup();
+        self.metrics.wal_mappings.set(retained_maps as i64);
     }
 
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
+                self.metrics.block_store_loaded_blocks.inc();
                 let (tag, data) = self
                     .block_wal_reader
                     .read(position)
@@ -223,7 +235,7 @@ impl BlockStoreInner {
 
     // todo - also specify LRU criteria
     /// Unload all entries from below or equal threshold_round
-    pub fn unload_below_round(&mut self, threshold_round: RoundNumber) {
+    pub fn unload_below_round(&mut self, threshold_round: RoundNumber) -> usize {
         let mut unloaded = 0usize;
         for (round, map) in self.index.iter_mut() {
             // todo - try BTreeMap for self.index?
@@ -242,8 +254,9 @@ impl BlockStoreInner {
             }
         }
         if unloaded > 0 {
-            tracing::info!("Unloaded {unloaded} entries from block store cache");
+            tracing::debug!("Unloaded {unloaded} entries from block store cache");
         }
+        unloaded
     }
 
     pub fn add_unloaded(&mut self, reference: &BlockReference, position: WalPosition) {

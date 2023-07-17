@@ -275,7 +275,7 @@ impl TestBlockWriter {
     pub fn new() -> Self {
         let file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(file).unwrap();
-        let state = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let state = BlockStore::open(Arc::new(wal_reader), &wal_writer, test_metrics());
         let block_store = state.block_store;
         Self {
             block_store,

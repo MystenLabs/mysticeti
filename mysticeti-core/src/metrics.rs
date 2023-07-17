@@ -8,8 +8,9 @@ use crate::stat::{histogram, HistogramSender, PreciseHistogram};
 use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
-    register_int_counter_vec_with_registry, register_int_counter_with_registry, CounterVec,
-    HistogramVec, IntCounter, IntCounterVec, Registry,
+    register_int_counter_vec_with_registry, register_int_counter_with_registry,
+    register_int_gauge_with_registry, CounterVec, HistogramVec, IntCounter, IntCounterVec,
+    IntGauge, Registry,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -33,6 +34,11 @@ pub struct Metrics {
     pub latency_squared_s: CounterVec,
     pub committed_leaders_total: IntCounterVec,
     pub leader_timeout_total: IntCounter,
+
+    pub block_store_unloaded_blocks: IntCounter,
+    pub block_store_loaded_blocks: IntCounter,
+
+    pub wal_mappings: IntGauge,
 
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
@@ -119,6 +125,26 @@ impl Metrics {
             leader_timeout_total: register_int_counter_with_registry!(
                 "leader_timeout_total",
                 "Total number of leader timeouts",
+                registry,
+            )
+            .unwrap(),
+
+            block_store_loaded_blocks: register_int_counter_with_registry!(
+                "block_store_loaded_blocks",
+                "Blocks loaded from wal position in the block store",
+                registry,
+            )
+            .unwrap(),
+            block_store_unloaded_blocks: register_int_counter_with_registry!(
+                "block_store_unloaded_blocks",
+                "Blocks unloaded from wal position during cleanup",
+                registry,
+            )
+            .unwrap(),
+
+            wal_mappings: register_int_gauge_with_registry!(
+                "wal_mappings",
+                "Number of mappings retained by the wal",
                 registry,
             )
             .unwrap(),

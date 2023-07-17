@@ -59,7 +59,7 @@ impl<H: BlockHandler> Core<H> {
         options: CoreOptions,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let recovered = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let recovered = BlockStore::open(Arc::new(wal_reader), &wal_writer, metrics.clone());
         let RecoveredState {
             block_store,
             last_own_block,

@@ -8,7 +8,6 @@ use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock, TimestampNs,
     Transaction,
 };
-#[cfg(not(test))]
 use digest::Digest;
 #[cfg(not(test))]
 use ed25519_consensus::Signature;
@@ -118,11 +117,8 @@ impl BlockDigest {
     ) {
         hasher.update(authority.to_le_bytes());
         hasher.update(round.to_le_bytes());
-        // todo - we might want a generic interface to hash BlockReference/BaseStatement
         for include in includes {
-            hasher.update(include.authority.to_le_bytes());
-            hasher.update(include.round.to_le_bytes());
-            hasher.update(include.digest);
+            include.crypto_hash(hasher);
         }
         for statement in statements {
             match statement {
@@ -147,6 +143,10 @@ impl BlockDigest {
         }
         hasher.update(meta_creation_time_ns.to_le_bytes())
     }
+}
+
+pub trait CryptoHash {
+    fn crypto_hash(&self, state: &mut impl Digest);
 }
 
 impl PublicKey {

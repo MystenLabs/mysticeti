@@ -16,9 +16,10 @@ pub type KeyPair = u64;
 pub type PublicKey = crate::crypto::PublicKey;
 
 use crate::committee::Committee;
-use crate::crypto::{SignatureBytes, Signer};
+use crate::crypto::{CryptoHash, SignatureBytes, Signer};
 use crate::data::Data;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
+use digest::Digest;
 use eyre::{bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -367,6 +368,14 @@ impl PartialEq for StatementBlock {
 impl fmt::Debug for BaseStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl CryptoHash for BlockReference {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        state.update(self.authority.to_le_bytes());
+        state.update(self.round.to_le_bytes());
+        state.update(self.digest);
     }
 }
 

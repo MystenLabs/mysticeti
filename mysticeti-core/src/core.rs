@@ -301,7 +301,12 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn cleanup(&self) {
-        self.block_store.cleanup(self.last_commit_round);
+        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 12;
+
+        self.block_store.cleanup(
+            self.last_commit_round
+                .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
+        );
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,

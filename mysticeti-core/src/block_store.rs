@@ -144,6 +144,9 @@ impl BlockStore {
     }
 
     pub fn cleanup(&self, threshold_round: RoundNumber) {
+        if threshold_round == 0 {
+            return;
+        }
         self.inner.write().unload_below_round(threshold_round);
         self.block_wal_reader.cleanup();
     }
@@ -236,9 +239,9 @@ impl BlockStoreInner {
                     }
                 }
             }
-            if unloaded > 0 {
-                tracing::info!("Unloaded {unloaded} entries from block store cache");
-            }
+        }
+        if unloaded > 0 {
+            tracing::info!("Unloaded {unloaded} entries from block store cache");
         }
     }
 

@@ -88,6 +88,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
         let leader_timeout_task = handle.spawn(Self::leader_timeout_task(inner.clone()));
+        let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
             if let Some(task) = connections.remove(&peer_id) {
@@ -100,7 +101,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         join_all(
             connections
                 .into_values()
-                .chain([leader_timeout_task].into_iter()),
+                .chain([leader_timeout_task, cleanup_task].into_iter()),
         )
         .await;
     }
@@ -192,6 +193,20 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 _notified = notified => {
                     // restart loop
+                }
+                _stopped = inner.stopped() => {
+                    return None;
+                }
+            }
+        }
+    }
+
+    async fn cleanup_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
+        let cleanup_interval = Duration::from_secs(10);
+        loop {
+            select! {
+                _sleep = runtime::sleep(cleanup_interval) => {
+                    inner.syncer.read().core().cleanup();
                 }
                 _stopped = inner.stopped() => {
                     return None;

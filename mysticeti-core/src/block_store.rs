@@ -34,9 +34,8 @@ pub trait BlockWriter {
 
 #[derive(Clone)]
 enum IndexEntry {
-    #[allow(dead_code)]
     WalPosition(WalPosition),
-    Loaded(Data<StatementBlock>),
+    Loaded(WalPosition, Data<StatementBlock>),
 }
 
 impl BlockStore {
@@ -78,7 +77,8 @@ impl BlockStore {
                 }
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
             };
-            inner.add_to_index(block);
+            // todo - we want to keep some last blocks in the cache
+            inner.add_unloaded(block.reference(), pos);
         }
         if let Some(replay_started) = replay_started {
             tracing::info!("Wal replay completed in {:?}", replay_started.elapsed());
@@ -92,8 +92,8 @@ impl BlockStore {
         builder.build(this)
     }
 
-    pub fn insert_block(&self, block: Data<StatementBlock>, _position: WalPosition) {
-        self.inner.write().add_to_index(block);
+    pub fn insert_block(&self, block: Data<StatementBlock>, position: WalPosition) {
+        self.inner.write().add_loaded(position, block);
     }
 
     pub fn get_block(&self, reference: BlockReference) -> Option<Data<StatementBlock>> {
@@ -143,6 +143,11 @@ impl BlockStore {
         self.inner.read().highest_round
     }
 
+    pub fn cleanup(&self, threshold_round: RoundNumber) {
+        self.inner.write().unload_below_round(threshold_round);
+        self.block_wal_reader.cleanup();
+    }
+
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
@@ -150,11 +155,21 @@ impl BlockStore {
                     .block_wal_reader
                     .read(position)
                     .expect("Failed to read wal");
-                // todo - handle own block data
-                assert_eq!(tag, WAL_ENTRY_BLOCK);
-                Data::from_bytes(data).expect("Failed to deserialize data from wal")
+                match tag {
+                    WAL_ENTRY_BLOCK => {
+                        Data::from_bytes(data).expect("Failed to deserialize data from wal")
+                    }
+                    WAL_ENTRY_OWN_BLOCK => {
+                        OwnBlockData::from_bytes(data)
+                            .expect("Failed to deserialized own block from wal")
+                            .1
+                    }
+                    _ => {
+                        panic!("Trying to load index entry at position {position}, found tag {tag}")
+                    }
+                }
             }
-            IndexEntry::Loaded(block) => block,
+            IndexEntry::Loaded(_, block) => block,
         }
     }
 
@@ -202,10 +217,37 @@ impl BlockStoreInner {
             .cloned()
     }
 
-    pub fn add_to_index(&mut self, block: Data<StatementBlock>) {
+    // todo - also specify LRU criteria
+    /// Unload all entries from below or equal threshold_round
+    pub fn unload_below_round(&mut self, threshold_round: RoundNumber) {
+        for (round, map) in self.index.iter_mut() {
+            // todo - try BTreeMap for self.index?
+            if *round > threshold_round {
+                continue;
+            }
+            for entry in map.values_mut() {
+                match entry {
+                    IndexEntry::WalPosition(_) => {}
+                    // Unload entry
+                    IndexEntry::Loaded(position, _) => *entry = IndexEntry::WalPosition(*position),
+                }
+            }
+        }
+    }
+
+    pub fn add_unloaded(&mut self, reference: &BlockReference, position: WalPosition) {
+        self.highest_round = max(self.highest_round, reference.round());
+        let map = self.index.entry(reference.round()).or_default();
+        map.insert(reference.author_digest(), IndexEntry::WalPosition(position));
+    }
+
+    pub fn add_loaded(&mut self, position: WalPosition, block: Data<StatementBlock>) {
         self.highest_round = max(self.highest_round, block.round());
         let map = self.index.entry(block.round()).or_default();
-        map.insert((block.author(), block.digest()), IndexEntry::Loaded(block));
+        map.insert(
+            (block.author(), block.digest()),
+            IndexEntry::Loaded(position, block),
+        );
     }
 }
 

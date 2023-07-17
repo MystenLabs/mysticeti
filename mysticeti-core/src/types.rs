@@ -269,6 +269,10 @@ impl BlockReference {
     pub fn author_round(&self) -> (AuthorityIndex, RoundNumber) {
         (self.authority, self.round)
     }
+
+    pub fn author_digest(&self) -> (AuthorityIndex, BlockDigest) {
+        (self.authority, self.digest)
+    }
 }
 
 impl fmt::Debug for BlockReference {

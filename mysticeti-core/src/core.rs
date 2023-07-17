@@ -300,6 +300,10 @@ impl<H: BlockHandler> Core<H> {
         sequence
     }
 
+    pub fn cleanup(&self) {
+        self.block_store.cleanup(self.last_commit_round);
+    }
+
     /// This only checks readiness in terms of helping liveness for commit rule,
     /// try_new_block might still return None if threshold clock is not ready
     ///

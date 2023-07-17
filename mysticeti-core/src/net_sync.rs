@@ -235,6 +235,7 @@ pub struct AsyncWalSyncer {
     wal_syncer: WalSyncer,
     stop: mpsc::Sender<()>,
     _sender: oneshot::Sender<()>,
+    runtime: tokio::runtime::Handle,
 }
 
 impl AsyncWalSyncer {
@@ -245,6 +246,7 @@ impl AsyncWalSyncer {
             wal_syncer,
             stop,
             _sender: sender,
+            runtime: tokio::runtime::Handle::current(),
         };
         std::thread::Builder::new()
             .name("wal-syncer".to_string())
@@ -259,8 +261,9 @@ impl AsyncWalSyncer {
     }
 
     pub fn run(mut self) {
+        let runtime = self.runtime.clone();
         loop {
-            if tokio::runtime::Handle::current().block_on(self.wait_next()) {
+            if runtime.block_on(self.wait_next()) {
                 return;
             }
             self.wal_syncer.sync().expect("Failed to sync wal");

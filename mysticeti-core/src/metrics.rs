@@ -258,6 +258,20 @@ impl MetricReporter {
         );
         None
     }
+
+    pub fn clear(&mut self) {
+        self.transaction_certified_latency.clear();
+        self.certificate_committed_latency.clear();
+        self.transaction_committed_latency.clear();
+
+        self.proposed_block_size_bytes.clear();
+        self.proposed_block_transaction_count.clear();
+        self.proposed_block_vote_count.clear();
+
+        self.connection_latency
+            .iter_mut()
+            .for_each(PreciseHistogram::clear);
+    }
 }
 
 pub fn print_network_address_table(addresses: &[SocketAddr]) {

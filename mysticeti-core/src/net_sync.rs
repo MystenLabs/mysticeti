@@ -14,7 +14,7 @@ use crate::{
 };
 use futures::future::join_all;
 use parking_lot::RwLock;
-use rand::{seq::IteratorRandom, thread_rng, Rng};
+use rand::{seq::IteratorRandom, thread_rng, Rng, RngCore};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -230,10 +230,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut rx_timeout_config: mpsc::Receiver<oneshot::Sender<Duration>>,
     ) {
         // Possible timeout values
-        // let actions = (500..10_000).step_by(500).map(Duration::from_millis);
-        let actions = vec![500, 1_000, 3_000, 5_000, 10_000]
-            .into_iter()
-            .map(Duration::from_millis);
+        let actions = (1000..10_000).step_by(1000).map(Duration::from_millis);
+        // let actions = vec![500, 1_000, 3_000, 5_000, 10_000]
+        //     .into_iter()
+        //     .map(Duration::from_millis);
         let mut count: HashMap<Duration, usize> = actions.clone().map(|x| (x, 0)).collect();
         let mut av: HashMap<Duration, f64> = actions.clone().map(|x| (x, 0.0)).collect();
         // epsilon
@@ -250,32 +250,56 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             tokio::select! {
                 Some(sender) = rx_timeout_config.recv() => {
                     i += 1;
-                    if i % 10 != 0 {
+                    if i % 3 != 0 {
                         sender.send(timeout).unwrap();
                         continue;
                     }
 
                     // update
-                    inner.reporter.write().receive_all();
-                    let tx_commit_avg = inner.reporter.read().transaction_committed_latency.avg();
-                    let _cert_commit_avg = inner.reporter.read().certificate_committed_latency.avg();
-                    // println!("tx_commit_avg: {:?}, cert_commit_avg: {:?}", tx_commit_avg, cert_commit_avg);
-                    if let Some(latency) = tx_commit_avg {
-                        *count.get_mut(&timeout).unwrap() += 1;
-                        let c = count.get(&timeout).unwrap().clone();
-                        let old_av = av.get(&timeout).unwrap().clone();
-                        let rew = reward(latency, c);
-                        let new_av = old_av + (rew - old_av) / (c as f64);
-                        *av.get_mut(&timeout).unwrap() = new_av;
+                    let tx_commit_avg = {
+                        inner.reporter.write().clear();
+                        inner.reporter.write().receive_all();
+                        // inner.reporter.read().transaction_committed_latency.avg()
+                        inner.reporter.write().transaction_committed_latency.pct(900)
+                    };
 
-                        // pick next timeout value
-                        if thread_rng().gen_range(0.0..1.0) < epsilon {
-                            // explore
-                            timeout = actions.clone().choose(&mut thread_rng()).unwrap().clone();
-                        } else {
-                            // exploit
-                            timeout = av.iter().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap().0.clone();
-                        }
+                    // if let Some(latency) = tx_commit_avg {
+                    //     *count.get_mut(&timeout).unwrap() += 1;
+                    //     let c = count.get(&timeout).unwrap().clone();
+                    //     let old_av = av.get(&timeout).unwrap().clone();
+                    //     let rew = reward(latency, c);
+                    //     let new_av = old_av + (rew - old_av) / (c as f64);
+                    //     *av.get_mut(&timeout).unwrap() = new_av;
+
+                    //     // pick next timeout value
+                    //     if thread_rng().gen_range(0.0..1.0) < epsilon {
+                    //         // explore
+                    //         timeout = actions.clone().choose(&mut thread_rng()).unwrap().clone();
+                    //     } else {
+                    //         // exploit
+                    //         timeout = av.iter().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap().0.clone();
+                    //     }
+                    // }
+
+                    *count.get_mut(&timeout).unwrap() += 1;
+                    let c = count.get(&timeout).unwrap().clone();
+                    let old_av = av.get(&timeout).unwrap().clone();
+
+                    let rew = match tx_commit_avg {
+                        Some(latency) => reward(latency, c),
+                        None => -50_000.0,
+                    };
+
+                    let new_av = old_av + (rew - old_av) / (c as f64);
+                    *av.get_mut(&timeout).unwrap() = new_av;
+
+                    // pick next timeout value
+                    if thread_rng().gen_range(0.0..1.0) < epsilon {
+                        // explore
+                        timeout = actions.clone().choose(&mut thread_rng()).unwrap().clone();
+                    } else {
+                        // exploit
+                        timeout = av.iter().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap().0.clone();
                     }
 
                     // let timeout = Duration::from_millis(1000);
@@ -287,10 +311,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     println!();
                     let mut values: Vec<_> = av.iter().collect();
                     values.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap());
-                    for v in values {
-                        print!("{}:{} ", v.0.as_millis(), v.1);
-                    }
+                    let str = values.iter().map(|(a, b)| format!("{},{b}", a.as_millis())).collect::<Vec<_>>().join("\n");
+                    println!("{}", str);
                     println!();
+
+                    let int = thread_rng().next_u64();
+                    std::fs::write(format!("data-{int}.txt"), str).unwrap();
 
                     return;
                 }
@@ -474,7 +500,7 @@ mod sim_tests {
     // parameters:
     const EXPERIMENT_DURATION: Duration = Duration::from_secs(120_000);
     const EXPERIMENT_LATENCY_RANGE: std::ops::Range<Duration> =
-        Duration::from_millis(4000)..Duration::from_millis(4500);
+        Duration::from_millis(4000)..Duration::from_millis(4100);
 
     #[test]
     fn test_rl_network_sync() {

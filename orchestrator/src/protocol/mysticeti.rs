@@ -67,8 +67,8 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
     }
 
     fn db_directories(&self) -> Vec<PathBuf> {
-        // TODO
-        vec![]
+        let storage = self.working_dir.join("private/val-*/*");
+        vec![storage]
     }
 
     fn cleanup_commands(&self) -> Vec<String> {

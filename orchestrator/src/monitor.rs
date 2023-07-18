@@ -172,6 +172,10 @@ impl Prometheus {
             "    static_configs:",
             "      - targets:",
             &format!("        - {ip}:{port}"),
+            &format!("  - job_name: instance-node-exporter-{index}"),
+            "    static_configs:",
+            "      - targets:",
+            &format!("        - {ip}:9200"),
         ]
         .join("\n")
     }

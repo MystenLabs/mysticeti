@@ -283,6 +283,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         let working_dir = self.settings.working_dir.display();
         let url = &self.settings.repository.url;
+        let install_node_exporter = include_str!("../assets/install_node_exporter.sh").replace("\n", "\\n");
         let basic_commands = [
             "sudo apt-get update",
             "sudo apt-get -y upgrade",
@@ -304,6 +305,12 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",
             "source $HOME/.cargo/env",
             "rustup default stable",
+
+            // Install node exporter
+            &format!("echo -e '{install_node_exporter}' > install_node_exporter.sh"),
+            "chmod +x install_node_exporter.sh",
+            "./install_node_exporter.sh",
+
             // Create the working directory.
             &format!("mkdir -p {working_dir}"),
             // Clone the repo.

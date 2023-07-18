@@ -43,6 +43,7 @@ pub struct BlockReference {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
+    // todo - consider removing TransactionId
     Share(TransactionId, Transaction),
     /// Authority votes to accept or reject a transaction.
     Vote(TransactionLocator, Vote),

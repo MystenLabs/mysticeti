@@ -283,7 +283,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         let working_dir = self.settings.working_dir.display();
         let url = &self.settings.repository.url;
-        let install_node_exporter = include_str!("../assets/install_node_exporter.sh").replace("\n", "\\n");
+        let install_node_exporter =
+            include_str!("../assets/install_node_exporter.sh").replace('\n', "\\n");
         let basic_commands = [
             "sudo apt-get update",
             "sudo apt-get -y upgrade",

@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_interpreter::CommitInterpreter;
-use crate::committee::{Committee, QuorumThreshold, TransactionAggregator};
+use crate::committee::{
+    Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
+};
 use crate::config::StorageDir;
 use crate::crypto::TransactionDigest;
 use crate::data::Data;
-use crate::log::CertifiedTransactionLog;
+use crate::log::TransactionLog;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
@@ -47,8 +49,7 @@ const fn assert_constants() {
 }
 
 pub struct RealBlockHandler {
-    transaction_votes:
-        TransactionAggregator<TransactionId, QuorumThreshold, CertifiedTransactionLog>,
+    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold, TransactionLog>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
@@ -64,7 +65,7 @@ impl RealBlockHandler {
         metrics: Arc<Metrics>,
     ) -> (Self, mpsc::Sender<Vec<(TransactionId, Transaction)>>) {
         let (sender, receiver) = mpsc::channel(1024);
-        let transaction_log = CertifiedTransactionLog::start(config.certified_transactions_log())
+        let transaction_log = TransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
         let this = Self {
             transaction_votes: TransactionAggregator::with_handler(transaction_log),
@@ -267,9 +268,9 @@ impl TransactionGenerator {
     }
 }
 
-pub struct TestCommitHandler {
+pub struct TestCommitHandler<H = HashSet<TransactionId>> {
     commit_interpreter: CommitInterpreter,
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
+    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold, H>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
     // committed_dags: Vec<CommittedSubDag>,
@@ -279,15 +280,26 @@ pub struct TestCommitHandler {
     metrics: Arc<Metrics>,
 }
 
-impl TestCommitHandler {
+impl<H: ProcessedTransactionHandler<TransactionId> + Default> TestCommitHandler<H> {
     pub fn new(
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
         metrics: Arc<Metrics>,
     ) -> Self {
+        Self::new_with_handler(committee, transaction_time, metrics, Default::default())
+    }
+}
+
+impl<H: ProcessedTransactionHandler<TransactionId>> TestCommitHandler<H> {
+    pub fn new_with_handler(
+        committee: Arc<Committee>,
+        transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+        metrics: Arc<Metrics>,
+        handler: H,
+    ) -> Self {
         Self {
             commit_interpreter: CommitInterpreter::new(),
-            transaction_votes: Default::default(),
+            transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],
             // committed_dags: vec![],
@@ -323,7 +335,9 @@ impl TestCommitHandler {
     }
 }
 
-impl CommitObserver for TestCommitHandler {
+impl<H: ProcessedTransactionHandler<TransactionId> + Send + Sync> CommitObserver
+    for TestCommitHandler<H>
+{
     fn handle_commit(
         &mut self,
         block_store: &BlockStore,

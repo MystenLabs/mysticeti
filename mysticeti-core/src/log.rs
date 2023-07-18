@@ -7,11 +7,11 @@ use std::io::Write;
 use std::path::Path;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-pub struct CertifiedTransactionLog {
+pub struct TransactionLog {
     ch: UnboundedSender<Vec<TransactionId>>,
 }
 
-impl CertifiedTransactionLog {
+impl TransactionLog {
     pub fn start(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = OpenOptions::new().append(true).create(true).open(path)?;
         let (sender, receiver) = unbounded_channel();
@@ -26,7 +26,7 @@ impl CertifiedTransactionLog {
     }
 }
 
-impl ProcessedTransactionHandler<TransactionId> for CertifiedTransactionLog {
+impl ProcessedTransactionHandler<TransactionId> for TransactionLog {
     fn transaction_processed(&mut self, k: TransactionId) {
         self.ch.send(vec![k]).ok();
     }

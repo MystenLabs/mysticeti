@@ -13,6 +13,7 @@ use eyre::{eyre, Context, Result};
 
 use crate::block_handler::TransactionGenerator;
 use crate::core::CoreOptions;
+use crate::log::TransactionLog;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -27,7 +28,7 @@ use crate::{
 };
 
 pub struct Validator {
-    network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler>,
+    network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler<TransactionLog>>,
     metrics_handle: JoinHandle<Result<(), hyper::Error>>,
 }
 
@@ -36,7 +37,7 @@ impl Validator {
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         parameters: &Parameters,
-        private_config: PrivateConfig,
+        config: PrivateConfig,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -64,7 +65,7 @@ impl Validator {
         let (block_handler, block_sender) = RealBlockHandler::new(
             committee.clone(),
             authority,
-            private_config.storage(),
+            config.storage(),
             metrics.clone(),
         );
         let tps = env::var("TPS");
@@ -85,10 +86,14 @@ impl Validator {
             transactions_per_100ms,
             initial_delay,
         );
-        let commit_handler = TestCommitHandler::new(
+        let committed_transaction_log =
+            TransactionLog::start(config.storage().committed_transactions_log())
+                .expect("Failed to open committed transaction log for write");
+        let commit_handler = TestCommitHandler::new_with_handler(
             committee.clone(),
             block_handler.transaction_time.clone(),
             metrics.clone(),
+            committed_transaction_log,
         );
         let core = Core::open(
             block_handler,

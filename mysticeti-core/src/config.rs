@@ -142,4 +142,8 @@ impl StorageDir {
     pub fn certified_transactions_log(&self) -> PathBuf {
         self.path.join("certified.txt")
     }
+
+    pub fn committed_transactions_log(&self) -> PathBuf {
+        self.path.join("committed.txt")
+    }
 }

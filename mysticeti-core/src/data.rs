@@ -6,6 +6,7 @@ use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Data<T> carries both the value and it's serialized bytes.
@@ -24,10 +25,15 @@ struct DataInner<T> {
     serialized: Bytes, // this is serialized as bincode regardless of underlining serialization
 }
 
+pub static IN_MEMORY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+pub static IN_MEMORY_BLOCKS_BYTES: AtomicUsize = AtomicUsize::new(0);
+
 impl<T: Serialize + DeserializeOwned> Data<T> {
     pub fn new(t: T) -> Self {
         let serialized = bincode::serialize(&t).expect("Serialization should not fail");
-        let serialized = serialized.into();
+        let serialized: Bytes = serialized.into();
+        IN_MEMORY_BLOCKS.fetch_add(1, Ordering::Relaxed);
+        IN_MEMORY_BLOCKS_BYTES.fetch_add(serialized.len(), Ordering::Relaxed);
         Self(Arc::new(DataInner { t, serialized }))
     }
 
@@ -61,6 +67,13 @@ impl<T: Serialize> Serialize for Data<T> {
         S: Serializer,
     {
         serializer.serialize_bytes(&self.0.serialized)
+    }
+}
+
+impl<T> Drop for DataInner<T> {
+    fn drop(&mut self) {
+        IN_MEMORY_BLOCKS.fetch_sub(1, Ordering::Relaxed);
+        IN_MEMORY_BLOCKS_BYTES.fetch_sub(self.serialized.len(), Ordering::Relaxed);
     }
 }
 

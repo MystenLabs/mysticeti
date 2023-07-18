@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::committee::Committee;
+use crate::data::{IN_MEMORY_BLOCKS, IN_MEMORY_BLOCKS_BYTES};
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::stat::{histogram, HistogramSender, PreciseHistogram};
@@ -13,6 +14,7 @@ use prometheus::{
     IntGauge, Registry,
 };
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tabled::{Table, Tabled};
@@ -72,6 +74,9 @@ pub struct MetricReporter {
 
     pub connection_latency: Vec<PreciseHistogram<Duration>>,
 
+    pub global_in_memory_blocks: IntGauge,
+    pub global_in_memory_blocks_bytes: IntGauge,
+
     started: TimeInstant,
 }
 
@@ -98,6 +103,19 @@ impl Metrics {
             proposed_block_vote_count: proposed_block_vote_count_hist,
 
             connection_latency: connection_latency_hist,
+
+            global_in_memory_blocks: register_int_gauge_with_registry!(
+                "global_in_memory_blocks",
+                "Number of blocks loaded in memory",
+                registry,
+            )
+            .unwrap(),
+            global_in_memory_blocks_bytes: register_int_gauge_with_registry!(
+                "global_in_memory_blocks_bytes",
+                "Total size of blocks loaded in memory",
+                registry,
+            )
+            .unwrap(),
 
             started: TimeInstant::now(),
         };
@@ -236,6 +254,11 @@ impl MetricReporter {
     }
 
     async fn run_report(&mut self) {
+        self.global_in_memory_blocks
+            .set(IN_MEMORY_BLOCKS.load(Ordering::Relaxed) as i64);
+        self.global_in_memory_blocks_bytes
+            .set(IN_MEMORY_BLOCKS_BYTES.load(Ordering::Relaxed) as i64);
+
         self.receive_all();
         let elapsed = self.started.elapsed();
         Self::report_hist(

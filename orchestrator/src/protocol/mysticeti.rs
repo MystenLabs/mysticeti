@@ -71,6 +71,10 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         vec![]
     }
 
+    fn cleanup_commands(&self) -> Vec<String> {
+        vec!["killall mysticeti".to_string()]
+    }
+
     fn genesis_command<'a, I>(&self, instances: I) -> String
     where
         I: Iterator<Item = &'a Instance>,

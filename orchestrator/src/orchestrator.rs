@@ -452,6 +452,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         // Kill all tmux servers and delete the nodes dbs. Optionally clear logs.
         let mut command = vec!["(tmux kill-server || true)".into()];
+        command.extend(self.protocol_commands.cleanup_commands());
         for path in self.protocol_commands.db_directories() {
             command.push(format!("(rm -rf {} || true)", path.display()));
         }

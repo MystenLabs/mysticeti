@@ -19,6 +19,8 @@ pub trait ProtocolCommands<T: BenchmarkType> {
     /// The directories of all databases (that should be erased before each run).
     fn db_directories(&self) -> Vec<PathBuf>;
 
+    fn cleanup_commands(&self) -> Vec<String>;
+
     /// The command to generate the genesis and all configuration files. This command
     /// is run on each remote machine.
     fn genesis_command<'a, I>(&self, instances: I) -> String

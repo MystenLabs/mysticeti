@@ -23,6 +23,7 @@ use digest::Digest;
 use eyre::{bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::ops::Range;
 use std::time::Duration;
 #[cfg(test)]
 pub use test::Dag;
@@ -47,6 +48,8 @@ pub enum BaseStatement {
     Share(TransactionId, Transaction),
     /// Authority votes to accept or reject a transaction.
     Vote(TransactionLocator, Vote),
+    // For now only accept votes are batched
+    VoteRange(TransactionLocatorRange),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -253,6 +256,7 @@ impl StatementBlock {
                     );
                 }
                 BaseStatement::Vote(_, _) => {}
+                BaseStatement::VoteRange(range) => range.verify()?,
             }
         }
         ensure!(
@@ -273,9 +277,65 @@ pub struct TransactionLocator {
     offset: u64,
 }
 
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+pub struct TransactionLocatorRange {
+    block: BlockReference,
+    offset_start_inclusive: u64,
+    offset_end_exclusive: u64,
+}
+
 impl TransactionLocator {
     pub(crate) fn new(block: BlockReference, offset: u64) -> Self {
         Self { block, offset }
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+}
+
+impl TransactionLocatorRange {
+    pub(crate) fn new(block: BlockReference, range: Range<u64>) -> Self {
+        Self {
+            block,
+            offset_start_inclusive: range.start,
+            offset_end_exclusive: range.end,
+        }
+    }
+
+    pub fn locators(&self) -> impl Iterator<Item = TransactionLocator> + '_ {
+        self.range()
+            .map(|offset| TransactionLocator::new(self.block, offset))
+    }
+
+    pub fn len(&self) -> usize {
+        (self.offset_end_exclusive - self.offset_start_inclusive) as usize
+    }
+
+    pub fn verify(&self) -> eyre::Result<()> {
+        ensure!(
+            self.offset_end_exclusive >= self.offset_start_inclusive,
+            "offset_end_exclusive must be greater or equal offset_start_inclusive: {}, {}",
+            self.offset_end_exclusive,
+            self.offset_start_inclusive,
+        );
+        // todo - should have constant for max transactions per block and use it here
+        const MAX_LEN: u64 = 10 * 1024;
+        let len = self.len() as u64;
+        ensure!(
+            len < MAX_LEN,
+            "Include is too large when uncompressed: {len}"
+        );
+        ensure!(
+            self.offset_end_exclusive < MAX_LEN,
+            "offset_end_exclusive is too large when uncompressed: {}",
+            self.offset_end_exclusive
+        );
+        Ok(())
+    }
+
+    fn range(&self) -> Range<u64> {
+        self.offset_start_inclusive..self.offset_end_exclusive
     }
 }
 
@@ -428,12 +488,25 @@ impl CryptoHash for TransactionLocator {
     }
 }
 
+impl CryptoHash for TransactionLocatorRange {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        self.block.crypto_hash(state);
+        self.offset_start_inclusive.crypto_hash(state);
+        self.offset_end_exclusive.crypto_hash(state);
+    }
+}
+
 impl fmt::Display for BaseStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BaseStatement::Share(id, _) => write!(f, "#{id:08}"),
             BaseStatement::Vote(id, Vote::Accept) => write!(f, "+{id:08}"),
             BaseStatement::Vote(id, Vote::Reject(_)) => write!(f, "-{id:08}"),
+            BaseStatement::VoteRange(range) => write!(
+                f,
+                "+{}:{}:{}",
+                range.block, range.offset_start_inclusive, range.offset_end_exclusive
+            ),
         }
     }
 }

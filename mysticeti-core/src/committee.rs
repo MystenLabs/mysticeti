@@ -3,7 +3,8 @@
 
 use crate::crypto::{dummy_public_key, PublicKey};
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionLocator, Vote,
+    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionLocator,
+    TransactionLocatorRange, Vote,
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
@@ -299,24 +300,16 @@ impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactio
         }
     }
 
-    pub fn vote(
-        &mut self,
-        k: K,
-        vote: AuthorityIndex,
-        committee: &Committee,
-    ) -> Result<TransactionVoteResult, ()> {
+    fn vote(&mut self, k: K, vote: AuthorityIndex, committee: &Committee, processed: &mut Vec<K>) {
         if let Some(aggregator) = self.pending.get_mut(&k) {
             if aggregator.add(vote, committee) {
                 // todo - reuse entry and remove Copy constraint when "entry_insert" is stable
                 self.pending.remove(&k).unwrap();
                 self.handler.transaction_processed(k);
-                Ok(TransactionVoteResult::Processed)
-            } else {
-                Ok(TransactionVoteResult::VoteAccepted)
+                processed.push(k);
             }
         } else {
             self.handler.unknown_transaction(k, vote);
-            Err(())
         }
     }
 
@@ -350,26 +343,38 @@ impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
         committee: &Committee,
     ) -> Vec<TransactionLocator> {
         let mut processed = vec![];
+        let mut vote_range_builder = VoteRangeBuilder::default();
         for (offset, statement) in block.statements().iter().enumerate() {
             match statement {
                 BaseStatement::Share(_id, _transaction) => {
                     let locator = TransactionLocator::new(*block.reference(), offset as u64);
                     self.register(locator, block.author(), committee);
                     if let Some(ref mut response) = response {
-                        response.push(BaseStatement::Vote(locator, Vote::Accept));
+                        if let Some(range) = vote_range_builder.add(locator.offset()) {
+                            response.push(BaseStatement::VoteRange(TransactionLocatorRange::new(
+                                *block.reference(),
+                                range,
+                            )));
+                        }
                     }
                 }
                 BaseStatement::Vote(locator, vote) => match vote {
-                    Vote::Accept => {
-                        if matches!(
-                            self.vote(*locator, block.author(), committee),
-                            Ok(TransactionVoteResult::Processed)
-                        ) {
-                            processed.push(*locator);
-                        }
-                    }
+                    Vote::Accept => self.vote(*locator, block.author(), committee, &mut processed),
                     Vote::Reject(_) => unimplemented!(),
                 },
+                BaseStatement::VoteRange(range) => {
+                    for locator in range.locators() {
+                        self.vote(locator, block.author(), committee, &mut processed);
+                    }
+                }
+            }
+        }
+        if let Some(ref mut response) = response {
+            if let Some(range) = vote_range_builder.finish() {
+                response.push(BaseStatement::VoteRange(TransactionLocatorRange::new(
+                    *block.reference(),
+                    range,
+                )));
             }
         }
         processed
@@ -390,5 +395,48 @@ impl<
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Default)]
+struct VoteRangeBuilder {
+    range: Option<Range<u64>>,
+}
+
+impl VoteRangeBuilder {
+    #[must_use]
+    pub fn add(&mut self, offset: u64) -> Option<Range<u64>> {
+        if let Some(range) = &mut self.range {
+            if range.end == offset {
+                range.end = offset + 1;
+                None
+            } else {
+                let result = self.range.take();
+                self.range = Some(offset..offset + 1);
+                result
+            }
+        } else {
+            self.range = Some(offset..offset + 1);
+            None
+        }
+    }
+
+    pub fn finish(self) -> Option<Range<u64>> {
+        self.range
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn vote_range_builder_test() {
+        let mut b = VoteRangeBuilder::default();
+        assert_eq!(None, b.add(1));
+        assert_eq!(None, b.add(2));
+        assert_eq!(Some(1..3), b.add(4));
+        assert_eq!(Some(4..5), b.add(6));
+        assert_eq!(Some(6..7), b.finish());
     }
 }

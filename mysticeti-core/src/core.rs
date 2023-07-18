@@ -275,6 +275,7 @@ impl<H: BlockHandler> Core<H> {
             match statement {
                 BaseStatement::Share(_, _) => transactions += 1,
                 BaseStatement::Vote(_, _) => votes += 1,
+                BaseStatement::VoteRange(range) => votes += range.len(),
             }
         }
         self.metrics

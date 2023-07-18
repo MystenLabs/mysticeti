@@ -139,6 +139,10 @@ impl BlockDigest {
                     id.crypto_hash(hasher);
                     other.crypto_hash(hasher);
                 }
+                BaseStatement::VoteRange(range) => {
+                    [4].crypto_hash(hasher);
+                    range.crypto_hash(hasher);
+                }
             }
         }
         meta_creation_time_ns.crypto_hash(hasher);

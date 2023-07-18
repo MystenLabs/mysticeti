@@ -108,6 +108,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             let commit_data = self
                 .commit_observer
                 .handle_commit(self.core.block_store(), newly_committed);
+            self.core.write_state(); // todo - this can be done less frequently to reduce IO
             self.core
                 .write_commits(&commit_data, &self.commit_observer.aggregator_state());
         }

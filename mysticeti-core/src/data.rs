@@ -40,6 +40,8 @@ impl<T: Serialize + DeserializeOwned> Data<T> {
     // Important - use Data::from_bytes,
     // rather then Data::deserialize to avoid mem copy of serialized representation
     pub fn from_bytes(bytes: Bytes) -> bincode::Result<Self> {
+        IN_MEMORY_BLOCKS.fetch_add(1, Ordering::Relaxed);
+        IN_MEMORY_BLOCKS_BYTES.fetch_add(bytes.len(), Ordering::Relaxed);
         let t = bincode::deserialize(&bytes)?;
         let inner = DataInner {
             t,

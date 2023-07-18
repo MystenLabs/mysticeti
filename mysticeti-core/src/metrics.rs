@@ -37,6 +37,7 @@ pub struct Metrics {
 
     pub block_store_unloaded_blocks: IntCounter,
     pub block_store_loaded_blocks: IntCounter,
+    pub block_store_entries: IntCounter,
 
     pub wal_mappings: IntGauge,
 
@@ -141,6 +142,12 @@ impl Metrics {
             block_store_unloaded_blocks: register_int_counter_with_registry!(
                 "block_store_unloaded_blocks",
                 "Blocks unloaded from wal position during cleanup",
+                registry,
+            )
+            .unwrap(),
+            block_store_entries: register_int_counter_with_registry!(
+                "block_store_entries",
+                "Number of entries in block store",
                 registry,
             )
             .unwrap(),

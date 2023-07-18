@@ -49,6 +49,7 @@ impl BlockStore {
         let mut inner = BlockStoreInner::default();
         let mut builder = RecoveredStateBuilder::new();
         let mut replay_started: Option<Instant> = None;
+        let mut block_count = 0u64;
         for (pos, (tag, data)) in block_wal_reader.iter_until(wal_writer) {
             if replay_started.is_none() {
                 replay_started = Some(Instant::now());
@@ -84,8 +85,10 @@ impl BlockStore {
                 _ => panic!("Unknown wal tag {tag} at position {pos}"),
             };
             // todo - we want to keep some last blocks in the cache
+            block_count += 1;
             inner.add_unloaded(block.reference(), pos);
         }
+        metrics.block_store_entries.inc_by(block_count);
         if let Some(replay_started) = replay_started {
             tracing::info!("Wal replay completed in {:?}", replay_started.elapsed());
         } else {
@@ -100,6 +103,7 @@ impl BlockStore {
     }
 
     pub fn insert_block(&self, block: Data<StatementBlock>, position: WalPosition) {
+        self.metrics.block_store_entries.inc();
         self.inner.write().add_loaded(position, block);
     }
 

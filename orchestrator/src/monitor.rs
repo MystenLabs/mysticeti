@@ -146,6 +146,7 @@ impl Prometheus {
     }
 
     /// Generate the global prometheus configuration.
+    /// NOTE: The configuration file is a yaml file so spaces are important.
     fn global_configuration() -> String {
         [
             "global:",
@@ -218,16 +219,16 @@ impl Grafana {
         [
             "apiVersion: 1",
             "deleteDatasources:",
-            &format!("  - name: testbed"),
+            "  - name: testbed",
             "    orgId: 1",
             "datasources:",
-            &format!("  - name: testbed"),
+            "  - name: testbed",
             "    type: prometheus",
             "    access: proxy",
             "    orgId: 1",
             &format!("    url: http://localhost:{}", Prometheus::DEFAULT_PORT),
             "    editable: true",
-            &format!("    uid: Fixed-UID-testbed"),
+            "    uid: Fixed-UID-testbed",
         ]
         .join("\n")
     }

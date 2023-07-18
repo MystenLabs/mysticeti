@@ -320,6 +320,10 @@ impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactio
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }

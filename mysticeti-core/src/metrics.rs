@@ -44,6 +44,10 @@ pub struct Metrics {
     pub core_lock_util: IntCounter,
     pub core_lock_wait: IntCounter,
 
+    pub block_handler_pending_certificates: IntGauge,
+
+    pub commit_handler_pending_certificates: IntGauge,
+
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
     pub transaction_committed_latency: HistogramSender<Duration>,
@@ -168,6 +172,20 @@ impl Metrics {
             core_lock_wait: register_int_counter_with_registry!(
                 "core_lock_wait",
                 "Time to wait for core lock",
+                registry,
+            )
+            .unwrap(),
+
+            block_handler_pending_certificates: register_int_gauge_with_registry!(
+                "block_handler_pending_certificates",
+                "Number of pending certificates in block handler",
+                registry,
+            )
+            .unwrap(),
+
+            commit_handler_pending_certificates: register_int_gauge_with_registry!(
+                "commit_handler_pending_certificates",
+                "Number of pending certificates in commit handler",
                 registry,
             )
             .unwrap(),

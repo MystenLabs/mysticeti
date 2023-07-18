@@ -104,6 +104,9 @@ impl BlockHandler for RealBlockHandler {
                 }
             }
         }
+        self.metrics
+            .block_handler_pending_certificates
+            .set(self.transaction_votes.len() as i64);
         response
     }
 
@@ -378,6 +381,9 @@ impl<H: ProcessedTransactionHandler<TransactionId> + Send + Sync> CommitObserver
             commit_data.push(CommitData::from(&commit));
             // self.committed_dags.push(commit);
         }
+        self.metrics
+            .commit_handler_pending_certificates
+            .set(self.transaction_votes.len() as i64);
         commit_data
     }
 

@@ -23,6 +23,7 @@ impl NodeMonitorHandle {
 }
 
 pub struct Monitor {
+    instance: Instance,
     clients: Vec<Instance>,
     nodes: Vec<Instance>,
     ssh_manager: SshConnectionManager,
@@ -32,17 +33,27 @@ pub struct Monitor {
 impl Monitor {
     /// Create a new monitor.
     pub fn new(
+        instance: Instance,
         clients: Vec<Instance>,
         nodes: Vec<Instance>,
         ssh_manager: SshConnectionManager,
         dedicated_clients: bool,
     ) -> Self {
         Self {
+            instance,
             clients,
             nodes,
             ssh_manager,
             dedicated_clients,
         }
+    }
+
+    /// Dependencies to install.
+    pub fn dependencies() -> Vec<&'static str> {
+        let mut commands = Vec::new();
+        commands.extend(Prometheus::install_commands());
+        commands.extend(Grafana::install_commands());
+        commands
     }
 
     /// Start a prometheus instance on each remote machine.
@@ -62,31 +73,30 @@ impl Monitor {
         };
 
         // Configure and reload prometheus.
+        let instance = std::iter::once(self.instance.clone());
         let commands = Prometheus::setup_commands(instances, protocol_commands);
         self.ssh_manager
-            .execute_per_instance(commands, CommandContext::default())
+            .execute(instance, commands, CommandContext::default())
             .await?;
 
         Ok(())
     }
 
     /// Start grafana on the local host.
-    pub fn start_grafana(&self) -> MonitorResult<()> {
-        // Select the instances to monitor.
-        let instances: Vec<_> = if self.dedicated_clients {
-            self.clients
-                .iter()
-                .cloned()
-                .chain(self.nodes.iter().cloned())
-                .collect()
-        } else {
-            self.nodes.clone()
-        };
-
+    pub async fn start_grafana(&self) -> MonitorResult<()> {
         // Configure and reload grafana.
-        Grafana::run(instances)?;
+        let instance = std::iter::once(self.instance.clone());
+        let commands = Grafana::setup_commands();
+        self.ssh_manager
+            .execute(instance, commands, CommandContext::default())
+            .await?;
 
         Ok(())
+    }
+
+    /// The public address of the grafana instance.
+    pub fn grafana_address(&self) -> String {
+        format!("http://{}:{}", self.instance.main_ip, Grafana::DEFAULT_PORT)
     }
 }
 
@@ -100,59 +110,138 @@ impl Prometheus {
     /// The default prometheus port.
     pub const DEFAULT_PORT: u16 = 9090;
 
+    /// The commands to install prometheus.
+    pub fn install_commands() -> Vec<&'static str> {
+        vec![
+            "sudo apt-get -y install prometheus",
+            "sudo chmod 777 -R /var/lib/prometheus/ /etc/prometheus/",
+        ]
+    }
+
     /// Generate the commands to update the prometheus configuration and restart prometheus.
-    pub fn setup_commands<I, P>(instances: I, protocol: &P) -> Vec<(Instance, String)>
+    pub fn setup_commands<I, P>(instances: I, protocol: &P) -> String
     where
         I: IntoIterator<Item = Instance>,
         P: ProtocolMetrics,
     {
-        protocol
-            .nodes_metrics_path(instances)
-            .into_iter()
-            .map(|(instance, nodes_metrics_path)| {
-                let config = Self::configuration(&nodes_metrics_path);
-                let path = Self::DEFAULT_PROMETHEUS_CONFIG_PATH;
+        // Generate the prometheus configuration.
+        let mut config = vec![Self::global_configuration()];
 
-                let command = [
-                    &format!("sudo echo \"{config}\" > {path}",),
-                    "sudo service prometheus restart",
-                ]
-                .join(" && ");
+        let nodes_metrics_path = protocol.nodes_metrics_path(instances);
+        for (i, (_, nodes_metrics_path)) in nodes_metrics_path.into_iter().enumerate() {
+            let scrape_config = Self::scrape_configuration(i, &nodes_metrics_path);
+            config.push(scrape_config);
+        }
 
-                (instance, command)
-            })
-            .collect()
+        // Make the command to configure and restart prometheus.
+        [
+            &format!(
+                "sudo echo \"{}\" > {}",
+                config.join("\n"),
+                Self::DEFAULT_PROMETHEUS_CONFIG_PATH
+            ),
+            "sudo service prometheus restart",
+        ]
+        .join(" && ")
     }
 
-    /// Generate the prometheus configuration from the given metrics path.
-    /// NOTE: The configuration file is a yaml file so spaces are important.
-    fn configuration(nodes_metrics_path: &str) -> String {
-        let parts: Vec<_> = nodes_metrics_path.split('/').collect();
-        let port = parts[0].parse::<SocketAddr>().unwrap().port();
-        let path = parts[1];
-
+    /// Generate the global prometheus configuration.
+    fn global_configuration() -> String {
         [
             "global:",
             "  scrape_interval: 5s",
             "  evaluation_interval: 5s",
             "scrape_configs:",
-            "  - job_name: prometheus",
+        ]
+        .join("\n")
+    }
+
+    /// Generate the prometheus configuration from the given metrics path.
+    /// NOTE: The configuration file is a yaml file so spaces are important.
+    fn scrape_configuration(index: usize, nodes_metrics_path: &str) -> String {
+        let parts: Vec<_> = nodes_metrics_path.split('/').collect();
+        let address = parts[0].parse::<SocketAddr>().unwrap();
+        let ip = address.ip();
+        let port = address.port();
+        let path = parts[1];
+
+        [
+            &format!("  - job_name: instance-{index}"),
             &format!("    metrics_path: /{path}"),
             "    static_configs:",
             "      - targets:",
-            &format!("        - localhost:{port}"),
+            &format!("        - {ip}:{port}"),
         ]
         .join("\n")
     }
 }
 
+pub struct Grafana;
+
+impl Grafana {
+    /// The path to the datasources directory.
+    const DATASOURCES_PATH: &'static str = "/etc/grafana/provisioning/datasources";
+    /// The default grafana port.
+    pub const DEFAULT_PORT: u16 = 3000;
+
+    /// The commands to install prometheus.
+    pub fn install_commands() -> Vec<&'static str> {
+        vec![
+            "sudo apt-get install -y apt-transport-https software-properties-common wget",
+            "sudo wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key",
+            "(sudo rm /etc/apt/sources.list.d/grafana.list || true)",
+            "echo \"deb [signed-by=/usr/share/keyrings/grafana.key] https://apt.grafana.com stable main\" | sudo tee -a /etc/apt/sources.list.d/grafana.list",
+            "sudo apt-get update",
+            "sudo apt-get install -y grafana",
+            "sudo chmod 777 -R /etc/grafana/",
+        ]
+    }
+
+    /// Generate the commands to update the grafana datasource and restart grafana.
+    pub fn setup_commands() -> String {
+        [
+            &format!("(rm -r {} || true)", Self::DATASOURCES_PATH),
+            &format!("mkdir -p {}", Self::DATASOURCES_PATH),
+            &format!(
+                "sudo echo \"{}\" > {}/testbed.yml",
+                Self::datasource(),
+                Self::DATASOURCES_PATH
+            ),
+            "sudo service grafana-server restart",
+        ]
+        .join(" && ")
+    }
+
+    /// Generate the content of the datasource file for the given instance.
+    /// NOTE: The datasource file is a yaml file so spaces are important.
+    fn datasource() -> String {
+        [
+            "apiVersion: 1",
+            "deleteDatasources:",
+            &format!("  - name: testbed"),
+            "    orgId: 1",
+            "datasources:",
+            &format!("  - name: testbed"),
+            "    type: prometheus",
+            "    access: proxy",
+            "    orgId: 1",
+            &format!("    url: http://localhost:{}", Prometheus::DEFAULT_PORT),
+            "    editable: true",
+            &format!("    uid: Fixed-UID-testbed"),
+        ]
+        .join("\n")
+    }
+}
+
+#[allow(dead_code)]
 /// Bootstrap the grafana with datasource to connect to the given instances.
 /// NOTE: Only for macOS. Grafana must be installed through homebrew (and not from source). Deeper grafana
 /// configuration can be done through the grafana.ini file (/opt/homebrew/etc/grafana/grafana.ini) or the
 /// plist file (~/Library/LaunchAgents/homebrew.mxcl.grafana.plist).
-pub struct Grafana;
+pub struct LocalGrafana;
 
-impl Grafana {
+#[allow(dead_code)]
+impl LocalGrafana {
     /// The default grafana home directory (macOS, homebrew install).
     const DEFAULT_GRAFANA_HOME: &'static str = "/opt/homebrew/opt/grafana/share/grafana/";
     /// The path to the datasources directory.
@@ -194,7 +283,8 @@ impl Grafana {
         Ok(())
     }
 
-    /// Generate the content of the datasource file for the given instance.
+    /// Generate the content of the datasource file for the given instance. This grafana instance takes
+    /// one datasource per instance and assumes one prometheus server runs per instance.
     /// NOTE: The datasource file is a yaml file so spaces are important.
     fn datasource(instance: &Instance, index: usize) -> String {
         [

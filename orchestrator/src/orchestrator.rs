@@ -14,7 +14,7 @@ use tokio::select;
 use tokio::time::{self, Instant};
 
 use crate::error::SshError;
-use crate::monitor::{Grafana, Monitor, NodeMonitorHandle};
+use crate::monitor::{Monitor, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -56,9 +56,8 @@ pub struct Orchestrator<P, T> {
     /// Number of instances running only load generators (not nodes). If this value is set
     /// to zero, the orchestrator runs a load generate collocated with each node.
     dedicated_clients: usize,
-    /// Whether to start a grafana install on the local machine to monitor the nodes.
-    /// Only available on macOS, homebrew install.
-    boot_grafana: bool,
+    /// Whether to start a grafana and prometheus instance on a dedicate machine.
+    monitoring: bool,
 }
 
 impl<P, T> Orchestrator<P, T> {
@@ -88,7 +87,7 @@ impl<P, T> Orchestrator<P, T> {
             skip_testbed_configuration: false,
             log_processing: false,
             dedicated_clients: 0,
-            boot_grafana: false,
+            monitoring: true,
         }
     }
 
@@ -129,8 +128,8 @@ impl<P, T> Orchestrator<P, T> {
     }
 
     /// Set whether to boot grafana on the local machine to monitor the nodes.
-    pub fn boot_grafana(mut self, boot_grafana: bool) -> Self {
-        self.boot_grafana = boot_grafana;
+    pub fn with_monitoring(mut self, monitoring: bool) -> Self {
+        self.monitoring = monitoring;
         self
     }
 
@@ -140,14 +139,17 @@ impl<P, T> Orchestrator<P, T> {
     pub fn select_instances(
         &self,
         parameters: &BenchmarkParameters<T>,
-    ) -> TestbedResult<(Vec<Instance>, Vec<Instance>)> {
+    ) -> TestbedResult<(Vec<Instance>, Vec<Instance>, Option<Instance>)> {
         // Ensure there are enough active instances.
         let available_instances: Vec<_> = self.instances.iter().filter(|x| x.is_active()).collect();
+        let minimum_instances = if self.monitoring {
+            parameters.nodes + self.dedicated_clients + 1
+        } else {
+            parameters.nodes + self.dedicated_clients
+        };
         ensure!(
-            available_instances.len() >= parameters.nodes + self.dedicated_clients,
-            TestbedError::InsufficientCapacity(
-                parameters.nodes + self.dedicated_clients - available_instances.len()
-            )
+            available_instances.len() >= minimum_instances,
+            TestbedError::InsufficientCapacity(minimum_instances - available_instances.len())
         );
 
         // Sort the instances by region.
@@ -157,6 +159,19 @@ impl<P, T> Orchestrator<P, T> {
                 .entry(&instance.region)
                 .or_insert_with(VecDeque::new)
                 .push_back(instance);
+        }
+
+        // Select the instance to host the monitoring stack.
+        let mut monitoring_instance = None;
+        if self.monitoring {
+            for region in &self.settings.regions {
+                if let Some(regional_instances) = instances_by_regions.get_mut(region) {
+                    if let Some(instance) = regional_instances.pop_front() {
+                        monitoring_instance = Some(instance.clone());
+                    }
+                    break;
+                }
+            }
         }
 
         // Select the instances to host exclusively load generators.
@@ -191,7 +206,7 @@ impl<P, T> Orchestrator<P, T> {
             client_instances = nodes_instances.clone();
         }
 
-        Ok((client_instances, nodes_instances))
+        Ok((client_instances, nodes_instances, monitoring_instance))
     }
 }
 
@@ -278,10 +293,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             // * build-essential: prevent the error: [error: linker `cc` not found].
             // * sysstat - for getting disk stats
             // * iftop - for getting network stats
-            // * prometheus - for metrics
             // * libssl-dev - Required to compile the orchestrator, todo remove this dependency
-            "sudo apt-get -y install build-essential sysstat iftop prometheus libssl-dev",
-            "sudo chmod 777 -R /var/lib/prometheus/ /etc/prometheus/",
+            "sudo apt-get -y install build-essential sysstat iftop libssl-dev",
             // Install rust (non-interactive).
             "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",
@@ -303,6 +316,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         let command = [
             &basic_commands[..],
+            &Monitor::dependencies()[..],
             &cloud_provider_specific_dependencies[..],
             &protocol_dependencies[..],
         ]
@@ -319,31 +333,48 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
     /// Reload prometheus on all instances.
     pub async fn start_monitoring(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
-        display::action("Start monitoring instances");
+        let (clients, nodes, instance) = self.select_instances(parameters)?;
+        if let Some(instance) = instance {
+            display::action("Configuring monitoring instance");
 
-        let (clients, nodes) = self.select_instances(parameters)?;
-        let monitor = Monitor::new(
-            clients,
-            nodes,
-            self.ssh_manager.clone(),
-            self.dedicated_clients != 0,
-        );
-
-        // Start prometheus on all instances.
-        monitor.start_prometheus(&self.protocol_commands).await?;
-
-        // Start grafana on the localhost (only macOs, homebrew install).
-        if self.boot_grafana && cfg!(target_os = "macos") {
-            monitor.start_grafana()?;
-            display::done();
-            display::config(
-                "Grafana address",
-                format!("http://localhost:{}", Grafana::DEFAULT_PORT),
+            let monitor = Monitor::new(
+                instance,
+                clients,
+                nodes,
+                self.ssh_manager.clone(),
+                self.dedicated_clients != 0,
             );
-            display::newline();
-        } else {
+            monitor.start_prometheus(&self.protocol_commands).await?;
+            monitor.start_grafana().await?;
+
             display::done();
+            display::config("Grafana address", monitor.grafana_address());
+            display::newline();
         }
+
+        // let (clients, nodes, _) = self.select_instances(parameters)?;
+        // let monitor = Monitor::new(
+        //     clients,
+        //     nodes,
+        //     self.ssh_manager.clone(),
+        //     self.dedicated_clients != 0,
+        // );
+
+        // // Start prometheus on all instances.
+        // monitor.start_prometheus(&self.protocol_commands).await?;
+
+        // // Start grafana on the localhost (only macOs, homebrew install).
+        // if self.monitoring && cfg!(target_os = "macos") {
+        //     monitor.start_grafana()?;
+        //     display::done();
+        //     display::config(
+        //         "Grafana address",
+        //         format!("http://localhost:{}", Grafana::DEFAULT_PORT),
+        //     );
+        //     display::newline();
+        // } else {
+        //     display::done();
+        // }
 
         Ok(())
     }
@@ -390,7 +421,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Configuring instances");
 
         // Select instances to configure.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Generate the genesis configuration file and the keystore allowing access to gas objects.
         let command = self.protocol_commands.genesis_command(nodes.iter());
@@ -434,7 +465,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Deploying validators");
 
         // Select the instances to run.
-        let (_, nodes) = self.select_instances(parameters)?;
+        let (_, nodes, _) = self.select_instances(parameters)?;
 
         // Boot one node per instance.
         let monitor = self.boot_nodes(nodes, parameters).await?;
@@ -448,7 +479,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Setting up load generators");
 
         // Select the instances to run.
-        let (clients, _) = self.select_instances(parameters)?;
+        let (clients, _, _) = self.select_instances(parameters)?;
 
         // Deploy the load generators.
         let targets = self
@@ -483,7 +514,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         ));
 
         // Select the instances to run.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Regularly scrape the client metrics.
         let metrics_commands = self.protocol_commands.clients_metrics_command(clients);
@@ -555,7 +586,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         parameters: &BenchmarkParameters<T>,
     ) -> TestbedResult<LogsAnalyzer> {
         // Select the instances to run.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Create a log sub-directory for this run.
         let commit = &self.settings.repository.commit;

@@ -99,10 +99,4 @@ In a network of 10 validators, each with a corresponding load generator, each lo
 
 ## Step 5. Monitoring
 
-The orchestrator provides facilities to monitor metrics on clients and nodes. It deploys a [Prometheus](https://prometheus.io) instance on each remote machine. On macOS only, the orchestrator can also run with the flag `--boot-grafana` to locally provision and run a [Grafana](https://grafana.com) instance. Grafana must however be installed through [homebrew](https://brew.sh):
-
-```bash
-brew install grafana
-```
-
-Grafana is then available on `http://localhost:3000`. You can either create a [new dashboard](https://grafana.com/docs/grafana/latest/getting-started/build-first-dashboard/) or [import](https://grafana.com/docs/grafana/latest/dashboards/manage-dashboards/#import-a-dashboard) the example dashboard located in the `./assets` folder.
+The orchestrator provides facilities to monitor metrics on clients and nodes. When run with the flab `--monitor`, the orchestrator deploys a [Prometheus](https://prometheus.io) instance and a [Grafana](https://grafana.com) instance on a dedicated remote machine. Grafana is then available on the address printed on stdout (e.g., `http://3.83.97.12:3000`) with the default username and password both set to `admin`. You can either create a [new dashboard](https://grafana.com/docs/grafana/latest/getting-started/build-first-dashboard/) or [import](https://grafana.com/docs/grafana/latest/dashboards/manage-dashboards/#import-a-dashboard) the example dashboard located in the `./assets` folder.

@@ -88,6 +88,8 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Data<T> {
         let Ok(t) = bincode::deserialize(&serialized) else {
             return Err(D::Error::custom("Failed to deserialized inner bytes"));
         };
+        IN_MEMORY_BLOCKS.fetch_add(1, Ordering::Relaxed);
+        IN_MEMORY_BLOCKS_BYTES.fetch_add(serialized.len(), Ordering::Relaxed);
         let serialized = serialized.into();
         Ok(Self(Arc::new(DataInner { t, serialized })))
     }

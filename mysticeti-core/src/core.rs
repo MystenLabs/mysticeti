@@ -128,9 +128,9 @@ impl<H: BlockHandler> Core<H> {
         };
 
         if !unprocessed_blocks.is_empty() {
-            println!(
-                "Replaying blocks {:?} for transaction aggregator",
-                unprocessed_blocks
+            tracing::info!(
+                "Replaying {} blocks for transaction aggregator",
+                unprocessed_blocks.len()
             );
             this.run_block_handler(&unprocessed_blocks);
         }

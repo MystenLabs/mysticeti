@@ -3,7 +3,7 @@
 
 use crate::crypto::{dummy_public_key, PublicKey};
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionId, Vote,
+    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionLocator, Vote,
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
@@ -340,31 +340,32 @@ pub enum TransactionVoteResult {
     VoteAccepted,
 }
 
-impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionId>>
-    TransactionAggregator<TransactionId, TH, H>
+impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
+    TransactionAggregator<TransactionLocator, TH, H>
 {
     pub fn process_block(
         &mut self,
         block: &Data<StatementBlock>,
         mut response: Option<&mut Vec<BaseStatement>>,
         committee: &Committee,
-    ) -> Vec<TransactionId> {
+    ) -> Vec<TransactionLocator> {
         let mut processed = vec![];
-        for statement in block.statements() {
+        for (offset, statement) in block.statements().iter().enumerate() {
             match statement {
-                BaseStatement::Share(id, _transaction) => {
-                    self.register(*id, block.author(), committee);
+                BaseStatement::Share(_id, _transaction) => {
+                    let locator = TransactionLocator::new(*block.reference(), offset as u64);
+                    self.register(locator, block.author(), committee);
                     if let Some(ref mut response) = response {
-                        response.push(BaseStatement::Vote(*id, Vote::Accept));
+                        response.push(BaseStatement::Vote(locator, Vote::Accept));
                     }
                 }
-                BaseStatement::Vote(id, vote) => match vote {
+                BaseStatement::Vote(locator, vote) => match vote {
                     Vote::Accept => {
                         if matches!(
-                            self.vote(*id, block.author(), committee),
+                            self.vote(*locator, block.author(), committee),
                             Ok(TransactionVoteResult::Processed)
                         ) {
-                            processed.push(*id);
+                            processed.push(*locator);
                         }
                     }
                     Vote::Reject(_) => unimplemented!(),

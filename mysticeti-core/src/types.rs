@@ -45,7 +45,7 @@ pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
     Share(TransactionId, Transaction),
     /// Authority votes to accept or reject a transaction.
-    Vote(TransactionId, Vote),
+    Vote(TransactionLocator, Vote),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -153,6 +153,23 @@ impl StatementBlock {
         &self.statements
     }
 
+    pub fn shared_transactions(
+        &self,
+    ) -> impl Iterator<Item = (TransactionLocator, &TransactionId, &Transaction)> {
+        let reference = *self.reference();
+        self.statements
+            .iter()
+            .enumerate()
+            .filter_map(move |(pos, statement)| {
+                if let BaseStatement::Share(id, tx) = statement {
+                    let locator = TransactionLocator::new(reference, pos as u64);
+                    Some((locator, id, tx))
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn author(&self) -> AuthorityIndex {
         self.reference.authority
     }
@@ -246,6 +263,18 @@ impl StatementBlock {
 
     pub fn detailed(&self) -> Detailed {
         Detailed(self)
+    }
+}
+
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+pub struct TransactionLocator {
+    block: BlockReference,
+    offset: u64,
+}
+
+impl TransactionLocator {
+    pub(crate) fn new(block: BlockReference, offset: u64) -> Self {
+        Self { block, offset }
     }
 }
 
@@ -359,6 +388,18 @@ impl fmt::Display for StatementBlock {
     }
 }
 
+impl fmt::Debug for TransactionLocator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for TransactionLocator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.block, self.offset)
+    }
+}
+
 impl PartialEq for StatementBlock {
     fn eq(&self, other: &Self) -> bool {
         self.reference == other.reference
@@ -376,6 +417,13 @@ impl CryptoHash for BlockReference {
         self.authority.crypto_hash(state);
         self.round.crypto_hash(state);
         self.digest.crypto_hash(state);
+    }
+}
+
+impl CryptoHash for TransactionLocator {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        self.block.crypto_hash(state);
+        self.offset.crypto_hash(state);
     }
 }
 

@@ -14,6 +14,7 @@ use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionId,
+    TransactionLocator,
 };
 use crate::{
     block_store::{BlockStore, CommitData},
@@ -29,6 +30,8 @@ use tokio::sync::mpsc;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
+
+    fn handle_proposal(&mut self, block: &Data<StatementBlock>);
 
     fn state(&self) -> Bytes;
 
@@ -49,8 +52,8 @@ const fn assert_constants() {
 }
 
 pub struct RealBlockHandler {
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold, TransactionLog>,
-    pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, TransactionLog>,
+    pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     metrics: Arc<Metrics>,
@@ -82,22 +85,19 @@ impl RealBlockHandler {
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
-        let mut transaction_time = self.transaction_time.lock();
+        let transaction_time = self.transaction_time.lock();
         while let Ok(data) = self.receiver.try_recv() {
             // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
             for (id, tx) in data {
                 response.push(BaseStatement::Share(id, tx));
-                transaction_time.insert(id, TimeInstant::now());
-                self.transaction_votes
-                    .register(id, self.authority, &self.committee);
             }
         }
         for block in blocks {
             let processed =
                 self.transaction_votes
                     .process_block(block, Some(&mut response), &self.committee);
-            for processed_id in processed {
-                if let Some(instant) = transaction_time.get(&processed_id) {
+            for processed_locator in processed {
+                if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics
                         .transaction_certified_latency
                         .observe(instant.elapsed());
@@ -108,6 +108,15 @@ impl BlockHandler for RealBlockHandler {
             .block_handler_pending_certificates
             .set(self.transaction_votes.len() as i64);
         response
+    }
+
+    fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+        let mut transaction_time = self.transaction_time.lock();
+        for (locator, _, _) in block.shared_transactions() {
+            transaction_time.insert(locator, TimeInstant::now());
+            self.transaction_votes
+                .register(locator, self.authority, &self.committee);
+        }
     }
 
     fn state(&self) -> Bytes {
@@ -128,10 +137,11 @@ impl BlockHandler for RealBlockHandler {
 // Immediately votes and generates new transactions
 pub struct TestBlockHandler {
     last_transaction: u64,
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold>,
-    pub transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold>,
+    pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
+    pub proposed: Vec<TransactionLocator>,
 
     metrics: Arc<Metrics>,
 }
@@ -149,12 +159,13 @@ impl TestBlockHandler {
             transaction_time: Default::default(),
             committee,
             authority,
+            proposed: Default::default(),
             metrics,
         }
     }
 
-    pub fn is_certified(&self, txid: TransactionId) -> bool {
-        self.transaction_votes.is_processed(&txid)
+    pub fn is_certified(&self, locator: &TransactionLocator) -> bool {
+        self.transaction_votes.is_processed(locator)
     }
 
     pub fn last_transaction(&self) -> TransactionDigest {
@@ -189,17 +200,14 @@ impl BlockHandler for TestBlockHandler {
         let next_transaction = Self::make_transaction(self.last_transaction);
         let next_transaction_id = TransactionDigest::new(&next_transaction);
         response.push(BaseStatement::Share(next_transaction_id, next_transaction));
-        let mut transaction_time = self.transaction_time.lock();
-        transaction_time.insert(next_transaction_id, TimeInstant::now());
-        self.transaction_votes
-            .register(next_transaction_id, self.authority, &self.committee);
+        let transaction_time = self.transaction_time.lock();
         for block in blocks {
             println!("Processing {block:?}");
             let processed =
                 self.transaction_votes
                     .process_block(block, Some(&mut response), &self.committee);
-            for processed_id in processed {
-                if let Some(instant) = transaction_time.get(&processed_id) {
+            for processed_locator in processed {
+                if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics
                         .transaction_certified_latency
                         .observe(instant.elapsed());
@@ -207,6 +215,16 @@ impl BlockHandler for TestBlockHandler {
             }
         }
         response
+    }
+
+    fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+        let mut transaction_time = self.transaction_time.lock();
+        for (locator, _, _) in block.shared_transactions() {
+            transaction_time.insert(locator, TimeInstant::now());
+            self.proposed.push(locator);
+            self.transaction_votes
+                .register(locator, self.authority, &self.committee);
+        }
     }
 
     fn state(&self) -> Bytes {
@@ -271,32 +289,32 @@ impl TransactionGenerator {
     }
 }
 
-pub struct TestCommitHandler<H = HashSet<TransactionId>> {
+pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
     commit_interpreter: CommitInterpreter,
-    transaction_votes: TransactionAggregator<TransactionId, QuorumThreshold, H>,
+    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, H>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
     // committed_dags: Vec<CommittedSubDag>,
     start_time: TimeInstant,
-    transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+    transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
 
     metrics: Arc<Metrics>,
 }
 
-impl<H: ProcessedTransactionHandler<TransactionId> + Default> TestCommitHandler<H> {
+impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitHandler<H> {
     pub fn new(
         committee: Arc<Committee>,
-        transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+        transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self::new_with_handler(committee, transaction_time, metrics, Default::default())
     }
 }
 
-impl<H: ProcessedTransactionHandler<TransactionId>> TestCommitHandler<H> {
+impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
     pub fn new_with_handler(
         committee: Arc<Committee>,
-        transaction_time: Arc<Mutex<HashMap<TransactionId, TimeInstant>>>,
+        transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
         handler: H,
     ) -> Self {
@@ -338,7 +356,7 @@ impl<H: ProcessedTransactionHandler<TransactionId>> TestCommitHandler<H> {
     }
 }
 
-impl<H: ProcessedTransactionHandler<TransactionId> + Send + Sync> CommitObserver
+impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObserver
     for TestCommitHandler<H>
 {
     fn handle_commit(
@@ -357,24 +375,22 @@ impl<H: ProcessedTransactionHandler<TransactionId> + Send + Sync> CommitObserver
                 let processed = self
                     .transaction_votes
                     .process_block(block, None, &self.committee);
-                for processed_id in processed {
-                    if let Some(instant) = transaction_time.get(&processed_id) {
+                for processed_locator in processed {
+                    if let Some(instant) = transaction_time.get(&processed_locator) {
                         // todo - batch send data points
                         self.metrics
                             .certificate_committed_latency
                             .observe(instant.elapsed());
                     }
                 }
-                for statement in block.statements() {
-                    if let BaseStatement::Share(id, _) = statement {
-                        if let Some(instant) = transaction_time.get(id) {
-                            let timestamp = instant.elapsed();
-                            self.update_metrics(&timestamp);
-                            // todo - batch send data points
-                            self.metrics
-                                .transaction_committed_latency
-                                .observe(timestamp);
-                        }
+                for (locator, _, _) in block.shared_transactions() {
+                    if let Some(instant) = transaction_time.get(&locator) {
+                        let timestamp = instant.elapsed();
+                        self.update_metrics(&timestamp);
+                        // todo - batch send data points
+                        self.metrics
+                            .transaction_committed_latency
+                            .observe(timestamp);
                     }
                 }
             }

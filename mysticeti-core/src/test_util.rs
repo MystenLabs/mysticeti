@@ -14,9 +14,7 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{
-    format_authority_index, AuthorityIndex, BlockReference, StatementBlock, TransactionId,
-};
+use crate::types::{format_authority_index, AuthorityIndex, BlockReference, StatementBlock};
 use crate::wal::{open_file_for_wal, walf, WalPosition, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
@@ -89,17 +87,6 @@ pub fn committee_and_cores_persisted(
 
 fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
     authority * 1_000_000
-}
-
-pub fn first_n_transactions(committee: &Committee, n: u64) -> Vec<TransactionId> {
-    let mut result = vec![];
-    for authority in committee.authorities() {
-        let first = first_transaction_for_authority(authority);
-        for txn in first + 1..first + n + 1 {
-            result.push(TestBlockHandler::make_transaction_hash(txn));
-        }
-    }
-    result
 }
 
 pub fn committee_and_syncers(

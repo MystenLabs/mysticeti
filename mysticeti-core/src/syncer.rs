@@ -170,9 +170,7 @@ mod tests {
     use crate::block_handler::{TestBlockHandler, TestCommitHandler};
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::test_util::{
-        check_commits, committee_and_syncers, first_n_transactions, rng_at_seed,
-    };
+    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed};
     use rand::Rng;
     use std::ops::Range;
     use std::time::Duration;
@@ -249,13 +247,20 @@ mod tests {
         }
         // Simulation awaits for first num_txn transactions proposed by each authority to certify
         let num_txn = 40;
-        let await_transactions = first_n_transactions(&committee, num_txn);
-        assert_eq!(await_transactions.len(), num_txn as usize * committee.len());
+        let mut await_transactions = vec![];
+        let await_num_txn = num_txn as usize * committee.len();
 
         let mut iteration = 0u64;
         loop {
             iteration += 1;
             assert!(!simulator.run_one());
+            // todo - we might want to wait for exactly num_txn from each authority, rather then num_txn as usize * committee.len() total
+            if await_transactions.len() < await_num_txn {
+                for state in simulator.states_mut() {
+                    await_transactions.extend(state.core.block_handler_mut().proposed.drain(..))
+                }
+                continue;
+            }
             let not_certified: Vec<_> = simulator
                 .states()
                 .iter()
@@ -263,7 +268,7 @@ mod tests {
                     await_transactions
                         .iter()
                         .map(|txid| {
-                            if syncer.core.block_handler().is_certified(*txid) {
+                            if syncer.core.block_handler().is_certified(txid) {
                                 0usize
                             } else {
                                 1usize

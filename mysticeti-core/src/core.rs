@@ -239,6 +239,7 @@ impl<H: BlockHandler> Core<H> {
                 block.detailed()
             );
         }
+        self.block_handler.handle_proposal(&block);
         self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
             *pos
@@ -368,6 +369,10 @@ impl<H: BlockHandler> Core<H> {
         &self.block_handler
     }
 
+    pub fn block_handler_mut(&mut self) -> &mut H {
+        &mut self.block_handler
+    }
+
     pub fn committee(&self) -> &Arc<Committee> {
         &self.committee
     }
@@ -411,7 +416,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction());
+            proposed_transactions.extend(core.block_handler.proposed.drain(..));
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
@@ -442,7 +447,7 @@ mod test {
             assert_eq!(block.reference().round, 3);
             for txid in &proposed_transactions {
                 assert!(
-                    core.block_handler.is_certified(*txid),
+                    core.block_handler.is_certified(txid),
                     "Transaction {} is not certified by {}",
                     txid,
                     core.authority
@@ -465,7 +470,7 @@ mod test {
                     .try_new_block()
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
-                proposed_transactions.push(core.block_handler.last_transaction());
+                proposed_transactions.extend(core.block_handler.proposed.drain(..));
                 eprintln!("{}: {}", core.authority, block);
                 assert!(
                     threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
@@ -512,13 +517,14 @@ mod test {
                 push_all(&mut pending, core.authority, &block);
                 if i < 20 {
                     // First 20 iterations we record proposed transactions
-                    proposed_transactions.push(core.block_handler.last_transaction());
+                    proposed_transactions.extend(core.block_handler.proposed.drain(..));
+                    // proposed_transactions.push(core.block_handler.last_transaction());
                 } else {
                     assert!(!proposed_transactions.is_empty());
                     // After 20 iterations we just wait for all transactions to be committed everywhere
                     for proposed in &proposed_transactions {
                         for core in &cores {
-                            if !core.block_handler.is_certified(*proposed) {
+                            if !core.block_handler.is_certified(proposed) {
                                 continue 'a;
                             }
                         }
@@ -547,7 +553,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction());
+            proposed_transactions.extend(core.block_handler.proposed.clone());
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
@@ -591,7 +597,7 @@ mod test {
             assert_eq!(block.reference().round, 3);
             for txid in &proposed_transactions {
                 assert!(
-                    core.block_handler.is_certified(*txid),
+                    core.block_handler.is_certified(txid),
                     "Transaction {} is not certified by {}",
                     txid,
                     core.authority

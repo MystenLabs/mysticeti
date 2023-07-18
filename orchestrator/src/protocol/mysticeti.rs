@@ -150,7 +150,8 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                     ),
                 ]
                 .join(" ");
-                let command = ["source $HOME/.cargo/env", &run].join(" && ");
+                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &run].join("\\n");
+                let command = format!("echo -e '{command}' > mysticeti-start.sh && chmod +x mysticeti-start.sh && ./mysticeti-start.sh");
 
                 (instance, command)
             })

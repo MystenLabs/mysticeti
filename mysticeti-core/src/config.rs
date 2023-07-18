@@ -146,4 +146,8 @@ impl StorageDir {
     pub fn committed_transactions_log(&self) -> PathBuf {
         self.path.join("committed.txt")
     }
+
+    pub fn wal(&self) -> PathBuf {
+        self.path.join("wal")
+    }
 }

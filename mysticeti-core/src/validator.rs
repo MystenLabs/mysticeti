@@ -25,6 +25,7 @@ use crate::{
     prometheus,
     runtime::{JoinError, JoinHandle},
     types::AuthorityIndex,
+    wal,
 };
 
 pub struct Validator {
@@ -95,12 +96,14 @@ impl Validator {
             metrics.clone(),
             committed_transaction_log,
         );
+        let wal_file =
+            wal::open_file_for_wal(config.storage().wal()).expect("Failed to open wal file");
         let core = Core::open(
             block_handler,
             authority,
             committee.clone(),
             metrics.clone(),
-            tempfile::tempfile().unwrap(),
+            wal_file,
             CoreOptions::test(),
         );
         let network = Network::load(

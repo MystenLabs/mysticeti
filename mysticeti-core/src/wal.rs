@@ -43,7 +43,6 @@ pub fn walf(mut file: File) -> io::Result<(WalWriter, WalReader)> {
 }
 
 /// Opens file with mode suitable for walf
-#[cfg(test)]
 pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
     OpenOptions::new()
         .read(true)

@@ -294,7 +294,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             // * sysstat - for getting disk stats
             // * iftop - for getting network stats
             // * libssl-dev - Required to compile the orchestrator, todo remove this dependency
-            "sudo apt-get -y install build-essential sysstat iftop libssl-dev",
+            // * linux-tools-common linux-tools-generic linux-tools-* - installs perf
+            "sudo apt-get -y install build-essential sysstat iftop libssl-dev linux-tools-common linux-tools-generic linux-tools-`uname -r`",
             // Install rust (non-interactive).
             "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",

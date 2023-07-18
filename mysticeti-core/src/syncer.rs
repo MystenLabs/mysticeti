@@ -144,6 +144,13 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         &self.core
     }
 
+    pub fn cleanup_own_blocks(&mut self) {
+        let last_proposed = self.core.last_proposed();
+        const KEEP_OWN_BLOCKS: RoundNumber = 10 * 1024;
+        let last_to_keep = last_proposed.saturating_sub(KEEP_OWN_BLOCKS);
+        self.own_blocks = self.own_blocks.split_off(&last_to_keep);
+    }
+
     #[cfg(test)]
     pub fn scheduler_state_id(&self) -> usize {
         self.core.authority() as usize

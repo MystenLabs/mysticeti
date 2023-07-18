@@ -129,6 +129,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
+                    // todo - send signal if already unloaded blocks at requested round
                     tracing::debug!("{} subscribed from round {}", peer, round);
                     if let Some(send_blocks_handler) = subscribe_handler.take() {
                         send_blocks_handler.abort();
@@ -210,6 +211,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         loop {
             select! {
                 _sleep = runtime::sleep(cleanup_interval) => {
+                    // Only need write lock for cleanup_own_blocks,
+                    inner.syncer.write().cleanup_own_blocks();
+                    // Keep read lock for everything else
                     inner.syncer.read().core().cleanup();
                 }
                 _stopped = inner.stopped() => {

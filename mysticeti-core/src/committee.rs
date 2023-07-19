@@ -346,7 +346,7 @@ impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
         let mut vote_range_builder = VoteRangeBuilder::default();
         for (offset, statement) in block.statements().iter().enumerate() {
             match statement {
-                BaseStatement::Share(_id, _transaction) => {
+                BaseStatement::Share(_transaction) => {
                     let locator = TransactionLocator::new(*block.reference(), offset as u64);
                     self.register(locator, block.author(), committee);
                     if let Some(ref mut response) = response {

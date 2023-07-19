@@ -6,23 +6,16 @@ use crate::serde::{ByteRepr, BytesVisitor};
 use crate::types::Vote;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock, TimestampNs,
-    Transaction,
 };
 use digest::Digest;
 #[cfg(not(test))]
 use ed25519_consensus::Signature;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-#[cfg(test)]
-use std::hash::Hasher;
 use zeroize::Zeroize;
 
 pub const SIGNATURE_SIZE: usize = 64;
-pub const TRANSACTION_DIGEST_SIZE: usize = 32;
 pub const BLOCK_DIGEST_SIZE: usize = 32;
-
-#[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
-pub struct TransactionDigest([u8; TRANSACTION_DIGEST_SIZE]);
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
 pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
@@ -37,32 +30,7 @@ pub struct SignatureBytes([u8; SIGNATURE_SIZE]);
 pub struct Signer(Box<ed25519_consensus::SigningKey>);
 
 #[cfg(not(test))]
-type TransactionHasher = blake2::Blake2b<digest::consts::U32>;
-#[cfg(not(test))]
 type BlockHasher = blake2::Blake2b<digest::consts::U32>;
-
-impl TransactionDigest {
-    pub fn new(transaction: &Transaction) -> Self {
-        Self::from(transaction.data())
-    }
-
-    #[cfg(not(test))]
-    pub fn from(data: &[u8]) -> Self {
-        let mut hasher = TransactionHasher::default();
-        hasher.update(data);
-        Self(hasher.finalize().into())
-    }
-
-    #[cfg(test)]
-    pub fn from(data: &[u8]) -> Self {
-        let mut hasher = seahash::SeaHasher::default();
-        hasher.write(data);
-        let bytes = hasher.finish().to_le_bytes();
-        let mut b = [0u8; TRANSACTION_DIGEST_SIZE];
-        (&mut b[..8]).copy_from_slice(&bytes);
-        Self(b)
-    }
-}
 
 impl BlockDigest {
     #[cfg(not(test))]
@@ -122,9 +90,9 @@ impl BlockDigest {
         }
         for statement in statements {
             match statement {
-                BaseStatement::Share(id, _) => {
+                BaseStatement::Share(tx) => {
                     [0].crypto_hash(hasher);
-                    id.crypto_hash(hasher);
+                    tx.crypto_hash(hasher);
                 }
                 BaseStatement::Vote(id, Vote::Accept) => {
                     [1].crypto_hash(hasher);
@@ -260,12 +228,6 @@ impl AsRef<[u8]> for BlockDigest {
     }
 }
 
-impl AsRef<[u8]> for TransactionDigest {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
 impl AsRef<[u8]> for SignatureBytes {
     fn as_ref(&self) -> &[u8] {
         &self.0
@@ -278,27 +240,9 @@ impl AsBytes for BlockDigest {
     }
 }
 
-impl AsBytes for TransactionDigest {
-    fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
 impl AsBytes for SignatureBytes {
     fn as_bytes(&self) -> &[u8] {
         &self.0
-    }
-}
-
-impl fmt::Debug for TransactionDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", hex::encode(self.0))
-    }
-}
-
-impl fmt::Display for TransactionDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", hex::encode(&self.0[..4]))
     }
 }
 
@@ -351,33 +295,6 @@ impl Serialize for SignatureBytes {
 }
 
 impl<'de> Deserialize<'de> for SignatureBytes {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_bytes(BytesVisitor::new())
-    }
-}
-
-impl ByteRepr for TransactionDigest {
-    fn try_copy_from_slice<E: de::Error>(v: &[u8]) -> Result<Self, E> {
-        if v.len() != TRANSACTION_DIGEST_SIZE {
-            return Err(E::custom(format!(
-                "Invalid transaction digest length: {}",
-                v.len()
-            )));
-        }
-        let mut inner = [0u8; TRANSACTION_DIGEST_SIZE];
-        inner.copy_from_slice(v);
-        Ok(Self(inner))
-    }
-}
-
-impl Serialize for TransactionDigest {
-    #[inline]
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for TransactionDigest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(BytesVisitor::new())
     }

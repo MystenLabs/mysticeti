@@ -6,15 +6,13 @@ use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
 use crate::config::StorageDir;
-use crate::crypto::TransactionDigest;
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
 use crate::types::{
-    AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionId,
-    TransactionLocator,
+    AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
 use crate::{
     block_store::{BlockStore, CommitData},
@@ -57,7 +55,7 @@ pub struct RealBlockHandler {
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     metrics: Arc<Metrics>,
-    receiver: mpsc::Receiver<Vec<(TransactionId, Transaction)>>,
+    receiver: mpsc::Receiver<Vec<Transaction>>,
 }
 
 impl RealBlockHandler {
@@ -66,7 +64,7 @@ impl RealBlockHandler {
         authority: AuthorityIndex,
         config: &StorageDir,
         metrics: Arc<Metrics>,
-    ) -> (Self, mpsc::Sender<Vec<(TransactionId, Transaction)>>) {
+    ) -> (Self, mpsc::Sender<Vec<Transaction>>) {
         let (sender, receiver) = mpsc::channel(1024);
         let transaction_log = TransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
@@ -88,8 +86,8 @@ impl BlockHandler for RealBlockHandler {
         let transaction_time = self.transaction_time.lock();
         while let Ok(data) = self.receiver.try_recv() {
             // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
-            for (id, tx) in data {
-                response.push(BaseStatement::Share(id, tx));
+            for tx in data {
+                response.push(BaseStatement::Share(tx));
             }
         }
         for block in blocks {
@@ -112,7 +110,7 @@ impl BlockHandler for RealBlockHandler {
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         let mut transaction_time = self.transaction_time.lock();
-        for (locator, _, _) in block.shared_transactions() {
+        for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
             self.transaction_votes
                 .register(locator, self.authority, &self.committee);
@@ -168,16 +166,8 @@ impl TestBlockHandler {
         self.transaction_votes.is_processed(locator)
     }
 
-    pub fn last_transaction(&self) -> TransactionDigest {
-        Self::make_transaction_hash(self.last_transaction)
-    }
-
     pub fn make_transaction(i: u64) -> Transaction {
         Transaction::new(i.to_le_bytes().to_vec())
-    }
-
-    pub fn make_transaction_hash(i: u64) -> TransactionDigest {
-        TransactionDigest::new(&Self::make_transaction(i))
     }
 }
 
@@ -189,7 +179,7 @@ impl BlockHandler for TestBlockHandler {
                 // We can see our own block in handle_blocks - this can happen during core recovery
                 // Todo - we might also need to process pending Payload statements as well
                 for statement in block.statements() {
-                    if let BaseStatement::Share(_, _) = statement {
+                    if let BaseStatement::Share(_) = statement {
                         self.last_transaction += 1;
                     }
                 }
@@ -198,8 +188,7 @@ impl BlockHandler for TestBlockHandler {
         let mut response = vec![];
         self.last_transaction += 1;
         let next_transaction = Self::make_transaction(self.last_transaction);
-        let next_transaction_id = TransactionDigest::new(&next_transaction);
-        response.push(BaseStatement::Share(next_transaction_id, next_transaction));
+        response.push(BaseStatement::Share(next_transaction));
         let transaction_time = self.transaction_time.lock();
         for block in blocks {
             println!("Processing {block:?}");
@@ -219,7 +208,7 @@ impl BlockHandler for TestBlockHandler {
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         let mut transaction_time = self.transaction_time.lock();
-        for (locator, _, _) in block.shared_transactions() {
+        for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
             self.proposed.push(locator);
             self.transaction_votes
@@ -243,7 +232,7 @@ impl BlockHandler for TestBlockHandler {
 }
 
 pub struct TransactionGenerator {
-    sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
+    sender: mpsc::Sender<Vec<Transaction>>,
     rng: StdRng,
     transactions_per_100ms: usize,
     initial_delay: Duration,
@@ -251,7 +240,7 @@ pub struct TransactionGenerator {
 
 impl TransactionGenerator {
     pub fn start(
-        sender: mpsc::Sender<Vec<(TransactionId, Transaction)>>,
+        sender: mpsc::Sender<Vec<Transaction>>,
         seed: AuthorityIndex,
         transactions_per_100ms: usize,
         initial_delay: Duration,
@@ -278,8 +267,7 @@ impl TransactionGenerator {
                     transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
                 }
                 let transaction = Transaction::new(transaction);
-                let id = TransactionDigest::new(&transaction);
-                block.push((id, transaction));
+                block.push(transaction);
             }
 
             if self.sender.send(block).await.is_err() {
@@ -383,7 +371,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(instant.elapsed());
                     }
                 }
-                for (locator, _, _) in block.shared_transactions() {
+                for (locator, _) in block.shared_transactions() {
                     if let Some(instant) = transaction_time.get(&locator) {
                         let timestamp = instant.elapsed();
                         self.update_metrics(&timestamp);

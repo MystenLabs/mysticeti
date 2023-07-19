@@ -273,7 +273,7 @@ impl<H: BlockHandler> Core<H> {
         let mut transactions = 0usize;
         for statement in block.statements() {
             match statement {
-                BaseStatement::Share(_, _) => transactions += 1,
+                BaseStatement::Share(_) => transactions += 1,
                 BaseStatement::Vote(_, _) => votes += 1,
                 BaseStatement::VoteRange(range) => votes += range.len(),
             }

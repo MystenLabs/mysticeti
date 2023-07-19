@@ -8,7 +8,6 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
-pub type TransactionId = crate::crypto::TransactionDigest;
 pub type RoundNumber = u64;
 pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
@@ -16,7 +15,7 @@ pub type KeyPair = u64;
 pub type PublicKey = crate::crypto::PublicKey;
 
 use crate::committee::Committee;
-use crate::crypto::{CryptoHash, SignatureBytes, Signer};
+use crate::crypto::{AsBytes, CryptoHash, SignatureBytes, Signer};
 use crate::data::Data;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
 use digest::Digest;
@@ -31,7 +30,7 @@ pub use test::Dag;
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
     Accept,
-    Reject(Option<TransactionId>),
+    Reject(Option<TransactionLocator>),
 }
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
@@ -44,8 +43,7 @@ pub struct BlockReference {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
-    // todo - consider removing TransactionId
-    Share(TransactionId, Transaction),
+    Share(Transaction),
     /// Authority votes to accept or reject a transaction.
     Vote(TransactionLocator, Vote),
     // For now only accept votes are batched
@@ -157,17 +155,15 @@ impl StatementBlock {
         &self.statements
     }
 
-    pub fn shared_transactions(
-        &self,
-    ) -> impl Iterator<Item = (TransactionLocator, &TransactionId, &Transaction)> {
+    pub fn shared_transactions(&self) -> impl Iterator<Item = (TransactionLocator, &Transaction)> {
         let reference = *self.reference();
         self.statements
             .iter()
             .enumerate()
             .filter_map(move |(pos, statement)| {
-                if let BaseStatement::Share(id, tx) = statement {
+                if let BaseStatement::Share(tx) = statement {
                     let locator = TransactionLocator::new(reference, pos as u64);
-                    Some((locator, id, tx))
+                    Some((locator, tx))
                 } else {
                     None
                 }
@@ -246,15 +242,7 @@ impl StatementBlock {
         for statement in &self.statements {
             // Also check duplicate statements?
             match statement {
-                BaseStatement::Share(id, tx) => {
-                    let calculated_id = TransactionId::new(tx);
-                    ensure!(
-                        &calculated_id == id,
-                        "Transaction digest mismatch, calculated {:?}, provided {:?}",
-                        calculated_id,
-                        id
-                    );
-                }
+                BaseStatement::Share(_) => {}
                 BaseStatement::Vote(_, _) => {}
                 BaseStatement::VoteRange(range) => range.verify()?,
             }
@@ -499,7 +487,7 @@ impl CryptoHash for TransactionLocatorRange {
 impl fmt::Display for BaseStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BaseStatement::Share(id, _) => write!(f, "#{id:08}"),
+            BaseStatement::Share(_tx) => write!(f, "tx"),
             BaseStatement::Vote(id, Vote::Accept) => write!(f, "+{id:08}"),
             BaseStatement::Vote(id, Vote::Reject(_)) => write!(f, "-{id:08}"),
             BaseStatement::VoteRange(range) => write!(
@@ -524,6 +512,12 @@ impl Transaction {
     #[allow(dead_code)]
     pub fn into_data(self) -> Vec<u8> {
         self.data
+    }
+}
+
+impl AsBytes for Transaction {
+    fn as_bytes(&self) -> &[u8] {
+        &self.data
     }
 }
 

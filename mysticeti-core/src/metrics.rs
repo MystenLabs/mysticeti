@@ -296,10 +296,10 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default + AsPrometheusMetric> Histog
             .set(p99.as_prometheus_metric());
         self.gauge
             .with_label_values(&["sum"])
-            .set(self.histogram.sum().as_prometheus_metric());
+            .set(self.histogram.total_sum().as_prometheus_metric());
         self.gauge
             .with_label_values(&["count"])
-            .set(self.histogram.len() as i64);
+            .set(self.histogram.total_count() as i64);
         None
     }
 
@@ -335,10 +335,10 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default + AsPrometheusMetric> VecHis
                 .set(p99.as_prometheus_metric());
             self.gauge
                 .with_label_values(&[label, "sum"])
-                .set(histogram.sum().as_prometheus_metric());
+                .set(histogram.total_sum().as_prometheus_metric());
             self.gauge
                 .with_label_values(&[label, "count"])
-                .set(histogram.len() as i64);
+                .set(histogram.total_count() as i64);
         }
     }
 
@@ -380,7 +380,7 @@ impl MetricReporter {
 
     // todo - this task never stops
     async fn run(mut self) {
-        const REPORT_INTERVAL: Duration = Duration::from_secs(10);
+        const REPORT_INTERVAL: Duration = Duration::from_secs(60);
         let mut deadline = Instant::now();
         loop {
             deadline += REPORT_INTERVAL;

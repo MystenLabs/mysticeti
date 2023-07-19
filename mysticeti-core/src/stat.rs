@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 pub struct PreciseHistogram<T> {
     points: Vec<T>, // todo - we need to reset this vector periodically
     sum: T,
+    count: usize,
     receiver: mpsc::UnboundedReceiver<T>,
 }
 
@@ -22,6 +23,7 @@ pub fn histogram<T: Default>() -> (PreciseHistogram<T>, HistogramSender<T>) {
     let histogram = PreciseHistogram {
         points: Default::default(),
         sum: Default::default(),
+        count: 0,
         receiver,
     };
     (histogram, sender)
@@ -37,6 +39,7 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
     pub fn observe(&mut self, point: T) {
         self.points.push(point);
         self.sum += point;
+        self.count += 1;
     }
 
     pub fn avg(&self) -> Option<T> {
@@ -46,12 +49,14 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
         Some(self.sum.div_usize(self.points.len()))
     }
 
-    pub fn sum(&self) -> T {
+    // Running sum, not reset on clear/clear_receive_all
+    pub fn total_sum(&self) -> T {
         self.sum
     }
 
-    pub fn len(&self) -> usize {
-        self.points.len()
+    // Running count, not reset on clear/clear_receive_all
+    pub fn total_count(&self) -> usize {
+        self.count
     }
 
     pub fn pcts<const N: usize>(&mut self, pct: [usize; N]) -> Option<[T; N]> {

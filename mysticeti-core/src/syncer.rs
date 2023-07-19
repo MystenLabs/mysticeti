@@ -9,11 +9,11 @@ use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use minibytes::Bytes;
 use std::collections::HashSet;
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
-    own_blocks: BTreeMap<RoundNumber, Data<StatementBlock>>,
+    last_own_block: Option<Data<StatementBlock>>,
     last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
@@ -49,7 +49,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
-            own_blocks: Default::default(),
+            last_own_block: None,
             force_new_block: false,
             commit_period,
             signals,
@@ -87,7 +87,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     fn try_new_block(&mut self) {
         if self.force_new_block || self.core.ready_new_block(self.commit_period) {
             let Some(block) = self.core.try_new_block() else { return; };
-            assert!(self.own_blocks.insert(block.round(), block).is_none());
+            self.last_own_block = Some(block);
             self.signals.new_block_ready();
             self.force_new_block = false;
 
@@ -114,20 +114,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         }
     }
 
-    pub fn get_own_blocks(
-        &self,
-        from_excluded: RoundNumber,
-        limit: usize,
-    ) -> Vec<Data<StatementBlock>> {
-        self.own_blocks
-            .range((from_excluded + 1)..)
-            .take(limit)
-            .map(|(_k, v)| v.clone())
-            .collect()
-    }
-
     pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
-        self.own_blocks.values().last().cloned()
+        self.last_own_block.clone()
     }
 
     pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
@@ -143,13 +131,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
 
     pub fn core(&self) -> &Core<H> {
         &self.core
-    }
-
-    pub fn cleanup_own_blocks(&mut self) {
-        let last_proposed = self.core.last_proposed();
-        const KEEP_OWN_BLOCKS: RoundNumber = 2 * 1024;
-        let last_to_keep = last_proposed.saturating_sub(KEEP_OWN_BLOCKS);
-        self.own_blocks = self.own_blocks.split_off(&last_to_keep);
     }
 
     #[cfg(test)]

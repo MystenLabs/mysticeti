@@ -1,3 +1,4 @@
+use crate::block_store::BlockStore;
 use crate::committee::Committee;
 use crate::core::Core;
 use crate::lock::MonitoredRwLock;
@@ -26,6 +27,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     syncer: MonitoredRwLock<Syncer<H, Arc<Notify>, C>>,
+    block_store: BlockStore,
     notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
@@ -46,6 +48,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         commit_observer.recover_committed(committed, state);
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
+        let block_store = core.block_store().clone();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -64,6 +67,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
+            block_store,
             committee,
             stop: stop_sender.clone(),
         });
@@ -171,7 +175,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     ) -> Option<()> {
         loop {
             let notified = inner.notify.notified();
-            let blocks = inner.syncer.read().get_own_blocks(round, 10);
+            let blocks = inner.block_store.get_own_blocks(round, 10);
             for block in blocks {
                 round = block.round();
                 to.send(NetworkMessage::Block(block)).await.ok()?;
@@ -211,8 +215,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         loop {
             select! {
                 _sleep = runtime::sleep(cleanup_interval) => {
-                    // Only need write lock for cleanup_own_blocks,
-                    inner.syncer.write().cleanup_own_blocks();
                     // Keep read lock for everything else
                     inner.syncer.read().core().cleanup();
                 }

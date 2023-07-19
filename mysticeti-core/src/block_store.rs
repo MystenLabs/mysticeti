@@ -11,7 +11,7 @@ use minibytes::Bytes;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::IoSlice;
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,7 +26,9 @@ pub struct BlockStore {
 #[derive(Default)]
 struct BlockStoreInner {
     index: HashMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
+    own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
+    authority: AuthorityIndex,
 }
 
 pub trait BlockWriter {
@@ -42,11 +44,15 @@ enum IndexEntry {
 
 impl BlockStore {
     pub fn open(
+        authority: AuthorityIndex,
         block_wal_reader: Arc<WalReader>,
         wal_writer: &WalWriter,
         metrics: Arc<Metrics>,
     ) -> RecoveredState {
-        let mut inner = BlockStoreInner::default();
+        let mut inner = BlockStoreInner {
+            authority,
+            ..Default::default()
+        };
         let mut builder = RecoveredStateBuilder::new();
         let mut replay_started: Option<Instant> = None;
         let mut block_count = 0u64;
@@ -167,6 +173,15 @@ impl BlockStore {
         self.metrics.wal_mappings.set(retained_maps as i64);
     }
 
+    pub fn get_own_blocks(
+        &self,
+        from_excluded: RoundNumber,
+        limit: usize,
+    ) -> Vec<Data<StatementBlock>> {
+        let entries = self.inner.read().get_own_blocks(from_excluded, limit);
+        self.read_index_vec(entries)
+    }
+
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
@@ -267,15 +282,46 @@ impl BlockStoreInner {
         self.highest_round = max(self.highest_round, reference.round());
         let map = self.index.entry(reference.round()).or_default();
         map.insert(reference.author_digest(), IndexEntry::WalPosition(position));
+        self.add_own_index(reference);
     }
 
     pub fn add_loaded(&mut self, position: WalPosition, block: Data<StatementBlock>) {
         self.highest_round = max(self.highest_round, block.round());
+        self.add_own_index(block.reference());
         let map = self.index.entry(block.round()).or_default();
         map.insert(
             (block.author(), block.digest()),
             IndexEntry::Loaded(position, block),
         );
+    }
+
+    pub fn get_own_blocks(&self, from_excluded: RoundNumber, limit: usize) -> Vec<IndexEntry> {
+        self.own_blocks
+            .range((from_excluded + 1)..)
+            .take(limit)
+            .map(|(round, digest)| {
+                let reference = BlockReference {
+                    authority: self.authority,
+                    round: *round,
+                    digest: *digest,
+                };
+                if let Some(block) = self.get_block(reference) {
+                    block
+                } else {
+                    panic!("Own block index corrupted, not found: {reference}");
+                }
+            })
+            .collect()
+    }
+
+    fn add_own_index(&mut self, reference: &BlockReference) {
+        if reference.authority != self.authority {
+            return;
+        }
+        assert!(self
+            .own_blocks
+            .insert(reference.round, reference.digest)
+            .is_none());
     }
 }
 

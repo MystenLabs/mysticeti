@@ -1,41 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_INSTANCE-0",
-      "label": "instance-0",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "prometheus",
-      "pluginName": "Prometheus"
-    }
-  ],
-  "__elements": {},
-  "__requires": [
-    {
-      "type": "grafana",
-      "id": "grafana",
-      "name": "Grafana",
-      "version": "10.0.2"
-    },
-    {
-      "type": "panel",
-      "id": "piechart",
-      "name": "Pie chart",
-      "version": ""
-    },
-    {
-      "type": "datasource",
-      "id": "prometheus",
-      "name": "Prometheus",
-      "version": "1.0.0"
-    },
-    {
-      "type": "panel",
-      "id": "timeseries",
-      "name": "Time series",
-      "version": ""
-    }
-  ],
   "annotations": {
     "list": [
       {
@@ -55,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
+  "id": 1,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -137,7 +100,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_INSTANCE-0}"
+            "uid": "Fixed-UID-testbed"
           },
           "editorMode": "code",
           "expr": "rate(latency_s_count[1m])",
@@ -146,78 +109,8 @@
           "refId": "A"
         }
       ],
-      "title": "TPS (view of Node 0)",
+      "title": "TPS (per node)",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "id": 1,
-      "options": {
-        "displayLabels": [
-          "percent",
-          "value"
-        ],
-        "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true,
-          "values": []
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "10.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_INSTANCE-0}"
-          },
-          "editorMode": "builder",
-          "expr": "committed_leaders_total",
-          "legendFormat": "Node {{authority}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Committed Leaders (view of Node 0)",
-      "type": "piechart"
     },
     {
       "datasource": {
@@ -280,8 +173,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 8
+        "x": 12,
+        "y": 0
       },
       "id": 2,
       "options": {
@@ -300,28 +193,330 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_INSTANCE-0}"
+            "uid": "Fixed-UID-testbed"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(latency_s_bucket[1m])) by (le))",
-          "legendFormat": "__auto",
+          "expr": "avg(transaction_certified_latency{v=\"p50\"}) / 1000",
+          "legendFormat": "Certificate p50",
           "range": true,
           "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_INSTANCE-0}"
+            "uid": "Fixed-UID-testbed"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(latency_s_bucket[1m])) by (le))",
+          "expr": "avg(transaction_certified_latency{v=\"p90\"}) / 1000",
           "hide": false,
-          "legendFormat": "__auto",
+          "legendFormat": "Certificate p90",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "avg(transaction_committed_latency{v=\"p50\"}) / 1000",
+          "hide": false,
+          "legendFormat": "Tx Commit p50",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "avg(transaction_committed_latency{v=\"p90\"}) / 1000",
+          "hide": false,
+          "legendFormat": "Tx Commit p90",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "avg(certificate_committed_latency{v=\"p50\"}) / 1000",
+          "hide": false,
+          "legendFormat": "Cert commit p50",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "avg(certificate_committed_latency{v=\"p90\"}) / 1000",
+          "hide": false,
+          "legendFormat": "Cert commit p90",
+          "range": true,
+          "refId": "F"
         }
       ],
-      "title": "Latency (view of Node 0)",
+      "title": "Latency(ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 1,
+      "options": {
+        "displayLabels": [
+          "percent",
+          "value"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true,
+          "values": []
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "builder",
+          "expr": "committed_leaders_total",
+          "legendFormat": "Node {{authority}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Committed Leaders (view of Node 0)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Fixed-UID-testbed"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_network_receive_bytes_total{device=\"ens5\"}[1m]) / 1024 / 1024 * 8",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Network receive (Mbps)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Fixed-UID-testbed"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Fixed-UID-testbed"
+          },
+          "editorMode": "code",
+          "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / 1024 / 1024 /1024",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Memory usage",
       "type": "timeseries"
     }
   ],
@@ -340,6 +535,6 @@
   "timezone": "",
   "title": "Mysticeti",
   "uid": "bdd54ee7-84de-4018-8bb7-92af2defc041",
-  "version": 2,
+  "version": 7,
   "weekStart": ""
 }

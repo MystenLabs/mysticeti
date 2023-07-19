@@ -4,16 +4,16 @@
 use crate::committee::Committee;
 use crate::data::{IN_MEMORY_BLOCKS, IN_MEMORY_BLOCKS_BYTES};
 use crate::runtime;
-use crate::runtime::TimeInstant;
-use crate::stat::{histogram, HistogramSender, PreciseHistogram};
+use crate::stat::{histogram, DivUsize, HistogramSender, PreciseHistogram};
 use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
-    register_int_gauge_with_registry, CounterVec, HistogramVec, IntCounter, IntCounterVec,
-    IntGauge, Registry,
+    register_int_gauge_vec_with_registry, register_int_gauge_with_registry, CounterVec,
+    HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
 };
 use std::net::SocketAddr;
+use std::ops::AddAssign;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,20 +64,28 @@ pub struct Metrics {
 pub struct MetricReporter {
     // When adding field here make sure to update
     // MetricsReporter::receive_all and MetricsReporter::run_report.
-    pub transaction_certified_latency: PreciseHistogram<Duration>,
-    pub certificate_committed_latency: PreciseHistogram<Duration>,
-    pub transaction_committed_latency: PreciseHistogram<Duration>,
+    pub transaction_certified_latency: HistogramReporter<Duration>,
+    pub certificate_committed_latency: HistogramReporter<Duration>,
+    pub transaction_committed_latency: HistogramReporter<Duration>,
 
-    pub proposed_block_size_bytes: PreciseHistogram<usize>,
-    pub proposed_block_transaction_count: PreciseHistogram<usize>,
-    pub proposed_block_vote_count: PreciseHistogram<usize>,
+    pub proposed_block_size_bytes: HistogramReporter<usize>,
+    pub proposed_block_transaction_count: HistogramReporter<usize>,
+    pub proposed_block_vote_count: HistogramReporter<usize>,
 
-    pub connection_latency: Vec<PreciseHistogram<Duration>>,
+    pub connection_latency: VecHistogramReporter<Duration>,
 
     pub global_in_memory_blocks: IntGauge,
     pub global_in_memory_blocks_bytes: IntGauge,
+}
 
-    started: TimeInstant,
+pub struct HistogramReporter<T> {
+    pub histogram: PreciseHistogram<T>,
+    gauge: IntGaugeVec,
+}
+
+pub struct VecHistogramReporter<T> {
+    histograms: Vec<(PreciseHistogram<T>, String)>,
+    gauge: IntGaugeVec,
 }
 
 impl Metrics {
@@ -91,18 +99,57 @@ impl Metrics {
         let (proposed_block_vote_count_hist, proposed_block_vote_count) = histogram();
 
         let commitee_size = committee.map(Committee::len).unwrap_or_default();
-        let (connection_latency_hist, connection_latency_sender) =
-            (0..commitee_size).map(|_| histogram()).unzip();
+        let (connection_latency_hist, connection_latency_sender) = (0..commitee_size)
+            .map(|peer| {
+                let (hist, sender) = histogram();
+                (
+                    (
+                        hist,
+                        format_authority_index(peer as AuthorityIndex).to_string(),
+                    ),
+                    sender,
+                )
+            })
+            .unzip();
         let reporter = MetricReporter {
-            transaction_certified_latency: transaction_certified_latency_hist,
-            certificate_committed_latency: certificate_committed_latency_hist,
-            transaction_committed_latency: transaction_committed_latency_hist,
+            transaction_certified_latency: HistogramReporter::new_in_registry(
+                transaction_certified_latency_hist,
+                registry,
+                "transaction_certified_latency",
+            ),
+            certificate_committed_latency: HistogramReporter::new_in_registry(
+                certificate_committed_latency_hist,
+                registry,
+                "certificate_committed_latency",
+            ),
+            transaction_committed_latency: HistogramReporter::new_in_registry(
+                transaction_committed_latency_hist,
+                registry,
+                "transaction_committed_latency",
+            ),
 
-            proposed_block_size_bytes: proposed_block_size_bytes_hist,
-            proposed_block_transaction_count: proposed_block_transaction_count_hist,
-            proposed_block_vote_count: proposed_block_vote_count_hist,
+            proposed_block_size_bytes: HistogramReporter::new_in_registry(
+                proposed_block_size_bytes_hist,
+                registry,
+                "proposed_block_size_bytes",
+            ),
+            proposed_block_transaction_count: HistogramReporter::new_in_registry(
+                proposed_block_transaction_count_hist,
+                registry,
+                "proposed_block_transaction_count",
+            ),
+            proposed_block_vote_count: HistogramReporter::new_in_registry(
+                proposed_block_vote_count_hist,
+                registry,
+                "proposed_block_vote_count",
+            ),
 
-            connection_latency: connection_latency_hist,
+            connection_latency: VecHistogramReporter::new_in_registry(
+                connection_latency_hist,
+                "peer",
+                registry,
+                "connection_latency",
+            ),
 
             global_in_memory_blocks: register_int_gauge_with_registry!(
                 "global_in_memory_blocks",
@@ -116,8 +163,6 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
-
-            started: TimeInstant::now(),
         };
         let metrics = Self {
             benchmark_duration: register_int_counter_with_registry!(
@@ -223,23 +268,114 @@ impl Metrics {
     }
 }
 
+pub trait AsPrometheusMetric {
+    fn as_prometheus_metric(&self) -> i64;
+}
+
+impl<T: Ord + AddAssign + DivUsize + Copy + Default + AsPrometheusMetric> HistogramReporter<T> {
+    pub fn new_in_registry(
+        histogram: PreciseHistogram<T>,
+        registry: &Registry,
+        name: &str,
+    ) -> Self {
+        let gauge = register_int_gauge_vec_with_registry!(name, name, &["v"], registry).unwrap();
+
+        Self { histogram, gauge }
+    }
+
+    pub fn report(&mut self) -> Option<()> {
+        let [p50, p90, p99] = self.histogram.pcts([500, 900, 990])?;
+        self.gauge
+            .with_label_values(&["p50"])
+            .set(p50.as_prometheus_metric());
+        self.gauge
+            .with_label_values(&["p90"])
+            .set(p90.as_prometheus_metric());
+        self.gauge
+            .with_label_values(&["p99"])
+            .set(p99.as_prometheus_metric());
+        self.gauge
+            .with_label_values(&["sum"])
+            .set(self.histogram.sum().as_prometheus_metric());
+        self.gauge
+            .with_label_values(&["count"])
+            .set(self.histogram.len() as i64);
+        None
+    }
+
+    pub fn clear_receive_all(&mut self) {
+        self.histogram.clear_receive_all();
+    }
+}
+
+impl<T: Ord + AddAssign + DivUsize + Copy + Default + AsPrometheusMetric> VecHistogramReporter<T> {
+    pub fn new_in_registry(
+        histograms: Vec<(PreciseHistogram<T>, String)>,
+        label: &str,
+        registry: &Registry,
+        name: &str,
+    ) -> Self {
+        let gauge =
+            register_int_gauge_vec_with_registry!(name, name, &[label, "v"], registry).unwrap();
+
+        Self { histograms, gauge }
+    }
+
+    pub fn report(&mut self) {
+        for (histogram, label) in self.histograms.iter_mut() {
+            let Some([p50, p90, p99]) = histogram.pcts([500, 900, 990]) else {continue;};
+            self.gauge
+                .with_label_values(&[label, "p50"])
+                .set(p50.as_prometheus_metric());
+            self.gauge
+                .with_label_values(&[label, "p90"])
+                .set(p90.as_prometheus_metric());
+            self.gauge
+                .with_label_values(&[label, "p99"])
+                .set(p99.as_prometheus_metric());
+            self.gauge
+                .with_label_values(&[label, "sum"])
+                .set(histogram.sum().as_prometheus_metric());
+            self.gauge
+                .with_label_values(&[label, "count"])
+                .set(histogram.len() as i64);
+        }
+    }
+
+    pub fn clear_receive_all(&mut self) {
+        self.histograms
+            .iter_mut()
+            .for_each(|(hist, _)| hist.clear_receive_all());
+    }
+}
+
+impl AsPrometheusMetric for Duration {
+    fn as_prometheus_metric(&self) -> i64 {
+        self.as_micros() as i64
+    }
+}
+
+impl AsPrometheusMetric for usize {
+    fn as_prometheus_metric(&self) -> i64 {
+        *self as i64
+    }
+}
+
 impl MetricReporter {
     pub fn start(self) {
         runtime::Handle::current().spawn(self.run());
     }
 
-    pub fn receive_all(&mut self) {
-        self.transaction_certified_latency.receive_all();
-        self.certificate_committed_latency.receive_all();
-        self.transaction_committed_latency.receive_all();
+    pub fn clear_receive_all(&mut self) {
+        self.transaction_certified_latency.clear_receive_all();
+        self.certificate_committed_latency.clear_receive_all();
+        self.transaction_committed_latency.clear_receive_all();
 
-        self.proposed_block_size_bytes.receive_all();
-        self.proposed_block_transaction_count.receive_all();
-        self.proposed_block_vote_count.receive_all();
+        self.proposed_block_size_bytes.clear_receive_all();
+        self.proposed_block_transaction_count.clear_receive_all();
+        self.proposed_block_vote_count.clear_receive_all();
 
-        self.connection_latency
-            .iter_mut()
-            .for_each(PreciseHistogram::receive_all);
+        self.connection_latency.clear_receive_all();
     }
 
     // todo - this task never stops
@@ -259,94 +395,17 @@ impl MetricReporter {
         self.global_in_memory_blocks_bytes
             .set(IN_MEMORY_BLOCKS_BYTES.load(Ordering::Relaxed) as i64);
 
-        self.receive_all();
-        let elapsed = self.started.elapsed();
-        Self::report_hist(
-            "transaction_certified_latency",
-            &mut self.transaction_certified_latency,
-            elapsed,
-        );
-        Self::report_hist(
-            "certificate_committed_latency",
-            &mut self.certificate_committed_latency,
-            elapsed,
-        );
-        Self::report_hist(
-            "transaction_committed_latency",
-            &mut self.transaction_committed_latency,
-            elapsed,
-        );
-        Self::report_size_hist(
-            "proposed_block_size_bytes",
-            &mut self.proposed_block_size_bytes,
-        );
-        Self::report_size_hist(
-            "proposed_block_transaction_count",
-            &mut self.proposed_block_transaction_count,
-        );
-        Self::report_size_hist(
-            "proposed_block_vote_count",
-            &mut self.proposed_block_vote_count,
-        );
+        self.clear_receive_all();
 
-        let mut latencies = vec![];
-        for (peer, hist) in self.connection_latency.iter_mut().enumerate() {
-            if let Some(report) = Self::latency_report(peer, hist) {
-                latencies.push(report);
-            }
-        }
-        tracing::info!("Network latency report:\n{}", Table::new(latencies));
-    }
+        self.transaction_certified_latency.report();
+        self.certificate_committed_latency.report();
+        self.transaction_committed_latency.report();
 
-    fn latency_report(peer: usize, hist: &mut PreciseHistogram<Duration>) -> Option<LatencyReport> {
-        let [p50, p90, p99] = hist.pcts([500, 900, 999])?;
-        let avg = hist.avg()?;
-        Some(LatencyReport {
-            peer: format_authority_index(peer as AuthorityIndex),
-            p50: p50.as_millis() as u64,
-            p90: p90.as_millis() as u64,
-            p99: p99.as_millis() as u64,
-            avg: avg.as_millis() as u64,
-        })
-    }
+        self.proposed_block_size_bytes.report();
+        self.proposed_block_transaction_count.report();
+        self.proposed_block_vote_count.report();
 
-    fn report_size_hist(name: &str, h: &mut PreciseHistogram<usize>) -> Option<()> {
-        let [p50, p90, p99] = h.pcts([500, 900, 999])?;
-        let avg = h.avg()?;
-        tracing::info!(
-            "{}: avg={:?}, p50={:?}, p90={:?}, p99={:?}",
-            name,
-            avg,
-            p50,
-            p90,
-            p99
-        );
-        None
-    }
-
-    fn report_hist(
-        name: &str,
-        h: &mut PreciseHistogram<Duration>,
-        elapsed: Duration,
-    ) -> Option<()> {
-        let [p50, p90, p99] = h.pcts([500, 900, 999])?;
-        let avg = h.avg()?;
-        let count = h.count();
-        let tps = if elapsed.as_secs() > 0 {
-            count / elapsed.as_secs() as usize
-        } else {
-            0
-        };
-        tracing::info!(
-            "{}: tps={}, avg={:?}, p50={:?}, p90={:?}, p99={:?}",
-            name,
-            tps,
-            avg,
-            p50,
-            p90,
-            p99
-        );
-        None
+        self.connection_latency.report();
     }
 }
 
@@ -390,13 +449,4 @@ impl<'a> Drop for UtilizationTimer<'a> {
 struct NetworkAddressTable {
     peer: char,
     address: String,
-}
-
-#[derive(Tabled)]
-struct LatencyReport {
-    peer: char,
-    p50: u64,
-    p90: u64,
-    p99: u64,
-    avg: u64,
 }

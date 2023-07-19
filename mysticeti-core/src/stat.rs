@@ -46,7 +46,11 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
         Some(self.sum.div_usize(self.points.len()))
     }
 
-    pub fn count(&mut self) -> usize {
+    pub fn sum(&self) -> T {
+        self.sum
+    }
+
+    pub fn len(&self) -> usize {
         self.points.len()
     }
 
@@ -73,6 +77,15 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default> PreciseHistogram<T> {
         while let Ok(d) = self.receiver.try_recv() {
             self.observe(d);
         }
+    }
+
+    pub fn clear_receive_all(&mut self) {
+        self.clear();
+        self.receive_all();
+    }
+
+    pub fn clear(&mut self) {
+        self.points.clear();
     }
 
     fn pct1000_index(&self, pct1000: usize) -> usize {

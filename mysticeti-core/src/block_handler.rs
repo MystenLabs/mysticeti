@@ -7,6 +7,7 @@ use crate::committee::{
 };
 use crate::config::StorageDir;
 use crate::data::Data;
+use crate::epoch_close::EpochManager;
 use crate::log::TransactionLog;
 use crate::runtime;
 use crate::runtime::TimeInstant;
@@ -351,6 +352,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
+        epoch_manager: &mut EpochManager,
     ) -> Vec<CommitData> {
         let committed = self
             .commit_interpreter
@@ -381,6 +383,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(timestamp);
                     }
                 }
+                epoch_manager.observe_block(block, &self.committee);
             }
             commit_data.push(CommitData::from(&commit));
             // self.committed_dags.push(commit);

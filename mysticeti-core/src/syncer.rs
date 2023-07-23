@@ -4,6 +4,7 @@
 use crate::block_store::{BlockStore, CommitData};
 use crate::core::Core;
 use crate::data::Data;
+use crate::epoch_close::EpochManager;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
@@ -31,6 +32,7 @@ pub trait CommitObserver: Send + Sync {
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
+        epoch_manager: &mut EpochManager,
     ) -> Vec<CommitData>;
 
     fn aggregator_state(&self) -> Bytes;
@@ -105,9 +107,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
-            let commit_data = self
-                .commit_observer
-                .handle_commit(self.core.block_store(), newly_committed);
+            let (block_store, epoch_manager) = self.core.split_borrow();
+            let commit_data =
+                self.commit_observer
+                    .handle_commit(block_store, newly_committed, epoch_manager);
             self.core.write_state(); // todo - this can be done less frequently to reduce IO
             self.core
                 .write_commits(&commit_data, &self.commit_observer.aggregator_state());

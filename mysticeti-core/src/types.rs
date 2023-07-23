@@ -33,6 +33,15 @@ pub enum Vote {
     Reject(Option<TransactionLocator>),
 }
 
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub enum EpochStatus {
+    #[default]
+    Open,
+    BeginChange,
+    SafeToClose,
+    Closed,
+}
+
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
@@ -66,6 +75,8 @@ pub struct StatementBlock {
     // Creation time of the block as reported by creator, currently not enforced
     meta_creation_time_ns: TimestampNs,
 
+    epoch_marker: EpochStatus,
+
     // Signature by the block author
     signature: SignatureBytes,
 }
@@ -86,6 +97,7 @@ impl StatementBlock {
             vec![],
             vec![],
             0,
+            EpochStatus::Open,
             SignatureBytes::default(),
         ))
     }
@@ -96,6 +108,7 @@ impl StatementBlock {
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
         signer: &Signer,
     ) -> Self {
         let signature = signer.sign_block(
@@ -104,6 +117,7 @@ impl StatementBlock {
             &includes,
             &statements,
             meta_creation_time_ns,
+            &epoch_marker,
         );
         Self::new(
             authority,
@@ -111,6 +125,7 @@ impl StatementBlock {
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
             signature,
         )
     }
@@ -121,6 +136,7 @@ impl StatementBlock {
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
         signature: SignatureBytes,
     ) -> Self {
         Self {
@@ -133,12 +149,14 @@ impl StatementBlock {
                     &includes,
                     &statements,
                     meta_creation_time_ns,
+                    &epoch_marker,
                     &signature,
                 ),
             },
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
             signature,
         }
     }
@@ -194,6 +212,10 @@ impl StatementBlock {
         self.meta_creation_time_ns
     }
 
+    pub fn epoch_marker(&self) -> &EpochStatus {
+        &self.epoch_marker
+    }
+
     pub fn meta_creation_time(&self) -> Duration {
         // Some context: https://github.com/rust-lang/rust/issues/51107
         let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
@@ -209,6 +231,7 @@ impl StatementBlock {
             &self.includes,
             &self.statements,
             self.meta_creation_time_ns,
+            &self.epoch_marker,
             &self.signature,
         );
         ensure!(
@@ -565,6 +588,7 @@ mod test {
                 includes,
                 statements: vec![],
                 meta_creation_time_ns: 0,
+                epoch_marker: EpochStatus::Open,
                 signature: Default::default(),
             }
         }

@@ -5,6 +5,7 @@ use crate::block_store::{
 use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
+use crate::epoch_close::EpochManager;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
@@ -20,6 +21,7 @@ use std::{
     cmp::max,
     collections::{HashSet, VecDeque},
 };
+use tokio::sync::mpsc;
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -37,6 +39,8 @@ pub struct Core<H: BlockHandler> {
     signer: Signer,
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
+    epoch_manager: EpochManager,
+    epoch_sender: mpsc::Sender<()>,
 }
 
 pub struct CoreOptions {
@@ -115,6 +119,9 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
+        let (epoch_sender, epoch_receiver) = mpsc::channel(1);
+        let epoch_manager = EpochManager::new(epoch_receiver);
+
         let mut this = Self {
             block_manager,
             pending,
@@ -130,6 +137,8 @@ impl<H: BlockHandler> Core<H> {
             options,
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
+            epoch_manager,
+            epoch_sender,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -227,6 +236,7 @@ impl<H: BlockHandler> Core<H> {
             includes,
             statements,
             time_ns,
+            self.epoch_manager.epoch_status(),
             &self.signer,
         );
         assert_eq!(
@@ -304,6 +314,11 @@ impl<H: BlockHandler> Core<H> {
             sequence.iter().last().map_or(0, |x| x.round()),
         );
 
+        // todo: should ideally come from execution result of epoch smart contract
+        if self.last_commit_round > 3000 {
+            let _ = self.epoch_sender.try_send(());
+        }
+
         sequence
     }
 
@@ -361,6 +376,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn block_store(&self) -> &BlockStore {
         &self.block_store
+    }
+
+    pub fn split_borrow(&mut self) -> (&BlockStore, &mut EpochManager) {
+        (&self.block_store, &mut self.epoch_manager)
     }
 
     pub fn last_proposed(&self) -> RoundNumber {

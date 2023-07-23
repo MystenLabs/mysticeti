@@ -1,24 +1,26 @@
-# Sui Orchestrator
+# Orchestrator
 
-The crate provides facilities to quickly deploy and benchmark the Sui codebase in a geo-distributed environment. It is absolutely not meant to run Sui in production and is no indicator of proper production engineering best practices. Its purpose is to facilitate research projects wishing to benchmarks (variants of) Sui and analyze its performance.
+The Orchestrator crate provides facilities for quickly deploying and benchmarking this codebase in a geo-distributed environment. Please note that it is not intended for production deployments or as an indicator of production engineering best practices. Its purpose is to facilitate research projects by allowing benchmarking of (variants of) the codebase and analyzing performance.
 
-Below is a step-by-step guide to run geo-distributed benchmarks on either [Vultr](http://vultr.com) or [Amazon Web Services (AWS)](http://aws.amazon.com).
+This guide provides a step-by-step explanation of how to run geo-distributed benchmarks on either [Vultr](http://vultr.com) or [Amazon Web Services (AWS)](http://aws.amazon.com).
 
 ## Step 1. Set up cloud provider credentials
 
-Set up your cloud provider credentials to enable programmatic access to your account from your local machine. These credentials authorize your machine to create, delete, and edit instances on your account programmatically.
+To enable programmatic access to your cloud provider account from your local machine, you need to set up your cloud provider credentials. These credentials authorize your machine to create, delete, and edit instances programmatically on your account.
 
-### Setup Vultr credentials
+### Setting up Vultr credentials
 
-Find your ['Vultr token'](https://www.vultr.com/docs/). Then, create a file `~/.vultr` containing only your access token:
+1. Find your ['Vultr token'](https://www.vultr.com/docs/).
+2. Create a file `~/.vultr` and add your access token as the file's content:
 
 ```text
 YOUR_ACCESS_TOKEN
 ```
 
-### Set up AWS credentials
+### Setting up AWS credentials
 
-Find your ['access key id' and 'secret access key'](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html#cli-configure-quickstart-creds). Then, create a file `~/.aws/credentials` with the following content:
+1. Find your ['access key id' and 'secret access key'](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html#cli-configure-quickstart-creds).
+2. Create a file `~/.aws/credentials` with the following content:
 
 ```text
 [default]
@@ -26,15 +28,15 @@ aws_access_key_id = YOUR_ACCESS_KEY_ID
 aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
 ```
 
-Do not specify any AWS region in that file as the python scripts will allow you to handle multiple regions programmatically.
+Do not specify any AWS region in that file, as the scripts need to handle multiple regions programmatically.
 
 ## Step 2. Specify the testbed configuration
 
-Create file `settings.json` containing all the configuration parameters of the testbed to deploy. An example file can be found in `./assets/settings.json` and its content looks as follows:
+Create a file called `settings.json` that contains all the configuration parameters for the testbed deployment. You can find an example file at `./assets/settings.json` with the following content:
 
 ```json
 {
-  "testbed_id": "alberto-sui",
+  "testbed_id": "alberto-mysticeti",
   "cloud_provider": "aws",
   "token_file": "/Users/alberto/.aws/credentials",
   "ssh_private_key_file": "/Users/alberto/.ssh/aws",
@@ -46,11 +48,13 @@ Create file `settings.json` containing all the configuration parameters of the t
     "ap-northeast-1",
     "eu-west-1",
     "eu-west-2",
-    "ap-south-1"
+    "ap-south-1",
+    "ap-southeast-1",
+    "ap-southeast-2"
   ],
-  "specs": "g5.8xlarge",
+  "specs": "m5d.8xlarge",
   "repository": {
-    "url": "http://github.com/mystenlabs/sui",
+    "url": "http://github.com/mystenlabs/project-mysticeti.git",
     "commit": "orchestrator"
   },
   "results_directory": "./results",
@@ -58,40 +62,41 @@ Create file `settings.json` containing all the configuration parameters of the t
 }
 ```
 
-Look at the rust struct `Settings` in `./src/settings.rs` for details about each field.
+The documentation of the `Settings` struct in `./src/settings.rs` provides detailed information about each field and indicates which ones are optional. If you're working with a private GitHub repository, you can include a [private access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) in the repository URL. For example, if your access token is `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`, the repository URL should be formatted as follows:
 
-## Step 4. Create a testbed
+```json
+"repository": {
+  "url": "http://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@github.com/mystenlabs/project-mysticeti.git",
+  "commit": "orchestrator"
+}
+```
 
-The `orchestrator` binary provides several facilities to create, start, stop, and destroy instances. The following command boots 2 instances per region. That is, if the setting file specified 8 regions (as in the example above) the command boots a total of 16 instances.
+## Step 3. Create a testbed
+
+The `orchestrator` binary provides various functionalities for creating, starting, stopping, and destroying instances. You can use the following command to boot 2 instances per region (if the settings file specifies 10 regions, as shown in the example above, a total of 20 instances will be created):
 
 ```bash
 cargo run --bin orchestrator -- testbed deploy --instances 2
 ```
 
-The following command displays the current status of the instances of the testbed:
+To check the current status of the testbed instances, use the following command:
 
 ```bash
 cargo run --bin orchestrator testbed status
 ```
 
-All instances listed with a green number are available and ready for use; instances listed with a red number are stopped.
+Instances listed with a green number are available and ready for use, while instances listed with a red number are stopped.
 
-## Step 5. Running benchmarks
+## Step 4. Running benchmarks
 
-Running benchmarks involves installing on the remote machines the version of the Sui codebase specified in the settings as well as running one Sui validator and one load generator per instance. For instance, the following command benchmarks a committee of 10 validators when submitted to a constant load of 200 tx/s for a duration of 3 minutes.
-
-```bash
-cargo run --bin orchestrator -- benchmark --committee 10 --loads 200 --duration 180s
-```
-
-Since a network of 10 validators runs with 10 loads generators (each validator is collocated with a load generator), each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the prometheus metrics exposed by the load generators.
-
-## Step 6. Analyzing results
-
-Benchmarks results are automatically saved into the folder specified by the settings file. The following command plots a rudimentary L-graph giving to get a quick idea of the system's performance.
+Running benchmarks involves installing the specified version of the codebase on the remote machines and running one validator and one load generator per instance. For example, the following command benchmarks a committee of 10 validators under a constant load of 200 tx/s for 3 minutes:
 
 ```bash
-cargo run --bin orchestrator -- plot
+cargo run --bin orchestrator -- benchmark --committee 10 fixed-load --loads 200 --duration 180
 ```
 
-More elaborated (and nicer) plots can be generated with the python script located in `./assets/plots.rs`.
+In a network of 10 validators, each with a corresponding load generator, each load generator submits a fixed load of 20 tx/s. Performance measurements are collected by regularly scraping the Prometheus metrics exposed by the load generators. The `orchestrator` binary provides additional commands to run a specific number of load generators on separate machines.
+
+## Step 5. Monitoring
+
+The orchestrator provides facilities to monitor metrics on clients and nodes. When run with the flab `--monitor`, the orchestrator deploys a [Prometheus](https://prometheus.io) instance and a [Grafana](https://grafana.com) instance on a dedicated remote machine. Grafana is then available on the address printed on stdout (e.g., `http://3.83.97.12:3000`) with the default username and password both set to `admin`. You can either create a [new dashboard](https://grafana.com/docs/grafana/latest/getting-started/build-first-dashboard/) or [import](https://grafana.com/docs/grafana/latest/dashboards/manage-dashboards/#import-a-dashboard) the example dashboard located in the `./assets` folder.

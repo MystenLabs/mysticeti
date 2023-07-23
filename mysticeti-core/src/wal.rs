@@ -24,6 +24,10 @@ pub struct WalReader {
     maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
+pub struct WalSyncer {
+    file: File,
+}
+
 #[derive(
     Clone, Copy, Eq, PartialEq, Debug, Ord, PartialOrd, Hash, Default, Serialize, Deserialize,
 )]
@@ -69,6 +73,7 @@ pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
 ///
 /// In order to completely "close" the wal file(for example to allow to delete/reclaim space), user need to drop
 /// the wal reader, wal writer, **and** drop all the buffers returned by WalReader::read().
+#[allow(dead_code)]
 pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
     let file = OpenOptions::new()
         .create(true)
@@ -79,6 +84,7 @@ pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
 }
 
 fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
+    // todo - replace dup with File::try_clone()
     let fd = unsafe { libc::dup(file.as_raw_fd()) };
     if fd <= 0 {
         return Err(io::Error::last_os_error());
@@ -94,11 +100,18 @@ fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
     Ok((writer, reader))
 }
 
-const MAP_SIZE: u64 = 0x10_000;
-// 16 pages
+#[cfg(not(test))]
+const MAP_SIZE: u64 = 0x100_0000; // ~16 Mb
+#[cfg(not(test))]
+const MAP_MASK: u64 = !0xff_ffff;
+#[cfg(test)]
+const MAP_SIZE: u64 = 0x10_000; // 16 pages
+#[cfg(test)]
 const MAP_MASK: u64 = !0xffff;
 const ZERO_MAP: [u8; MAP_SIZE as usize] = [0u8; MAP_SIZE as usize];
 const _: () = assert_constants();
+
+pub const MAX_ENTRY_SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize;
 
 const CRC: Crc<u64> = Crc::<u64>::new(
     &CRC_64_MS, /*selection of algorithm here is mostly random*/
@@ -107,10 +120,31 @@ const HEADER_LEN_BYTES: u64 = 8 + 8;
 // CRC and length
 const HEADER_LEN_BYTES_USIZE: usize = HEADER_LEN_BYTES as usize;
 
+#[allow(dead_code)]
 const fn assert_constants() {
     if u64::MAX - MAP_MASK != MAP_SIZE - 1 {
         panic!("MAP_MASK and MAP_SIZE do not match");
     }
+    // Checks mask is in form 1...10....0
+    check_zeroes(MAP_MASK);
+}
+
+const fn check_zeroes(m: u64) {
+    if m & 1 == 1 {
+        check_ones(m >> 1);
+    } else {
+        check_zeroes(m >> 1);
+    }
+}
+
+const fn check_ones(m: u64) {
+    if m == 0 {
+        return;
+    }
+    if m & 1 != 1 {
+        panic!("Invalid mask");
+    }
+    check_ones(m >> 1);
 }
 
 fn offset(p: u64) -> u64 {
@@ -162,7 +196,23 @@ impl WalWriter {
         Ok(position)
     }
 
-    pub fn sync(&mut self) -> io::Result<()> {
+    pub fn sync(&self) -> io::Result<()> {
+        self.file.sync_data()
+    }
+
+    /// Allow to retrieve a 'syncer' instance that allows
+    /// to fsync wal to disk without acquiring a lock on wal itself.
+    ///
+    /// In mysticeti specifically this allows to have an independent syncer thread that
+    /// does not share locks with consensus thread.
+    pub fn syncer(&self) -> io::Result<WalSyncer> {
+        let file = self.file.try_clone()?;
+        Ok(WalSyncer { file })
+    }
+}
+
+impl WalSyncer {
+    pub fn sync(&self) -> io::Result<()> {
         self.file.sync_data()
     }
 }

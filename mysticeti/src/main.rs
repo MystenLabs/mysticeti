@@ -11,6 +11,8 @@ use std::{
 use clap::{command, Parser};
 use eyre::{eyre, Context, Result};
 use futures::future;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use mysticeti_core::{
     committee::Committee,
@@ -55,7 +57,7 @@ enum Operation {
 
         /// Path to the file holding the private validator configurations (including keys).
         #[clap(long, value_name = "FILE")]
-        private_configs_path: String,
+        private_config_path: String,
     },
     /// Deploy a local testbed.
     Testbed {
@@ -69,6 +71,10 @@ enum Operation {
 async fn main() -> Result<()> {
     // Nice colored error messages.
     color_eyre::install()?;
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    fmt().with_env_filter(filter).init();
 
     // Parse the command line arguments.
     match Args::parse().operation {
@@ -80,13 +86,13 @@ async fn main() -> Result<()> {
             authority,
             committee_path,
             parameters_path,
-            private_configs_path,
+            private_config_path,
         } => {
             run(
                 authority,
                 committee_path,
                 parameters_path,
-                private_configs_path,
+                private_config_path,
             )
             .await?
         }
@@ -130,7 +136,7 @@ fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()>
             "Failed to create directory '{}'",
             parent_directory.display()
         ))?;
-        PrivateConfig::new_for_benchmarks(i as AuthorityIndex)
+        PrivateConfig::new_for_benchmarks(parent_directory, i as AuthorityIndex)
             .print(&path)
             .wrap_err("Failed to print private config file")?;
         tracing::info!("Generated private config file: {}", path.display());
@@ -144,7 +150,7 @@ async fn run(
     authority: AuthorityIndex,
     committee_path: String,
     parameters_path: String,
-    private_configs_path: String,
+    private_config_path: String,
 ) -> Result<()> {
     tracing::info!("Starting validator {authority}");
 
@@ -153,8 +159,8 @@ async fn run(
     let parameters = Parameters::load(&parameters_path).wrap_err(format!(
         "Failed to load parameters file '{parameters_path}'"
     ))?;
-    let private = PrivateConfig::load(&private_configs_path).wrap_err(format!(
-        "Failed to load private configuration file '{private_configs_path}'"
+    let private = PrivateConfig::load(&private_config_path).wrap_err(format!(
+        "Failed to load private configuration file '{private_config_path}'"
     ))?;
 
     let committee = Arc::new(committee);
@@ -190,7 +196,9 @@ async fn testbed(committee_size: usize) -> Result<()> {
     let mut handles = Vec::new();
     for i in 0..committee_size {
         let authority = i as AuthorityIndex;
-        let private = PrivateConfig::new_for_benchmarks(authority);
+        // todo - i am not sure if "" (current dir) is the best path here?
+        let dir = PathBuf::new();
+        let private = PrivateConfig::new_for_benchmarks(&dir, authority);
 
         let validator =
             Validator::start(authority, committee.clone(), &parameters, private).await?;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     fmt::{Debug, Display},
     net::IpAddr,
     path::PathBuf,
@@ -66,8 +67,12 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
     }
 
     fn db_directories(&self) -> Vec<PathBuf> {
-        // TODO
-        vec![]
+        let storage = self.working_dir.join("private/val-*/*");
+        vec![storage]
+    }
+
+    fn cleanup_commands(&self) -> Vec<String> {
+        vec!["killall mysticeti".to_string()]
     }
 
     fn genesis_command<'a, I>(&self, instances: I) -> String
@@ -83,11 +88,26 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         let genesis = [
             "cargo run --release --bin mysticeti --",
             "benchmark-genesis",
-            &format!("--ips {ips} --working_directory {working_directory}"),
+            &format!("--ips {ips} --working-directory {working_directory}"),
         ]
         .join(" ");
 
         ["source $HOME/.cargo/env", &genesis].join(" && ")
+    }
+
+    fn monitor_command<I>(&self, instances: I) -> Vec<(Instance, String)>
+    where
+        I: IntoIterator<Item = Instance>,
+    {
+        instances
+            .into_iter()
+            .map(|i| {
+                (
+                    i,
+                    "tail -f --pid=$(pidof mysticeti) -f /dev/null; tail -100 node.log".to_string(),
+                )
+            })
+            .collect()
     }
 
     fn node_command<I>(
@@ -118,8 +138,11 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                 .iter()
                 .collect();
 
+                let env = env::var("ENV").unwrap_or_default();
                 let run = [
+                    &env,
                     "cargo run --release --bin mysticeti --",
+                    "run",
                     &format!(
                         "--authority {authority} --committee-path {}",
                         committee_path.display()
@@ -131,7 +154,8 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                     ),
                 ]
                 .join(" ");
-                let command = ["source $HOME/.cargo/env", &run].join(" && ");
+                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &run].join("\\n");
+                let command = format!("echo -e '{command}' > mysticeti-start.sh && chmod +x mysticeti-start.sh && ./mysticeti-start.sh");
 
                 (instance, command)
             })

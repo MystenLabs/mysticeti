@@ -102,9 +102,9 @@ impl Committer {
         parents.contains(earlier_block)
     }
 
-    /// Check if potential_vote 'supports' leader_block
-    /// See consensus proofs for definition of block support
-    fn supports(
+    /// Check whether the specified block (`potential_certificate`) is a vote for
+    /// the specified leader (`leader_block`).
+    fn is_vote(
         &self,
         potential_vote: &Data<StatementBlock>,
         leader_block: &Data<StatementBlock>,
@@ -114,8 +114,10 @@ impl Committer {
     }
 
     /// Find which block is supported at (author, round) by the given block.
-    /// Block can indirectly reference multiple blocks at (author, round), but only one block at (author, round) will be supported by the given block.
-    /// If block A supports B at (author, round), it is guaranteed that any processed block by the same author that directly or indirectly includes A will also support B at (author, round).
+    /// Block can indirectly reference multiple blocks at (author, round), but only one block at
+    /// (author, round)  will be supported by the given block. If block A supports B at (author, round),
+    /// it is guaranteed that any processed block by the same author that directly or indirectly includes
+    /// A will also support B at (author, round).
     fn find_support(
         &self,
         (author, round): (AuthorityIndex, RoundNumber),
@@ -125,6 +127,7 @@ impl Committer {
             return None;
         }
         for include in from.includes() {
+            // Weak links may point to blocks with lower round numbers than strong links.
             if include.round() < round {
                 continue;
             }
@@ -134,7 +137,7 @@ impl Committer {
             let include = self
                 .block_store
                 .get_block(*include)
-                .expect("Should have all blocks");
+                .expect("We should have the whole sub-dag by now");
             if let Some(support) = self.find_support((author, round), &include) {
                 return Some(support);
             }
@@ -146,8 +149,8 @@ impl Committer {
     /// the specified leader (`leader_block`).
     fn is_certificate(
         &self,
-        leader_block: &Data<StatementBlock>,
         potential_certificate: &Data<StatementBlock>,
+        leader_block: &Data<StatementBlock>,
     ) -> bool {
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
@@ -156,7 +159,7 @@ impl Committer {
                 .get_block(*reference)
                 .expect("We should have the whole sub-dag by now");
 
-            if self.supports(&potential_vote, leader_block) {
+            if self.is_vote(&potential_vote, leader_block) {
                 tracing::debug!("{potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
@@ -178,7 +181,7 @@ impl Committer {
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
-            if self.is_certificate(leader_block, decision_block) {
+            if self.is_certificate(decision_block, leader_block) {
                 tracing::debug!("{decision_block:?} is a certificate for leader {leader_block:?}");
                 if certificate_stake_aggregator.add(authority, &self.committee) {
                     return true;
@@ -223,7 +226,7 @@ impl Committer {
                 .into_iter()
                 .filter(|leader_block| {
                     potential_certificates.iter().any(|potential_certificate| {
-                        self.is_certificate(leader_block, potential_certificate)
+                        self.is_certificate(potential_certificate, leader_block)
                     })
                 })
                 .collect();
@@ -331,10 +334,8 @@ impl Committer {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
+    use super::*;
     use prometheus::default_registry;
-    use rand::RngCore;
 
     use crate::test_util::TestBlockWriter;
     use crate::{
@@ -342,16 +343,8 @@ mod test {
         data::Data,
         metrics::Metrics,
         test_util::{committee, test_metrics},
-        types::{BlockDigest, BlockReference, RoundNumber, StatementBlock},
+        types::{BlockReference, RoundNumber, StatementBlock},
     };
-
-    use super::Committer;
-
-    /// Generate a random digest. It is essential that each block has its own digest.
-    fn random_digest() -> BlockDigest {
-        let mut rng = rand::thread_rng();
-        rng.next_u64()
-    }
 
     /// Build a fully interconnected dag up to the specified round. This function starts building the
     /// dag from the specified [`start`] references or from genesis if none are specified.
@@ -386,14 +379,15 @@ mod test {
             let (references, blocks): (Vec<_>, Vec<_>) = committee
                 .authorities()
                 .map(|authority| {
-                    let reference = BlockReference {
+                    let block = Data::new(StatementBlock::new(
                         authority,
                         round,
-                        digest: random_digest(),
-                    };
-                    let block =
-                        Data::new(StatementBlock::new(reference, includes.clone(), vec![], 0));
-                    (reference, block)
+                        includes.clone(),
+                        vec![],
+                        0,
+                        Default::default(),
+                    ));
+                    (*block.reference(), block)
                 })
                 .unzip();
             block_writer.add_blocks(blocks);
@@ -452,7 +446,7 @@ mod test {
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
-        let metrics = Arc::new(Metrics::new(default_registry()));
+        let (metrics, _) = Metrics::new(default_registry(), None);
         let committee = committee(4);
         let wave_length = 3;
 
@@ -553,18 +547,15 @@ mod test {
             .authorities()
             .filter(|&authority| authority != leader_2)
             .map(|authority| {
-                let reference = BlockReference {
-                    authority,
-                    round: round_leader_2,
-                    digest: random_digest(),
-                };
                 let block = Data::new(StatementBlock::new(
-                    reference,
+                    authority,
+                    round_leader_2,
                     references.clone(),
                     vec![],
                     0,
+                    Default::default(),
                 ));
-                (reference, block)
+                (*block.reference(), block)
             })
             .unzip();
 

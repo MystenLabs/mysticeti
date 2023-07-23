@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::future::select_all;
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self},
@@ -8,9 +9,12 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use tokio::select;
 
 use tokio::time::{self, Instant};
 
+use crate::error::SshError;
+use crate::monitor::{Monitor, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
     client::Instance,
@@ -52,6 +56,8 @@ pub struct Orchestrator<P, T> {
     /// Number of instances running only load generators (not nodes). If this value is set
     /// to zero, the orchestrator runs a load generate collocated with each node.
     dedicated_clients: usize,
+    /// Whether to start a grafana and prometheus instance on a dedicate machine.
+    monitoring: bool,
 }
 
 impl<P, T> Orchestrator<P, T> {
@@ -81,6 +87,7 @@ impl<P, T> Orchestrator<P, T> {
             skip_testbed_configuration: false,
             log_processing: false,
             dedicated_clients: 0,
+            monitoring: true,
         }
     }
 
@@ -96,7 +103,7 @@ impl<P, T> Orchestrator<P, T> {
         self
     }
 
-    /// Whether to skip testbed updates before running benchmarks.
+    /// Set whether to skip testbed updates before running benchmarks.
     pub fn skip_testbed_updates(mut self, skip_testbed_update: bool) -> Self {
         self.skip_testbed_update = skip_testbed_update;
         self
@@ -108,7 +115,7 @@ impl<P, T> Orchestrator<P, T> {
         self
     }
 
-    /// Whether to download and analyze the client and node log files.
+    /// Set whether to download and analyze the client and node log files.
     pub fn with_log_processing(mut self, log_processing: bool) -> Self {
         self.log_processing = log_processing;
         self
@@ -120,20 +127,29 @@ impl<P, T> Orchestrator<P, T> {
         self
     }
 
+    /// Set whether to boot grafana on the local machine to monitor the nodes.
+    pub fn with_monitoring(mut self, monitoring: bool) -> Self {
+        self.monitoring = monitoring;
+        self
+    }
+
     /// Select on which instances of the testbed to run the benchmarks. This function returns two vector
     /// of instances; the first contains the instances on which to run the load generators and the second
     /// contains the instances on which to run the nodes.
     pub fn select_instances(
         &self,
         parameters: &BenchmarkParameters<T>,
-    ) -> TestbedResult<(Vec<Instance>, Vec<Instance>)> {
+    ) -> TestbedResult<(Vec<Instance>, Vec<Instance>, Option<Instance>)> {
         // Ensure there are enough active instances.
         let available_instances: Vec<_> = self.instances.iter().filter(|x| x.is_active()).collect();
+        let minimum_instances = if self.monitoring {
+            parameters.nodes + self.dedicated_clients + 1
+        } else {
+            parameters.nodes + self.dedicated_clients
+        };
         ensure!(
-            available_instances.len() >= parameters.nodes + self.dedicated_clients,
-            TestbedError::InsufficientCapacity(
-                parameters.nodes + self.dedicated_clients - available_instances.len()
-            )
+            available_instances.len() >= minimum_instances,
+            TestbedError::InsufficientCapacity(minimum_instances - available_instances.len())
         );
 
         // Sort the instances by region.
@@ -143,6 +159,19 @@ impl<P, T> Orchestrator<P, T> {
                 .entry(&instance.region)
                 .or_insert_with(VecDeque::new)
                 .push_back(instance);
+        }
+
+        // Select the instance to host the monitoring stack.
+        let mut monitoring_instance = None;
+        if self.monitoring {
+            for region in &self.settings.regions {
+                if let Some(regional_instances) = instances_by_regions.get_mut(region) {
+                    if let Some(instance) = regional_instances.pop_front() {
+                        monitoring_instance = Some(instance.clone());
+                    }
+                    break;
+                }
+            }
         }
 
         // Select the instances to host exclusively load generators.
@@ -177,7 +206,7 @@ impl<P, T> Orchestrator<P, T> {
             client_instances = nodes_instances.clone();
         }
 
-        Ok((client_instances, nodes_instances))
+        Ok((client_instances, nodes_instances, monitoring_instance))
     }
 }
 
@@ -187,7 +216,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         &self,
         instances: Vec<Instance>,
         parameters: &BenchmarkParameters<T>,
-    ) -> TestbedResult<()> {
+    ) -> TestbedResult<NodeMonitorHandle> {
         // Run one node per instance.
         let targets = self
             .protocol_commands
@@ -203,10 +232,49 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             .await?;
 
         // Wait until all nodes are reachable.
-        let commands = self.protocol_commands.nodes_metrics_command(instances);
+        let commands = self
+            .protocol_commands
+            .nodes_metrics_command(instances.clone());
         self.ssh_manager.wait_for_success(commands).await;
 
-        Ok(())
+        self.start_monitor(instances)
+    }
+
+    /// Monitors node process running on the instances,
+    /// Prints error message and terminates test if a node panics
+    fn start_monitor(&self, instances: Vec<Instance>) -> TestbedResult<NodeMonitorHandle> {
+        let targets = self.protocol_commands.monitor_command(instances);
+        let (handle, mut receiver) = NodeMonitorHandle::new();
+        let ssh_manager = self.ssh_manager.clone();
+        tokio::spawn(async move {
+            let monitor = Self::run_monitor(ssh_manager, targets);
+            select! {
+                _ = monitor => {
+                    unreachable!()
+                }
+                _ = receiver.recv() => {
+                    // do nothing
+                }
+            }
+        });
+        Ok(handle)
+    }
+
+    async fn run_monitor(ssh_manager: SshConnectionManager, targets: Vec<(Instance, String)>) {
+        loop {
+            let r = ssh_manager.run_per_instance(targets.clone(), CommandContext::new());
+            let (output, i, _) = select_all(r).await;
+            let output = output.unwrap();
+            let (instance, result) = match output {
+                Ok(output) => output,
+                Err(SshError::SessionError { .. } | SshError::ConnectionError { .. }) => continue, // Retry session error(likely timeout)
+                Err(SshError::NonZeroExitCode { code, .. }) => {
+                    panic!("Monitor command on {} failed with code: {}", i, code)
+                }
+            };
+            eprintln!("Node {} failed:\n{}", instance, result);
+            std::process::exit(1);
+        }
     }
 
     /// Install the codebase and its dependencies on the testbed.
@@ -215,24 +283,35 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         let working_dir = self.settings.working_dir.display();
         let url = &self.settings.repository.url;
+        let install_node_exporter =
+            include_str!("../assets/install_node_exporter.sh").replace('\n', "\\n");
         let basic_commands = [
             "sudo apt-get update",
             "sudo apt-get -y upgrade",
             "sudo apt-get -y autoremove",
             // Disable "pending kernel upgrade" message.
             "sudo apt-get -y remove needrestart",
-            // The following dependencies prevent the error: [error: linker `cc` not found].
-            "sudo apt-get -y install build-essential",
-            // Install dependencies to compile 'plotter'.
-            "sudo apt-get -y install libfontconfig libfontconfig1-dev",
-            // Install prometheus.
-            "sudo apt-get -y install prometheus",
-            "sudo chmod 777 -R /var/lib/prometheus/",
+            // The following dependencies
+            // * build-essential: prevent the error: [error: linker `cc` not found].
+            // * sysstat - for getting disk stats
+            // * iftop - for getting network stats
+            // * libssl-dev - Required to compile the orchestrator, todo remove this dependency
+            "sudo apt-get -y install build-essential sysstat iftop libssl-dev",
+            // * linux-tools-common linux-tools-generic linux-tools-* - installs perf
+            // Perf is optional because sometimes aws release new kernel without publishing linux-tools package.
+            // We don't want to just fail entire deployment when this happens.
+            "sudo apt-get -y install linux-tools-common linux-tools-generic linux-tools-`uname -r` || echo 'Failed to install perf(optional)'",
             // Install rust (non-interactive).
             "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
             "echo \"source $HOME/.cargo/env\" | tee -a ~/.bashrc",
             "source $HOME/.cargo/env",
             "rustup default stable",
+
+            // Install node exporter
+            &format!("echo -e '{install_node_exporter}' > install_node_exporter.sh"),
+            "chmod +x install_node_exporter.sh",
+            "./install_node_exporter.sh",
+
             // Create the working directory.
             &format!("mkdir -p {working_dir}"),
             // Clone the repo.
@@ -249,6 +328,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         let command = [
             &basic_commands[..],
+            &Monitor::dependencies()[..],
             &cloud_provider_specific_dependencies[..],
             &protocol_dependencies[..],
         ]
@@ -260,6 +340,54 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         self.ssh_manager.execute(active, command, context).await?;
 
         display::done();
+        Ok(())
+    }
+
+    /// Reload prometheus on all instances.
+    pub async fn start_monitoring(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
+        let (clients, nodes, instance) = self.select_instances(parameters)?;
+        if let Some(instance) = instance {
+            display::action("Configuring monitoring instance");
+
+            let monitor = Monitor::new(
+                instance,
+                clients,
+                nodes,
+                self.ssh_manager.clone(),
+                self.dedicated_clients != 0,
+            );
+            monitor.start_prometheus(&self.protocol_commands).await?;
+            monitor.start_grafana().await?;
+
+            display::done();
+            display::config("Grafana address", monitor.grafana_address());
+            display::newline();
+        }
+
+        // let (clients, nodes, _) = self.select_instances(parameters)?;
+        // let monitor = Monitor::new(
+        //     clients,
+        //     nodes,
+        //     self.ssh_manager.clone(),
+        //     self.dedicated_clients != 0,
+        // );
+
+        // // Start prometheus on all instances.
+        // monitor.start_prometheus(&self.protocol_commands).await?;
+
+        // // Start grafana on the localhost (only macOs, homebrew install).
+        // if self.monitoring && cfg!(target_os = "macos") {
+        //     monitor.start_grafana()?;
+        //     display::done();
+        //     display::config(
+        //         "Grafana address",
+        //         format!("http://localhost:{}", Grafana::DEFAULT_PORT),
+        //     );
+        //     display::newline();
+        // } else {
+        //     display::done();
+        // }
+
         Ok(())
     }
 
@@ -305,7 +433,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Configuring instances");
 
         // Select instances to configure.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Generate the genesis configuration file and the keystore allowing access to gas objects.
         let command = self.protocol_commands.genesis_command(nodes.iter());
@@ -324,6 +452,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         // Kill all tmux servers and delete the nodes dbs. Optionally clear logs.
         let mut command = vec!["(tmux kill-server || true)".into()];
+        command.extend(self.protocol_commands.cleanup_commands());
         for path in self.protocol_commands.db_directories() {
             command.push(format!("(rm -rf {} || true)", path.display()));
         }
@@ -342,17 +471,20 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
     }
 
     /// Deploy the nodes.
-    pub async fn run_nodes(&self, parameters: &BenchmarkParameters<T>) -> TestbedResult<()> {
+    pub async fn run_nodes(
+        &self,
+        parameters: &BenchmarkParameters<T>,
+    ) -> TestbedResult<NodeMonitorHandle> {
         display::action("Deploying validators");
 
         // Select the instances to run.
-        let (_, nodes) = self.select_instances(parameters)?;
+        let (_, nodes, _) = self.select_instances(parameters)?;
 
         // Boot one node per instance.
-        self.boot_nodes(nodes, parameters).await?;
+        let monitor = self.boot_nodes(nodes, parameters).await?;
 
         display::done();
-        Ok(())
+        Ok(monitor)
     }
 
     /// Deploy the load generators.
@@ -360,7 +492,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Setting up load generators");
 
         // Select the instances to run.
-        let (clients, _) = self.select_instances(parameters)?;
+        let (clients, _, _) = self.select_instances(parameters)?;
 
         // Deploy the load generators.
         let targets = self
@@ -395,7 +527,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         ));
 
         // Select the instances to run.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Regularly scrape the client metrics.
         let metrics_commands = self.protocol_commands.clients_metrics_command(clients);
@@ -438,7 +570,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                         self.ssh_manager.kill(action.kill.clone(), "node").await?;
                     }
                     if !action.boot.is_empty() {
-                        self.boot_nodes(action.boot.clone(), parameters).await?;
+                        // Monitor not yet supported for this
+                        let _: NodeMonitorHandle = self.boot_nodes(action.boot.clone(), parameters).await?;
                     }
                     if !action.kill.is_empty() || !action.boot.is_empty() {
                         display::newline();
@@ -466,7 +599,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         parameters: &BenchmarkParameters<T>,
     ) -> TestbedResult<LogsAnalyzer> {
         // Select the instances to run.
-        let (clients, nodes) = self.select_instances(parameters)?;
+        let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Create a log sub-directory for this run.
         let commit = &self.settings.repository.commit;
@@ -552,6 +685,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
             // Cleanup the testbed (in case the previous run was not completed).
             self.cleanup(true).await?;
+            // Start the instance monitoring tools.
+            self.start_monitoring(&parameters).await?;
 
             // Configure all instances (if needed).
             if !self.skip_testbed_configuration && latest_committee_size != parameters.nodes {
@@ -560,7 +695,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             }
 
             // Deploy the validators.
-            self.run_nodes(&parameters).await?;
+            let monitor = self.run_nodes(&parameters).await?;
 
             // Deploy the load generators.
             self.run_clients(&parameters).await?;
@@ -569,6 +704,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             let aggregator = self.run(&parameters).await?;
             aggregator.display_summary();
             generator.register_result(aggregator);
+            drop(monitor);
 
             // Kill the nodes and clients (without deleting the log files).
             self.cleanup(false).await?;

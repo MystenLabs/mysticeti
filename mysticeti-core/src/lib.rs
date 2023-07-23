@@ -28,10 +28,14 @@ mod test_util;
 mod threshold_clock;
 pub mod types;
 pub mod validator;
-#[allow(dead_code)]
 mod wal;
 
 mod block_store;
+mod crypto;
+mod lock;
+mod log;
+mod serde;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;
 mod stat;
+mod state;

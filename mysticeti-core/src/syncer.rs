@@ -1,17 +1,19 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, CommitData};
 use crate::core::Core;
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
-use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
-use std::{collections::BTreeMap, sync::Arc};
+use minibytes::Bytes;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
-    own_blocks: BTreeMap<RoundNumber, Data<StatementBlock>>,
+    last_own_block: Option<Data<StatementBlock>>,
     last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
@@ -29,10 +31,13 @@ pub trait CommitObserver: Send + Sync {
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-    );
+    ) -> Vec<CommitData>;
+
+    fn aggregator_state(&self) -> Bytes;
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
 }
 
-#[allow(dead_code)]
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     pub fn new(
         core: Core<H>,
@@ -44,7 +49,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
-            own_blocks: Default::default(),
+            last_own_block: None,
             force_new_block: false,
             commit_period,
             signals,
@@ -82,7 +87,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     fn try_new_block(&mut self) {
         if self.force_new_block || self.core.ready_new_block(self.commit_period) {
             let Some(block) = self.core.try_new_block() else { return; };
-            assert!(self.own_blocks.insert(block.round(), block).is_none());
+            self.last_own_block = Some(block);
             self.signals.new_block_ready();
             self.force_new_block = false;
 
@@ -100,25 +105,17 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
-            self.commit_observer
+            let commit_data = self
+                .commit_observer
                 .handle_commit(self.core.block_store(), newly_committed);
+            self.core.write_state(); // todo - this can be done less frequently to reduce IO
+            self.core
+                .write_commits(&commit_data, &self.commit_observer.aggregator_state());
         }
     }
 
-    pub fn get_own_blocks(
-        &self,
-        from_excluded: RoundNumber,
-        limit: usize,
-    ) -> Vec<Data<StatementBlock>> {
-        self.own_blocks
-            .range((from_excluded + 1)..)
-            .take(limit)
-            .map(|(_k, v)| v.clone())
-            .collect()
-    }
-
     pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
-        self.own_blocks.values().last().cloned()
+        self.last_own_block.clone()
     }
 
     pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
@@ -154,9 +151,7 @@ mod tests {
     use crate::block_handler::{TestBlockHandler, TestCommitHandler};
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::test_util::{
-        check_commits, committee_and_syncers, first_n_transactions, rng_at_seed,
-    };
+    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed};
     use rand::Rng;
     use std::ops::Range;
     use std::time::Duration;
@@ -233,13 +228,20 @@ mod tests {
         }
         // Simulation awaits for first num_txn transactions proposed by each authority to certify
         let num_txn = 40;
-        let await_transactions = first_n_transactions(&committee, num_txn);
-        assert_eq!(await_transactions.len(), num_txn as usize * committee.len());
+        let mut await_transactions = vec![];
+        let await_num_txn = num_txn as usize * committee.len();
 
         let mut iteration = 0u64;
         loop {
             iteration += 1;
             assert!(!simulator.run_one());
+            // todo - we might want to wait for exactly num_txn from each authority, rather then num_txn as usize * committee.len() total
+            if await_transactions.len() < await_num_txn {
+                for state in simulator.states_mut() {
+                    await_transactions.extend(state.core.block_handler_mut().proposed.drain(..))
+                }
+                continue;
+            }
             let not_certified: Vec<_> = simulator
                 .states()
                 .iter()
@@ -247,7 +249,7 @@ mod tests {
                     await_transactions
                         .iter()
                         .map(|txid| {
-                            if syncer.core.block_handler().is_certified(*txid) {
+                            if syncer.core.block_handler().is_certified(txid) {
                                 0usize
                             } else {
                                 1usize

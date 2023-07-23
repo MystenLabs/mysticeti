@@ -10,7 +10,6 @@ use eyre::{Context, Result};
 use faults::FaultsType;
 use measurement::MeasurementsCollection;
 use orchestrator::Orchestrator;
-use plot::Plotter;
 use protocol::mysticeti::{MysticetiBenchmarkType, MysticetiProtocol};
 use settings::{CloudProvider, Settings};
 use ssh::SshConnectionManager;
@@ -23,8 +22,8 @@ pub mod error;
 pub mod faults;
 pub mod logs;
 pub mod measurement;
+mod monitor;
 pub mod orchestrator;
-pub mod plot;
 pub mod protocol;
 pub mod settings;
 pub mod ssh;
@@ -108,6 +107,10 @@ pub enum Operation {
         #[clap(long, value_name = "INT", default_value = "0", global = true)]
         dedicated_clients: usize,
 
+        /// Whether boot prometheus and grafana on a dedicated machine to monitor the benchmark.
+        #[clap(long, action, default_value = "true", global = true)]
+        monitoring: bool,
+
         /// The timeout duration for ssh commands (in seconds).
         #[clap(long, action, value_parser = parse_duration, default_value = "30", global = true)]
         timeout: Duration,
@@ -119,18 +122,6 @@ pub enum Operation {
         /// The load to submit to the system.
         #[clap(subcommand)]
         load_type: Load,
-    },
-
-    /// Print L-graphs from the collected data. These plots are very basic, their purpose
-    /// is to get a quick lock at the data.
-    Plot {
-        /// The limit of the x-axis.
-        #[clap(long, value_name = "FLOAT")]
-        x_lim: Option<f32>,
-
-        /// The limit of the y-axis.
-        #[clap(long, value_name = "FLOAT")]
-        y_lim: Option<f32>,
     },
 
     /// Print a summary of the specified measurements collection.
@@ -279,6 +270,7 @@ async fn run<C: ServerProviderClient>(settings: Settings, client: C, opts: Opts)
             skip_testbed_configuration,
             log_processing,
             dedicated_clients,
+            monitoring,
             timeout,
             retries,
             load_type,
@@ -341,18 +333,11 @@ async fn run<C: ServerProviderClient>(settings: Settings, client: C, opts: Opts)
             .skip_testbed_configuration(skip_testbed_configuration)
             .with_log_processing(log_processing)
             .with_dedicated_clients(dedicated_clients)
+            .with_monitoring(monitoring)
             .run_benchmarks(generator)
             .await
             .wrap_err("Failed to run benchmarks")?;
         }
-
-        // Plot (basic) L-graphs from the collected data.
-        Operation::Plot { x_lim, y_lim } => Plotter::<BenchmarkType>::new(settings)
-            .with_x_lim(x_lim)
-            .with_y_lim(y_lim)
-            .load_measurements()
-            .plot_latency_throughput()
-            .wrap_err("Failed to plot data")?,
 
         // Print a summary of the specified measurements collection.
         Operation::Summarize { path } => {

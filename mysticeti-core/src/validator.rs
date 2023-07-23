@@ -1,7 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
 use std::{
+    env,
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
 };
@@ -9,7 +11,9 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
+use crate::block_handler::TransactionGenerator;
 use crate::core::CoreOptions;
+use crate::log::TransactionLog;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -21,10 +25,11 @@ use crate::{
     prometheus,
     runtime::{JoinError, JoinHandle},
     types::AuthorityIndex,
+    wal,
 };
 
 pub struct Validator {
-    network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler>,
+    network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler<TransactionLog>>,
     metrics_handle: JoinHandle<Result<(), hyper::Error>>,
 }
 
@@ -33,7 +38,7 @@ impl Validator {
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         parameters: &Parameters,
-        _private_config: PrivateConfig,
+        config: PrivateConfig,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -51,23 +56,63 @@ impl Validator {
 
         // Boot the prometheus server.
         let registry = Registry::new();
-        let metrics = Arc::new(Metrics::new(&registry));
+        let (metrics, reporter) = Metrics::new(&registry, Some(&committee));
+        reporter.start();
+
         let metrics_handle =
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Boot the validator node.
-        let block_handler = RealBlockHandler::new(committee.clone(), authority);
-        let commit_handler =
-            TestCommitHandler::new(committee.clone(), block_handler.transaction_time.clone());
+        let (block_handler, block_sender) = RealBlockHandler::new(
+            committee.clone(),
+            authority,
+            config.storage(),
+            metrics.clone(),
+        );
+        let tps = env::var("TPS");
+        let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
+        let tps = tps.unwrap_or(10);
+        let transactions_per_100ms = (tps + 9) / 10;
+        let initial_delay = env::var("INITIAL_DELAY");
+        let initial_delay = initial_delay.map(|t| {
+            t.parse::<u64>()
+                .expect("Failed to parse INITIAL_DELAY variable")
+        });
+        let initial_delay = initial_delay.unwrap_or(10);
+        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms, initial delay {initial_delay} sec");
+        let initial_delay = Duration::from_secs(initial_delay);
+        TransactionGenerator::start(
+            block_sender,
+            authority,
+            transactions_per_100ms,
+            initial_delay,
+        );
+        let committed_transaction_log =
+            TransactionLog::start(config.storage().committed_transactions_log())
+                .expect("Failed to open committed transaction log for write");
+        let commit_handler = TestCommitHandler::new_with_handler(
+            committee.clone(),
+            block_handler.transaction_time.clone(),
+            metrics.clone(),
+            committed_transaction_log,
+        );
+        let wal_file =
+            wal::open_file_for_wal(config.storage().wal()).expect("Failed to open wal file");
         let core = Core::open(
             block_handler,
             authority,
             committee.clone(),
             metrics.clone(),
-            tempfile::tempfile().unwrap(),
+            wal_file,
             CoreOptions::test(),
         );
-        let network = Network::load(parameters, authority, binding_network_address).await;
+        let network = Network::load(
+            parameters,
+            authority,
+            binding_network_address,
+            metrics.clone(),
+        )
+        .await;
         let network_synchronizer = NetworkSyncer::start(
             network,
             core,
@@ -109,6 +154,7 @@ mod test {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::Duration,
     };
+    use tempdir::TempDir;
 
     use tokio::time;
 
@@ -152,9 +198,10 @@ mod test {
         let parameters = Parameters::new_for_benchmarks(ips);
 
         let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_smoke_test").unwrap();
         for i in 0..committee_size {
             let authority = i as AuthorityIndex;
-            let private = PrivateConfig::new_for_benchmarks(authority);
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
             let validator = Validator::start(authority, committee.clone(), &parameters, private)
                 .await

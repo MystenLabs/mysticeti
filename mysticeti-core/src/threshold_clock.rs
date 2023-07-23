@@ -6,10 +6,10 @@ use crate::types::{BlockReference, RoundNumber, StatementBlock};
 // A block is threshold clock valid if:
 // - all included blocks have a round number lower than the block round number.
 // - the set of authorities with blocks included has a quorum in the current committee.
-#[allow(dead_code)]
-pub fn threshold_clock_valid(block: &StatementBlock, committee: &Committee) -> bool {
+pub fn threshold_clock_valid_non_genesis(block: &StatementBlock, committee: &Committee) -> bool {
     // get a committee from the creator of the block
     let round_number = block.reference().round;
+    assert!(round_number > 0);
 
     // Ensure all includes have a round number smaller than the block round number
     for include in block.includes() {
@@ -28,8 +28,7 @@ pub fn threshold_clock_valid(block: &StatementBlock, committee: &Committee) -> b
     }
 
     // Ensure the set of authorities with includes has a quorum in the current committee
-    // Unless this is the zero blocks, that start the epoch
-    round_number == 0 || is_quorum
+    is_quorum
 }
 
 pub struct ThresholdClockAggregator {
@@ -86,29 +85,28 @@ mod tests {
     // it succeeds
     #[test]
     fn test_threshold_clock_valid() {
-        let committee = Committee::new(vec![1, 1, 1, 1]);
-        assert!(threshold_clock_valid(&Dag::draw_block("A0:[]"), &committee));
-        assert!(!threshold_clock_valid(
+        let committee = Committee::new_test(vec![1, 1, 1, 1]);
+        assert!(!threshold_clock_valid_non_genesis(
             &Dag::draw_block("A1:[]"),
             &committee
         ));
-        assert!(!threshold_clock_valid(
+        assert!(!threshold_clock_valid_non_genesis(
             &Dag::draw_block("A1:[A0, B0]"),
             &committee
         ));
-        assert!(threshold_clock_valid(
+        assert!(threshold_clock_valid_non_genesis(
             &Dag::draw_block("A1:[A0, B0, C0]"),
             &committee
         ));
-        assert!(threshold_clock_valid(
+        assert!(threshold_clock_valid_non_genesis(
             &Dag::draw_block("A1:[A0, B0, C0, D0]"),
             &committee
         ));
-        assert!(!threshold_clock_valid(
+        assert!(!threshold_clock_valid_non_genesis(
             &Dag::draw_block("A2:[A1, B1, C0, D0]"),
             &committee
         ));
-        assert!(threshold_clock_valid(
+        assert!(threshold_clock_valid_non_genesis(
             &Dag::draw_block("A2:[A1, B1, C1, D0]"),
             &committee
         ));
@@ -116,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_threshold_clock_aggregator() {
-        let committee = Committee::new(vec![1, 1, 1, 1]);
+        let committee = Committee::new_test(vec![1, 1, 1, 1]);
         let mut aggregator = ThresholdClockAggregator::new(0);
 
         aggregator.add_block(BlockReference::new_test(0, 0), &committee);

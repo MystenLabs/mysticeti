@@ -72,6 +72,17 @@ pub enum SshError {
     },
 }
 
+pub type MonitorResult<T> = Result<T, MonitorError>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum MonitorError {
+    #[error(transparent)]
+    SshError(#[from] SshError),
+
+    #[error("Failed to start Grafana: {0}")]
+    GrafanaError(String),
+}
+
 pub type TestbedResult<T> = Result<T, TestbedError>;
 
 #[derive(thiserror::Error, Debug)]
@@ -87,4 +98,7 @@ pub enum TestbedError {
 
     #[error("Not enough instances: missing {0} instances")]
     InsufficientCapacity(usize),
+
+    #[error(transparent)]
+    MonitorError(#[from] MonitorError),
 }

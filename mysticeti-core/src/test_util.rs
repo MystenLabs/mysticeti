@@ -8,14 +8,13 @@ use crate::core::{Core, CoreOptions};
 use crate::data::Data;
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
+use crate::metrics::MetricReporter;
 use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{
-    format_authority_index, AuthorityIndex, BlockReference, StatementBlock, TransactionId,
-};
+use crate::types::{format_authority_index, AuthorityIndex, BlockReference, StatementBlock};
 use crate::wal::{open_file_for_wal, walf, WalPosition, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
@@ -27,63 +26,67 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub fn test_metrics() -> Arc<Metrics> {
-    Arc::new(Metrics::new(&Registry::new()))
+    Metrics::new(&Registry::new(), None).0
 }
 
 pub fn committee(n: usize) -> Arc<Committee> {
-    Committee::new(vec![1; n])
+    Committee::new_test(vec![1; n])
 }
 
-pub fn committee_and_cores(n: usize) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
-    committee_and_cores_persisted(n, None, None)
+pub fn committee_and_cores(
+    n: usize,
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
+    committee_and_cores_persisted(n, None)
 }
 
 pub fn committee_and_cores_persisted(
     n: usize,
     path: Option<&Path>,
-    block_handlers: Option<Vec<TestBlockHandler>>,
-) -> (Arc<Committee>, Vec<Core<TestBlockHandler>>) {
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
     let committee = committee(n);
-    let mut block_handler_iter = block_handlers.map(Vec::into_iter);
     let cores: Vec<_> = committee
         .authorities()
         .map(|authority| {
             let last_transaction = first_transaction_for_authority(authority);
-            let block_handler = if let Some(block_handler_iter) = block_handler_iter.as_mut() {
-                block_handler_iter.next().unwrap()
-            } else {
-                TestBlockHandler::new(last_transaction, committee.clone(), authority)
-            };
+            let (metrics, reporter) = Metrics::new(&Registry::new(), Some(&committee));
+            let block_handler = TestBlockHandler::new(
+                last_transaction,
+                committee.clone(),
+                authority,
+                metrics.clone(),
+            );
             let wal_file = if let Some(path) = path {
                 let wal_path = path.join(format!("{:03}.wal", authority));
                 open_file_for_wal(&wal_path).unwrap()
             } else {
                 tempfile::tempfile().unwrap()
             };
-            Core::open(
+            println!("Opening core {authority}");
+            let core = Core::open(
                 block_handler,
                 authority,
                 committee.clone(),
-                test_metrics(),
+                metrics,
                 wal_file,
                 CoreOptions::test(),
-            )
+            );
+            (core, reporter)
         })
         .collect();
-    (committee, cores)
+    let (cores, reporters) = cores.into_iter().unzip();
+    (committee, cores, reporters)
 }
 
-fn first_transaction_for_authority(authority: AuthorityIndex) -> TransactionId {
+fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
     authority * 1_000_000
-}
-
-pub fn first_n_transactions(committee: &Committee, n: u64) -> Vec<TransactionId> {
-    let mut result = vec![];
-    for authority in committee.authorities() {
-        let first = first_transaction_for_authority(authority);
-        result.extend(first + 1..first + n + 1)
-    }
-    result
 }
 
 pub fn committee_and_syncers(
@@ -92,7 +95,7 @@ pub fn committee_and_syncers(
     Arc<Committee>,
     Vec<Syncer<TestBlockHandler, bool, TestCommitHandler>>,
 ) {
-    let (committee, cores) = committee_and_cores(n);
+    let (committee, cores, _) = committee_and_cores(n);
     (
         committee.clone(),
         cores
@@ -101,6 +104,7 @@ pub fn committee_and_syncers(
                 let commit_handler = TestCommitHandler::new(
                     committee.clone(),
                     core.block_handler().transaction_time.clone(),
+                    test_metrics(),
                 );
                 Syncer::new(core, 3, Default::default(), commit_handler, test_metrics())
             })
@@ -108,15 +112,19 @@ pub fn committee_and_syncers(
     )
 }
 
-pub async fn networks_and_addresses(n: usize) -> (Vec<Network>, Vec<SocketAddr>) {
+pub async fn networks_and_addresses(metrics: &[Arc<Metrics>]) -> (Vec<Network>, Vec<SocketAddr>) {
     let host = Ipv4Addr::LOCALHOST;
-    let addresses: Vec<_> = (0..n)
+    let addresses: Vec<_> = (0..metrics.len())
         .map(|i| SocketAddr::V4(SocketAddrV4::new(host, 5001 + i as u16)))
         .collect();
-    let networks = addresses
-        .iter()
-        .enumerate()
-        .map(|(i, address)| Network::from_socket_addresses(&addresses, i, *address));
+    let networks =
+        addresses
+            .iter()
+            .zip(metrics.iter())
+            .enumerate()
+            .map(|(i, (address, metrics))| {
+                Network::from_socket_addresses(&addresses, i, *address, metrics.clone())
+            });
     let networks = join_all(networks).await;
     (networks, addresses)
 }
@@ -127,31 +135,35 @@ pub fn simulated_network_syncers(
 ) -> (
     SimulatedNetwork,
     Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    Vec<MetricReporter>,
 ) {
-    let (committee, cores) = committee_and_cores(n);
+    let (committee, cores, reporters) = committee_and_cores(n);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
+            core.metrics.clone(),
         );
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         drop(node_context);
         network_syncers.push(network_syncer);
     }
-    (simulated_network, network_syncers)
+    (simulated_network, network_syncers, reporters)
 }
 
 pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    let (committee, cores) = committee_and_cores(n);
-    let (networks, _) = networks_and_addresses(cores.len()).await;
+    let (committee, cores, _) = committee_and_cores(n);
+    let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
+    let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
+            test_metrics(),
         );
         let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
         network_syncers.push(network_syncer);
@@ -191,36 +203,45 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
 }
 
 #[allow(dead_code)]
-pub fn print_stats<S: SyncerSignals>(syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>]) {
+pub fn print_stats<S: SyncerSignals>(
+    syncers: &[Syncer<TestBlockHandler, S, TestCommitHandler>],
+    reporters: &mut [MetricReporter],
+) {
+    assert_eq!(syncers.len(), reporters.len());
     eprintln!("val ||    cert(ms)   ||cert commit(ms)|| tx commit(ms) |");
     eprintln!("    ||  p90  |  avg  ||  p90  |  avg  ||  p90  |  avg  |");
-    syncers.iter().for_each(|s| {
-        let b = s.core().block_handler();
-        let c = s.commit_observer();
+    syncers.iter().zip(reporters.iter_mut()).for_each(|(s, r)| {
+        r.clear_receive_all();
         eprintln!(
             "  {} || {:05} | {:05} || {:05} | {:05} || {:05} | {:05} |",
             format_authority_index(s.core().authority()),
-            b.transaction_certified_latency
+            r.transaction_certified_latency
+                .histogram
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            b.transaction_certified_latency
+            r.transaction_certified_latency
+                .histogram
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),
-            c.certificate_committed_latency
+            r.certificate_committed_latency
+                .histogram
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            c.certificate_committed_latency
+            r.certificate_committed_latency
+                .histogram
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),
-            c.transaction_committed_latency
+            r.transaction_committed_latency
+                .histogram
                 .pct(900)
                 .unwrap_or_default()
                 .as_millis(),
-            c.transaction_committed_latency
+            r.transaction_committed_latency
+                .histogram
                 .avg()
                 .unwrap_or_default()
                 .as_millis(),
@@ -247,7 +268,8 @@ impl TestBlockWriter {
     pub fn new() -> Self {
         let file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(file).unwrap();
-        let (block_store, _, _) = BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let state = BlockStore::open(0, Arc::new(wal_reader), &wal_writer, test_metrics());
+        let block_store = state.block_store;
         Self {
             block_store,
             wal_writer,

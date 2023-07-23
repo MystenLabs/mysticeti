@@ -34,7 +34,7 @@ impl CommittedSubDag {
 /// Expand a committed sequence of leader into a sequence of sub-dags.
 pub struct CommitInterpreter {
     /// Keep track of all committed blocks to avoid committing the same block twice.
-    committed: HashSet<BlockReference>,
+    pub committed: HashSet<BlockReference>,
 }
 
 impl CommitInterpreter {

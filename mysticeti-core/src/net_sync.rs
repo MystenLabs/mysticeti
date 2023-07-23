@@ -1,4 +1,7 @@
+use crate::block_store::BlockStore;
+use crate::committee::Committee;
 use crate::core::Core;
+use crate::lock::MonitoredRwLock;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
 use crate::runtime::Handle;
@@ -6,58 +9,75 @@ use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::{AuthorityIndex, RoundNumber};
+use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use futures::future::join_all;
-use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
+    syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
 }
 
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
-    syncer: RwLock<Syncer<H, Arc<Notify>, C>>,
+    syncer: MonitoredRwLock<Syncer<H, Arc<Notify>, C>>,
+    block_store: BlockStore,
     notify: Arc<Notify>,
+    committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
     pub fn start(
         network: Network,
-        core: Core<H>,
+        mut core: Core<H>,
         commit_period: u64,
-        commit_observer: C,
+        mut commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
+        // todo - ugly, probably need to merge syncer and core
+        let (committed, state) = core.take_recovered_committed_blocks();
+        commit_observer.recover_committed(committed, state);
+        let committee = core.committee().clone();
+        let wal_syncer = core.wal_syncer();
+        let block_store = core.block_store().clone();
         let mut syncer = Syncer::new(
             core,
             commit_period,
             notify.clone(),
             commit_observer,
-            metrics,
+            metrics.clone(),
         );
         syncer.force_new_block(0);
-        let syncer = RwLock::new(syncer);
+        let syncer = MonitoredRwLock::new(
+            syncer,
+            metrics.core_lock_util.clone(),
+            metrics.core_lock_wait.clone(),
+        );
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
-            stop: stop_sender,
+            block_store,
+            committee,
+            stop: stop_sender.clone(),
         });
         let main_task = handle.spawn(Self::run(network, inner.clone()));
+        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         Self {
             inner,
             main_task,
             stop: stop_receiver,
+            syncer_task,
         }
     }
 
@@ -65,6 +85,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         drop(self.stop);
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
+        self.syncer_task.await.ok();
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
@@ -75,6 +96,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
         let leader_timeout_task = handle.spawn(Self::leader_timeout_task(inner.clone()));
+        let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
             if let Some(task) = connections.remove(&peer_id) {
@@ -87,7 +109,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         join_all(
             connections
                 .into_values()
-                .chain([leader_timeout_task].into_iter()),
+                .chain([leader_timeout_task, cleanup_task].into_iter()),
         )
         .await;
     }
@@ -111,6 +133,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
+                    // todo - send signal if already unloaded blocks at requested round
                     tracing::debug!("{} subscribed from round {}", peer, round);
                     if let Some(send_blocks_handler) = subscribe_handler.take() {
                         send_blocks_handler.abort();
@@ -124,6 +147,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
+                    if let Err(e) = block.verify(&inner.committee) {
+                        tracing::warn!(
+                            "Rejected incorrect block {} from {}: {:?}",
+                            block.reference(),
+                            peer,
+                            e
+                        );
+                        // Terminate connection on receiving incorrect block
+                        return None;
+                    }
                     inner.syncer.write().add_blocks(vec![block]);
                 }
             }
@@ -142,7 +175,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     ) -> Option<()> {
         loop {
             let notified = inner.notify.notified();
-            let blocks = inner.syncer.read().get_own_blocks(round, 10);
+            let blocks = inner.block_store.get_own_blocks(round, 10);
             for block in blocks {
                 round = block.round();
                 to.send(NetworkMessage::Block(block)).await.ok()?;
@@ -169,6 +202,21 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 _notified = notified => {
                     // restart loop
+                }
+                _stopped = inner.stopped() => {
+                    return None;
+                }
+            }
+        }
+    }
+
+    async fn cleanup_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
+        let cleanup_interval = Duration::from_secs(10);
+        loop {
+            select! {
+                _sleep = runtime::sleep(cleanup_interval) => {
+                    // Keep read lock for everything else
+                    inner.syncer.read().core().cleanup();
                 }
                 _stopped = inner.stopped() => {
                     return None;
@@ -205,6 +253,58 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
 impl SyncerSignals for Arc<Notify> {
     fn new_block_ready(&mut self) {
         self.notify_waiters();
+    }
+}
+
+pub struct AsyncWalSyncer {
+    wal_syncer: WalSyncer,
+    stop: mpsc::Sender<()>,
+    _sender: oneshot::Sender<()>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl AsyncWalSyncer {
+    #[cfg(not(feature = "simulator"))]
+    pub fn start(wal_syncer: WalSyncer, stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        let this = Self {
+            wal_syncer,
+            stop,
+            _sender: sender,
+            runtime: tokio::runtime::Handle::current(),
+        };
+        std::thread::Builder::new()
+            .name("wal-syncer".to_string())
+            .spawn(move || this.run())
+            .expect("Failed to spawn wal-syncer");
+        receiver
+    }
+
+    #[cfg(feature = "simulator")]
+    pub fn start(_wal_syncer: WalSyncer, _stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+        oneshot::channel().1
+    }
+
+    pub fn run(mut self) {
+        let runtime = self.runtime.clone();
+        loop {
+            if runtime.block_on(self.wait_next()) {
+                return;
+            }
+            self.wal_syncer.sync().expect("Failed to sync wal");
+        }
+    }
+
+    // Returns true to stop the task
+    async fn wait_next(&mut self) -> bool {
+        select! {
+            _wait = runtime::sleep(Duration::from_secs(1)) => {
+                false
+            }
+            _signal = self.stop.send(()) => {
+                true
+            }
+        }
     }
 }
 
@@ -245,7 +345,7 @@ mod sim_tests {
     }
 
     async fn test_network_sync_sim_all_up_async() {
-        let (simulated_network, network_syncers) = simulated_network_syncers(10);
+        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
         simulated_network.connect_all().await;
         runtime::sleep(Duration::from_secs(20)).await;
         let mut syncers = vec![];
@@ -255,7 +355,7 @@ mod sim_tests {
         }
 
         check_commits(&syncers);
-        print_stats(&syncers);
+        print_stats(&syncers, &mut reporters);
     }
 
     #[test]
@@ -267,7 +367,7 @@ mod sim_tests {
     // All peers except for peer A are connected in this test
     // Peer A is disconnected from everything
     async fn test_network_sync_sim_one_down_async() {
-        let (simulated_network, network_syncers) = simulated_network_syncers(10);
+        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
         simulated_network.connect_some(|a, _b| a != 0).await;
         println!("Started");
         runtime::sleep(Duration::from_secs(40)).await;
@@ -279,6 +379,6 @@ mod sim_tests {
         }
 
         check_commits(&syncers);
-        print_stats(&syncers);
+        print_stats(&syncers, &mut reporters);
     }
 }

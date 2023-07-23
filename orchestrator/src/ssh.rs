@@ -10,6 +10,8 @@ use std::{
 
 use futures::future::try_join_all;
 use ssh2::{Channel, Session};
+use tokio::runtime::Handle;
+use tokio::task::JoinHandle;
 use tokio::{net::TcpStream, time::sleep};
 
 use crate::{
@@ -171,26 +173,40 @@ impl SshConnectionManager {
         I: IntoIterator<Item = (Instance, S)>,
         S: Into<String> + Send + 'static,
     {
-        let handles = instances
-            .into_iter()
-            .map(|(instance, command)| {
-                let ssh_manager = self.clone();
-                let context = context.clone();
-
-                tokio::spawn(async move {
-                    ssh_manager
-                        .connect(instance.ssh_address())
-                        .await?
-                        .execute(context.apply(command))
-                })
-            })
-            .collect::<Vec<_>>();
+        let handles = self.run_per_instance(instances, context);
 
         try_join_all(handles)
             .await
             .unwrap()
             .into_iter()
             .collect::<SshResult<_>>()
+    }
+
+    pub fn run_per_instance<I, S>(
+        &self,
+        instances: I,
+        context: CommandContext,
+    ) -> Vec<JoinHandle<SshResult<(String, String)>>>
+    where
+        I: IntoIterator<Item = (Instance, S)>,
+        S: Into<String> + Send + 'static,
+    {
+        instances
+            .into_iter()
+            .map(|(instance, command)| {
+                let ssh_manager = self.clone();
+                let context = context.clone();
+
+                tokio::spawn(async move {
+                    let connection = ssh_manager.connect(instance.ssh_address()).await?;
+                    // SshConnection::execute is a blocking call, needs to go to blocking pool
+                    Handle::current()
+                        .spawn_blocking(move || connection.execute(context.apply(command)))
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>()
     }
 
     /// Wait until a command running in the background returns or started.

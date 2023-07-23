@@ -1,12 +1,18 @@
-use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_PAYLOAD};
+use crate::block_store::{
+    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+    WAL_ENTRY_STATE,
+};
 use crate::committee::Committee;
+use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
+use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
-use crate::wal::{walf, WalPosition, WalWriter};
+use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
 use std::sync::Arc;
@@ -26,8 +32,11 @@ pub struct Core<H: BlockHandler> {
     last_commit_round: RoundNumber,
     wal_writer: WalWriter,
     block_store: BlockStore,
-    metrics: Arc<Metrics>,
+    pub(crate) metrics: Arc<Metrics>,
     options: CoreOptions,
+    signer: Signer,
+    // todo - ugly, probably need to merge syncer and core
+    recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
 }
 
 pub struct CoreOptions {
@@ -42,7 +51,7 @@ pub enum MetaStatement {
 
 impl<H: BlockHandler> Core<H> {
     pub fn open(
-        block_handler: H,
+        mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         metrics: Arc<Metrics>,
@@ -50,8 +59,22 @@ impl<H: BlockHandler> Core<H> {
         options: CoreOptions,
     ) -> Self {
         let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let (block_store, last_own_block, mut pending) =
-            BlockStore::open(Arc::new(wal_reader), &wal_writer);
+        let recovered = BlockStore::open(
+            authority,
+            Arc::new(wal_reader),
+            &wal_writer,
+            metrics.clone(),
+        );
+        let RecoveredState {
+            block_store,
+            last_own_block,
+            mut pending,
+            state,
+            unprocessed_blocks,
+            last_committed_leader,
+            committed_blocks,
+            committed_state,
+        } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {
@@ -83,9 +106,16 @@ impl<H: BlockHandler> Core<H> {
             own_block_data
         };
         let block_manager = BlockManager::new(block_store.clone());
-        let last_commit_round = 0;
+        let last_commit_round = last_committed_leader
+            .as_ref()
+            .map(BlockReference::round)
+            .unwrap_or_default();
 
-        Self {
+        if let Some(state) = state {
+            block_handler.recover_state(&state);
+        }
+
+        let mut this = Self {
             block_manager,
             pending,
             last_own_block,
@@ -98,7 +128,19 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
+            signer: dummy_signer(), // todo - load from config
+            recovered_committed_blocks: Some((committed_blocks, committed_state)),
+        };
+
+        if !unprocessed_blocks.is_empty() {
+            tracing::info!(
+                "Replaying {} blocks for transaction aggregator",
+                unprocessed_blocks.len()
+            );
+            this.run_block_handler(&unprocessed_blocks);
         }
+
+        this
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -177,14 +219,16 @@ impl<H: BlockHandler> Core<H> {
             }
         }
 
-        let block_ref = BlockReference {
-            authority: self.authority,
-            round: clock_round,
-            digest: 0,
-        };
         assert!(!includes.is_empty());
         let time_ns = timestamp_utc().as_nanos();
-        let block = StatementBlock::new(block_ref, includes, statements, time_ns);
+        let block = StatementBlock::new_with_signer(
+            self.authority,
+            clock_round,
+            includes,
+            statements,
+            time_ns,
+            &self.signer,
+        );
         assert_eq!(
             block.includes().get(0).unwrap().authority,
             self.authority,
@@ -193,6 +237,15 @@ impl<H: BlockHandler> Core<H> {
         );
 
         let block = Data::new(block);
+        if block.serialized_bytes().len() > crate::wal::MAX_ENTRY_SIZE / 2 {
+            // Sanity check for now
+            panic!(
+                "Created an oversized block(check all limits set properly!): {:?}",
+                block.detailed()
+            );
+        }
+        self.block_handler.handle_proposal(&block);
+        self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
             *pos
         } else {
@@ -211,6 +264,31 @@ impl<H: BlockHandler> Core<H> {
         Some(block)
     }
 
+    pub fn wal_syncer(&self) -> WalSyncer {
+        self.wal_writer
+            .syncer()
+            .expect("Failed to create wal syncer")
+    }
+
+    fn proposed_block_stats(&self, block: &Data<StatementBlock>) {
+        self.metrics
+            .proposed_block_size_bytes
+            .observe(block.serialized_bytes().len());
+        let mut votes = 0usize;
+        let mut transactions = 0usize;
+        for statement in block.statements() {
+            match statement {
+                BaseStatement::Share(_) => transactions += 1,
+                BaseStatement::Vote(_, _) => votes += 1,
+                BaseStatement::VoteRange(range) => votes += range.len(),
+            }
+        }
+        self.metrics
+            .proposed_block_transaction_count
+            .observe(transactions);
+        self.metrics.proposed_block_vote_count.observe(votes);
+    }
+
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
         // todo only create committer once
         let sequence = Committer::new(
@@ -227,6 +305,17 @@ impl<H: BlockHandler> Core<H> {
         );
 
         sequence
+    }
+
+    pub fn cleanup(&self) {
+        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 12;
+
+        self.block_store.cleanup(
+            self.last_commit_round
+                .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
+        );
+
+        self.block_handler.cleanup();
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,
@@ -251,6 +340,25 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
+    pub fn write_state(&mut self) {
+        self.wal_writer
+            .write(WAL_ENTRY_STATE, &self.block_handler().state())
+            .expect("Write to wal has failed");
+    }
+
+    pub fn write_commits(&mut self, commits: &[CommitData], state: &Bytes) {
+        let commits = bincode::serialize(&(commits, state)).expect("Commits serialization failed");
+        self.wal_writer
+            .write(WAL_ENTRY_COMMIT, &commits)
+            .expect("Write to wal has failed");
+    }
+
+    pub fn take_recovered_committed_blocks(&mut self) -> (HashSet<BlockReference>, Option<Bytes>) {
+        self.recovered_committed_blocks
+            .take()
+            .expect("take_recovered_committed_blocks called twice")
+    }
+
     pub fn block_store(&self) -> &BlockStore {
         &self.block_store
     }
@@ -265,6 +373,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn block_handler(&self) -> &H {
         &self.block_handler
+    }
+
+    pub fn block_handler_mut(&mut self) -> &mut H {
+        &mut self.block_handler
     }
 
     pub fn committee(&self) -> &Arc<Committee> {
@@ -300,7 +412,7 @@ mod test {
 
     #[test]
     fn test_core_simple_exchange() {
-        let (_committee, mut cores) = committee_and_cores(4);
+        let (_committee, mut cores, _) = committee_and_cores(4);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -310,7 +422,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction);
+            proposed_transactions.extend(core.block_handler.proposed.drain(..));
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
@@ -341,7 +453,7 @@ mod test {
             assert_eq!(block.reference().round, 3);
             for txid in &proposed_transactions {
                 assert!(
-                    core.block_handler.is_certified(*txid),
+                    core.block_handler.is_certified(txid),
                     "Transaction {} is not certified by {}",
                     txid,
                     core.authority
@@ -354,7 +466,7 @@ mod test {
     fn test_randomized_simple_exchange() {
         'l: for seed in 0..100 {
             let mut rng = StdRng::from_seed([seed; 32]);
-            let (committee, mut cores) = committee_and_cores(4);
+            let (committee, mut cores, _) = committee_and_cores(4);
 
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();
@@ -364,10 +476,10 @@ mod test {
                     .try_new_block()
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
-                proposed_transactions.push(core.block_handler.last_transaction);
+                proposed_transactions.extend(core.block_handler.proposed.drain(..));
                 eprintln!("{}: {}", core.authority, block);
                 assert!(
-                    threshold_clock::threshold_clock_valid(&block, &committee),
+                    threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
                     "Invalid clock {}",
                     block
                 );
@@ -403,7 +515,7 @@ mod test {
                     continue;
                 };
                 assert!(
-                    threshold_clock::threshold_clock_valid(&block, &committee),
+                    threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
                     "Invalid clock {}",
                     block
                 );
@@ -411,13 +523,14 @@ mod test {
                 push_all(&mut pending, core.authority, &block);
                 if i < 20 {
                     // First 20 iterations we record proposed transactions
-                    proposed_transactions.push(core.block_handler.last_transaction);
+                    proposed_transactions.extend(core.block_handler.proposed.drain(..));
+                    // proposed_transactions.push(core.block_handler.last_transaction());
                 } else {
                     assert!(!proposed_transactions.is_empty());
                     // After 20 iterations we just wait for all transactions to be committed everywhere
                     for proposed in &proposed_transactions {
                         for core in &cores {
-                            if !core.block_handler.is_certified(*proposed) {
+                            if !core.block_handler.is_certified(proposed) {
                                 continue 'a;
                             }
                         }
@@ -436,7 +549,7 @@ mod test {
     #[test]
     fn test_core_recovery() {
         let tmp = tempdir::TempDir::new("test_core_recovery").unwrap();
-        let (_committee, mut cores) = committee_and_cores_persisted(4, Some(tmp.path()), None);
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -446,16 +559,15 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.push(core.block_handler.last_transaction);
+            proposed_transactions.extend(core.block_handler.proposed.clone());
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
         assert_eq!(proposed_transactions.len(), 4);
-        // todo - persistence for block handler
-        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+        cores.iter_mut().for_each(Core::write_state);
+        drop(cores);
 
-        let (_committee, mut cores) =
-            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let more_blocks = blocks.split_off(2);
 
@@ -474,11 +586,13 @@ mod test {
             blocks_r2.push(block.clone());
         }
 
-        // todo - persistence for block handler
-        let block_handlers: Vec<_> = cores.into_iter().map(|c| c.block_handler).collect();
+        // Note that we do not call Core::write_state here unlike before.
+        // This should also be handled correctly by re-processing unprocessed_blocks
+        drop(cores);
 
-        let (_committee, mut cores) =
-            committee_and_cores_persisted(4, Some(tmp.path()), Some(block_handlers));
+        eprintln!("===");
+
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         for core in &mut cores {
             core.add_blocks(blocks_r2.clone());
@@ -489,7 +603,7 @@ mod test {
             assert_eq!(block.reference().round, 3);
             for txid in &proposed_transactions {
                 assert!(
-                    core.block_handler.is_certified(*txid),
+                    core.block_handler.is_certified(txid),
                     "Transaction {} is not certified by {}",
                     txid,
                     core.authority

@@ -321,7 +321,7 @@ impl<H: BlockHandler> Core<H> {
         );
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_round > Parameters::COMMITS_IN_EPOCH {
+        if self.last_commit_round > Parameters::ROUNDS_IN_EPOCH {
             let _ = self.epoch_change_sender.try_send(());
         }
 

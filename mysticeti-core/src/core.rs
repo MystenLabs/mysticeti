@@ -40,7 +40,8 @@ pub struct Core<H: BlockHandler> {
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
-    epoch_sender: mpsc::Sender<()>,
+    epoch_change_sender: mpsc::Sender<()>,
+    epoch_close_sender: mpsc::Sender<()>,
 }
 
 pub struct CoreOptions {
@@ -119,8 +120,9 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
-        let (epoch_sender, epoch_receiver) = mpsc::channel(1);
-        let epoch_manager = EpochManager::new(epoch_receiver);
+        let (epoch_change_sender, epoch_change_receiver) = mpsc::channel(1);
+        let (epoch_close_sender, epoch_close_receiver) = mpsc::channel(1);
+        let epoch_manager = EpochManager::new(epoch_change_receiver, epoch_close_receiver);
 
         let mut this = Self {
             block_manager,
@@ -138,7 +140,8 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
-            epoch_sender,
+            epoch_change_sender,
+            epoch_close_sender,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -316,7 +319,7 @@ impl<H: BlockHandler> Core<H> {
 
         // todo: should ideally come from execution result of epoch smart contract
         if self.last_commit_round > 3000 {
-            let _ = self.epoch_sender.try_send(());
+            let _ = self.epoch_change_sender.try_send(());
         }
 
         sequence
@@ -406,6 +409,10 @@ impl<H: BlockHandler> Core<H> {
         assert!(round == 0 || round % period == 0);
 
         self.committee.elect_leader(round / period)
+    }
+
+    pub fn epoch_close_signal(&self) -> mpsc::Sender<()> {
+        self.epoch_close_sender.clone()
     }
 }
 

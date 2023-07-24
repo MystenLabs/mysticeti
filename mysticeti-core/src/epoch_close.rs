@@ -8,15 +8,17 @@ pub struct EpochManager {
     change_receiver: mpsc::Receiver<()>,
     change_aggregator: StakeAggregator<QuorumThreshold>,
     close_aggregator: StakeAggregator<ValidityThreshold>,
+    close_signal: mpsc::Receiver<()>,
 }
 
 impl EpochManager {
-    pub fn new(change_receiver: mpsc::Receiver<()>) -> Self {
+    pub fn new(change_receiver: mpsc::Receiver<()>, close_signal: mpsc::Receiver<()>) -> Self {
         Self {
             epoch_status: Default::default(),
             change_receiver,
             change_aggregator: StakeAggregator::new(),
             close_aggregator: StakeAggregator::new(),
+            close_signal,
         }
     }
 
@@ -45,7 +47,9 @@ impl EpochManager {
                     tracing::info!("Epoch should be closed now");
                 }
             }
-            EpochStatus::Closed => (),
+            EpochStatus::Closed => {
+                self.close_signal.close(); // corresponding senders unblock and allow all tasks to join
+            }
         }
     }
 }

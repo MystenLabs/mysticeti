@@ -31,6 +31,7 @@ struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
+    epoch_close_signal: mpsc::Sender<()>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -49,6 +50,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
+        let epoch_signal = core.epoch_close_signal();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -64,15 +66,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         );
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
+        epoch_signal.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
             block_store,
             committee,
             stop: stop_sender.clone(),
+            epoch_close_signal: epoch_signal.clone(),
         });
         let main_task = handle.spawn(Self::run(network, inner.clone()));
-        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
+        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_signal);
         Self {
             inner,
             main_task,
@@ -238,6 +242,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
                 assert!(stopped.is_err());
                 None
             }
+            closed = self.epoch_close_signal.send(()) => {
+                assert!(closed.is_err());
+                None
+            }
             data = channel.recv() => {
                 data
             }
@@ -245,8 +253,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
     }
 
     async fn stopped(&self) {
-        let res = self.stop.send(()).await;
-        assert!(res.is_err());
+        select! {
+            stopped = self.stop.send(()) => {
+                assert!(stopped.is_err());
+            }
+            closed = self.epoch_close_signal.send(()) => {
+                assert!(closed.is_err());
+            }
+        }
     }
 }
 
@@ -259,17 +273,23 @@ impl SyncerSignals for Arc<Notify> {
 pub struct AsyncWalSyncer {
     wal_syncer: WalSyncer,
     stop: mpsc::Sender<()>,
+    epoch_signal: mpsc::Sender<()>,
     _sender: oneshot::Sender<()>,
     runtime: tokio::runtime::Handle,
 }
 
 impl AsyncWalSyncer {
     #[cfg(not(feature = "simulator"))]
-    pub fn start(wal_syncer: WalSyncer, stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+    pub fn start(
+        wal_syncer: WalSyncer,
+        stop: mpsc::Sender<()>,
+        epoch_signal: mpsc::Sender<()>,
+    ) -> oneshot::Receiver<()> {
         let (sender, receiver) = oneshot::channel();
         let this = Self {
             wal_syncer,
             stop,
+            epoch_signal,
             _sender: sender,
             runtime: tokio::runtime::Handle::current(),
         };
@@ -281,7 +301,11 @@ impl AsyncWalSyncer {
     }
 
     #[cfg(feature = "simulator")]
-    pub fn start(_wal_syncer: WalSyncer, _stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+    pub fn start(
+        _wal_syncer: WalSyncer,
+        _stop: mpsc::Sender<()>,
+        _epoch_signal: mpsc::Sender<()>,
+    ) -> oneshot::Receiver<()> {
         oneshot::channel().1
     }
 
@@ -302,6 +326,10 @@ impl AsyncWalSyncer {
                 false
             }
             _signal = self.stop.send(()) => {
+                true
+            }
+            _ = self.epoch_signal.send(()) => {
+                // might need to sync wal completely before shutting down
                 true
             }
         }

@@ -37,8 +37,11 @@ pub enum Vote {
 pub enum EpochStatus {
     #[default]
     Open,
+    /// Change is triggered by an external deterministic mechanism
     BeginChange,
+    /// Epoch is safe to close when committed blocks from >= 2f+1 stake indicate epoch change 
     SafeToClose,
+    /// Sync can be closed when >= f+1 stake consider the epoch safe to close 
     Closed,
 }
 

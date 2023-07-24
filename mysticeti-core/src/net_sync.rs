@@ -338,7 +338,10 @@ impl AsyncWalSyncer {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_util::{check_commits, network_syncers};
+    use crate::{
+        test_util::{check_commits, network_syncers},
+        types::EpochStatus,
+    };
     use std::time::Duration;
 
     #[tokio::test]
@@ -354,6 +357,31 @@ mod tests {
         }
 
         check_commits(&syncers);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_epoch_close() {
+        let f = 1;
+        let network_syncers = network_syncers(3 * f + 1).await;
+        let mut any_closed = false;
+        while !any_closed {
+            for net_sync in network_syncers.iter() {
+                if let EpochStatus::Closed = net_sync.inner.syncer.read().core().epoch_status() {
+                    any_closed = true;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let mut epoch_safely_closed = 0;
+        for net_sync in network_syncers.iter() {
+            match net_sync.inner.syncer.read().core().epoch_status() {
+                EpochStatus::SafeToClose => epoch_safely_closed += 1,
+                EpochStatus::Closed => epoch_safely_closed += 1,
+                _ => (),
+            };
+        }
+        assert!(epoch_safely_closed >= f + 1);
     }
 }
 

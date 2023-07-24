@@ -33,7 +33,7 @@ pub enum Vote {
     Reject(Option<TransactionLocator>),
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub enum EpochStatus {
     #[default]
     Open,

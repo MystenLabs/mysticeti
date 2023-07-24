@@ -22,13 +22,17 @@ impl EpochManager {
         }
     }
 
-    pub fn epoch_status(&mut self) -> EpochStatus {
+    pub fn check_epoch_status(&mut self) -> EpochStatus {
         if let EpochStatus::Open = self.epoch_status {
             if self.change_receiver.try_recv().is_ok() {
                 self.epoch_status = EpochStatus::BeginChange;
                 tracing::info!("Epoch change has begun");
             }
         }
+        self.epoch_status.clone()
+    }
+
+    pub fn epoch_status(&self) -> EpochStatus {
         self.epoch_status.clone()
     }
 

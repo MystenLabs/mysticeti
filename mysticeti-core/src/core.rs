@@ -9,7 +9,9 @@ use crate::epoch_close::EpochManager;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
-use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{
+    AuthorityIndex, BaseStatement, BlockReference, EpochStatus, RoundNumber, StatementBlock,
+};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
@@ -239,7 +241,7 @@ impl<H: BlockHandler> Core<H> {
             includes,
             statements,
             time_ns,
-            self.epoch_manager.epoch_status(),
+            self.epoch_manager.check_epoch_status(),
             &self.signer,
         );
         assert_eq!(
@@ -413,6 +415,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn epoch_close_signal(&self) -> mpsc::Sender<()> {
         self.epoch_close_sender.clone()
+    }
+
+    pub fn epoch_status(&self) -> EpochStatus {
+        self.epoch_manager.epoch_status()
     }
 }
 

@@ -3,6 +3,7 @@ use crate::block_store::{
     WAL_ENTRY_STATE,
 };
 use crate::committee::Committee;
+use crate::config::Parameters;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -320,7 +321,7 @@ impl<H: BlockHandler> Core<H> {
         );
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_round > 3000 {
+        if self.last_commit_round > Parameters::COMMITS_IN_EPOCH {
             let _ = self.epoch_change_sender.try_send(());
         }
 

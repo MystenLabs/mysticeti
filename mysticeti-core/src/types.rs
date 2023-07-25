@@ -33,7 +33,7 @@ pub enum Vote {
     Reject(Option<TransactionLocator>),
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum EpochStatus {
     #[default]
     Open,
@@ -44,6 +44,19 @@ pub enum EpochStatus {
     /// Sync can be closed when >= f+1 stake consider the epoch safe to close
     Closed,
 }
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub enum InternalEpochStatus {
+    #[default]
+    Open,
+    /// Change is triggered by an external deterministic mechanism
+    BeginChange,
+    /// Epoch is safe to close when committed blocks from >= 2f+1 stake indicate epoch change
+    SafeToClose,
+    /// Sync can be closed when >= f+1 stake consider the epoch safe to close
+    Closed,
+}
+
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {

@@ -383,7 +383,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(timestamp);
                     }
                 }
-                epoch_manager.observe_block(block, &self.committee);
+                epoch_manager.observe_committed_block(block, &self.committee);
             }
             commit_data.push(CommitData::from(&commit));
             // self.committed_dags.push(commit);

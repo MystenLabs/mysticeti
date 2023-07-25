@@ -119,12 +119,7 @@ impl BlockDigest {
             }
         }
         meta_creation_time_ns.crypto_hash(hasher);
-        match epoch_marker {
-            EpochStatus::Open => [0].crypto_hash(hasher),
-            EpochStatus::BeginChange => [1].crypto_hash(hasher),
-            EpochStatus::SafeToClose => [2].crypto_hash(hasher),
-            EpochStatus::Closed => [3].crypto_hash(hasher),
-        }
+        epoch_marker.crypto_hash(hasher);
     }
 }
 

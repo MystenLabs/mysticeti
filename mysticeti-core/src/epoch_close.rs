@@ -1,6 +1,6 @@
 use crate::committee::{Committee, QuorumThreshold, StakeAggregator, ValidityThreshold};
 use crate::data::Data;
-use crate::types::{InternalEpochStatus, EpochStatus, StatementBlock};
+use crate::types::{EpochStatus, InternalEpochStatus, StatementBlock};
 use tokio::sync::mpsc;
 
 pub struct EpochManager {

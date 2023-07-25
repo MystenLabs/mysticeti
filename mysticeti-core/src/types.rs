@@ -57,7 +57,6 @@ pub enum InternalEpochStatus {
     Closed,
 }
 
-
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
@@ -520,6 +519,17 @@ impl CryptoHash for TransactionLocatorRange {
         self.block.crypto_hash(state);
         self.offset_start_inclusive.crypto_hash(state);
         self.offset_end_exclusive.crypto_hash(state);
+    }
+}
+
+impl CryptoHash for EpochStatus {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        match self {
+            EpochStatus::Open => [0].crypto_hash(state),
+            EpochStatus::BeginChange => [1].crypto_hash(state),
+            EpochStatus::SafeToClose => [2].crypto_hash(state),
+            EpochStatus::Closed => [3].crypto_hash(state),
+        }
     }
 }
 

@@ -2,6 +2,7 @@ use crate::block_store::{
     BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
     WAL_ENTRY_STATE,
 };
+use crate::commit_interpreter::CommittedSubDag;
 use crate::committee::Committee;
 use crate::config::Parameters;
 use crate::crypto::{dummy_signer, Signer};
@@ -361,6 +362,24 @@ impl<H: BlockHandler> Core<H> {
         }
     }
 
+    pub fn handle_committed_subdag(
+        &mut self,
+        committed: Vec<CommittedSubDag>,
+        state: &Bytes,
+    ) -> Vec<CommitData> {
+        let mut commit_data = vec![];
+        for commit in &committed {
+            for block in &commit.blocks {
+                self.epoch_manager
+                    .observe_committed_block(block, &self.committee);
+            }
+            commit_data.push(CommitData::from(commit));
+        }
+        self.write_state(); // todo - this can be done less frequently to reduce IO
+        self.write_commits(&commit_data, state);
+        commit_data
+    }
+
     pub fn write_state(&mut self) {
         self.wal_writer
             .write(WAL_ENTRY_STATE, &self.block_handler().state())
@@ -382,10 +401,6 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn block_store(&self) -> &BlockStore {
         &self.block_store
-    }
-
-    pub fn split_borrow(&mut self) -> (&BlockStore, &mut EpochManager) {
-        (&self.block_store, &mut self.epoch_manager)
     }
 
     pub fn last_proposed(&self) -> RoundNumber {

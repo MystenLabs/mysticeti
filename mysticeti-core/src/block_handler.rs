@@ -1,13 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::commit_interpreter::CommitInterpreter;
+use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
 use crate::config::StorageDir;
 use crate::data::Data;
-use crate::epoch_close::EpochManager;
 use crate::log::TransactionLog;
 use crate::runtime;
 use crate::runtime::TimeInstant;
@@ -15,10 +14,7 @@ use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
-use crate::{
-    block_store::{BlockStore, CommitData},
-    metrics::Metrics,
-};
+use crate::{block_store::BlockStore, metrics::Metrics};
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -352,14 +348,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-        epoch_manager: &mut EpochManager,
-    ) -> Vec<CommitData> {
+    ) -> Vec<CommittedSubDag> {
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);
         let transaction_time = self.transaction_time.lock();
-        let mut commit_data = vec![];
-        for commit in committed {
+        for commit in &committed {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
                 let processed = self
@@ -383,15 +377,13 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(timestamp);
                     }
                 }
-                epoch_manager.observe_committed_block(block, &self.committee);
             }
-            commit_data.push(CommitData::from(&commit));
             // self.committed_dags.push(commit);
         }
         self.metrics
             .commit_handler_pending_certificates
             .set(self.transaction_votes.len() as i64);
-        commit_data
+        committed
     }
 
     fn aggregator_state(&self) -> Bytes {

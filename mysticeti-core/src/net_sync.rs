@@ -381,4 +381,33 @@ mod sim_tests {
         check_commits(&syncers);
         print_stats(&syncers, &mut reporters);
     }
+
+    #[test]
+    fn test_network_partition() {
+        setup_simulator_tracing();
+        SimulatedExecutorState::run(rng_at_seed(0), test_network_partition_async());
+    }
+
+    // All peers except for peer A are connected in this test. Peer A is disconnected from everyone
+    // except for peer B. This test ensures that A eventually manages to commit by syncing with B.
+    async fn test_network_partition_async() {
+        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
+        // Disconnect all A from all peers except for B.
+        simulated_network
+            .connect_some(|a, b| a != 0 || (a == 0 && b == 1))
+            .await;
+
+        println!("Started");
+        runtime::sleep(Duration::from_secs(40)).await;
+        println!("Done");
+        let mut syncers = vec![];
+        for network_syncer in network_syncers {
+            let syncer = network_syncer.shutdown().await;
+            syncers.push(syncer);
+        }
+
+        // Ensure no conflicts.
+        check_commits(&syncers);
+        print_stats(&syncers, &mut reporters);
+    }
 }

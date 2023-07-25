@@ -44,7 +44,6 @@ pub struct Core<H: BlockHandler> {
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
-    epoch_change_sender: mpsc::Sender<()>,
     epoch_close_sender: mpsc::Sender<()>,
 }
 
@@ -124,9 +123,8 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
-        let (epoch_change_sender, epoch_change_receiver) = mpsc::channel(1);
         let (epoch_close_sender, epoch_close_receiver) = mpsc::channel(1);
-        let epoch_manager = EpochManager::new(epoch_change_receiver, epoch_close_receiver);
+        let epoch_manager = EpochManager::new(epoch_close_receiver);
 
         let mut this = Self {
             block_manager,
@@ -144,7 +142,6 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
-            epoch_change_sender,
             epoch_close_sender,
         };
 
@@ -243,7 +240,7 @@ impl<H: BlockHandler> Core<H> {
             includes,
             statements,
             time_ns,
-            self.epoch_manager.check_epoch_status(),
+            self.epoch_manager.epoch_status(),
             &self.signer,
         );
         assert_eq!(
@@ -323,7 +320,7 @@ impl<H: BlockHandler> Core<H> {
 
         // todo: should ideally come from execution result of epoch smart contract
         if self.last_commit_round > Parameters::ROUNDS_IN_EPOCH {
-            let _ = self.epoch_change_sender.try_send(());
+            self.epoch_manager.epoch_change_begun();
         }
 
         sequence

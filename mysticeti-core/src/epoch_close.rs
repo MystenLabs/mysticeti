@@ -5,31 +5,26 @@ use tokio::sync::mpsc;
 
 pub struct EpochManager {
     epoch_status: InternalEpochStatus,
-    change_receiver: mpsc::Receiver<()>,
     change_aggregator: StakeAggregator<QuorumThreshold>,
     close_aggregator: StakeAggregator<ValidityThreshold>,
     close_signal: mpsc::Receiver<()>,
 }
 
 impl EpochManager {
-    pub fn new(change_receiver: mpsc::Receiver<()>, close_signal: mpsc::Receiver<()>) -> Self {
+    pub fn new(close_signal: mpsc::Receiver<()>) -> Self {
         Self {
             epoch_status: Default::default(),
-            change_receiver,
             change_aggregator: StakeAggregator::new(),
             close_aggregator: StakeAggregator::new(),
             close_signal,
         }
     }
 
-    pub fn check_epoch_status(&mut self) -> EpochStatus {
+    pub fn epoch_change_begun(&mut self) {
         if let InternalEpochStatus::Open = self.epoch_status {
-            if self.change_receiver.try_recv().is_ok() {
-                self.epoch_status = InternalEpochStatus::BeginChange;
-                tracing::info!("Epoch change has begun");
-            }
+            self.epoch_status = InternalEpochStatus::BeginChange;
+            tracing::info!("Epoch change has begun");
         }
-        self.epoch_status()
     }
 
     pub fn epoch_status(&self) -> EpochStatus {

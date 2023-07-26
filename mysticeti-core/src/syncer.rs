@@ -61,6 +61,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Syncer::add_blocks");
         let processed = self.core.add_blocks(blocks);
         for block in processed {
             let last_seen = self

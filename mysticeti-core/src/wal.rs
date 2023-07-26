@@ -101,9 +101,9 @@ fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
 }
 
 #[cfg(not(test))]
-const MAP_SIZE: u64 = 0x100_0000; // ~16 Mb
+const MAP_SIZE: u64 = 0x1000_0000; // ~256 Mb
 #[cfg(not(test))]
-const MAP_MASK: u64 = !0xff_ffff;
+const MAP_MASK: u64 = !0xfff_ffff;
 #[cfg(test)]
 const MAP_SIZE: u64 = 0x10_000; // 16 pages
 #[cfg(test)]

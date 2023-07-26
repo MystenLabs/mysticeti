@@ -56,7 +56,10 @@ pub struct RealBlockHandler {
     authority: AuthorityIndex,
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
+    pending_transactions: usize,
 }
+
+const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
 
 impl RealBlockHandler {
     pub fn new(
@@ -75,21 +78,32 @@ impl RealBlockHandler {
             authority,
             metrics,
             receiver,
+            pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
         };
         (this, sender)
+    }
+}
+
+impl RealBlockHandler {
+    fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
+        if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
+            return None;
+        }
+        let received = self.receiver.try_recv().ok()?;
+        self.pending_transactions += received.len();
+        Some(received)
     }
 }
 
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
         let mut response = vec![];
-        let transaction_time = self.transaction_time.lock();
-        while let Ok(data) = self.receiver.try_recv() {
-            // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
+        while let Some(data) = self.receive_with_limit() {
             for tx in data {
                 response.push(BaseStatement::Share(tx));
             }
         }
+        let transaction_time = self.transaction_time.lock();
         for block in blocks {
             let processed =
                 self.transaction_votes
@@ -109,6 +123,8 @@ impl BlockHandler for RealBlockHandler {
     }
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+        // todo - this is not super efficient
+        self.pending_transactions -= block.shared_transactions().count();
         let mut transaction_time = self.transaction_time.lock();
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());

@@ -188,9 +188,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         loop {
             let notified = inner.notify.notified();
             let round = inner
-                .syncer
-                .read()
-                .last_own_block()
+                .block_store
+                .last_own_block_ref()
                 .map(|b| b.round())
                 .unwrap_or_default();
             select! {

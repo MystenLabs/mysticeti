@@ -396,6 +396,10 @@ impl<H: BlockHandler> Core<H> {
         &self.block_store
     }
 
+    pub fn last_own_block(&self) -> &Data<StatementBlock> {
+        &self.last_own_block.block
+    }
+
     pub fn last_proposed(&self) -> RoundNumber {
         self.last_own_block.block.round()
     }

@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
-    last_own_block: Option<Data<StatementBlock>>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
@@ -48,7 +47,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     ) -> Self {
         Self {
             core,
-            last_own_block: None,
             force_new_block: false,
             commit_period,
             signals,
@@ -83,8 +81,9 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .utilization_timer
             .utilization_timer("Syncer::try_new_block");
         if self.force_new_block || self.core.ready_new_block(self.commit_period) {
-            let Some(block) = self.core.try_new_block() else { return; };
-            self.last_own_block = Some(block);
+            if self.core.try_new_block().is_none() {
+                return;
+            }
             self.signals.new_block_ready();
             self.force_new_block = false;
 
@@ -109,10 +108,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.core
                 .write_commits(&commit_data, &self.commit_observer.aggregator_state());
         }
-    }
-
-    pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
-        self.last_own_block.clone()
     }
 
     pub fn commit_observer(&self) -> &C {
@@ -173,7 +168,7 @@ mod tests {
             // New block was created
             if self.signals {
                 self.signals = false;
-                let last_block = self.last_own_block().unwrap();
+                let last_block = self.core.last_own_block().clone();
                 Scheduler::schedule_event(
                     ROUND_TIMEOUT,
                     self.scheduler_state_id(),

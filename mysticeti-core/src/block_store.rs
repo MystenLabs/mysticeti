@@ -31,6 +31,7 @@ struct BlockStoreInner {
     highest_round: RoundNumber,
     authority: AuthorityIndex,
     last_seen_by_authority: Vec<RoundNumber>,
+    last_own_block: Option<BlockReference>,
 }
 
 pub trait BlockWriter {
@@ -192,6 +193,10 @@ impl BlockStore {
         self.inner.read().last_seen_by_authority(authority)
     }
 
+    pub fn last_own_block_ref(&self) -> Option<BlockReference> {
+        self.inner.read().last_own_block()
+    }
+
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
@@ -347,10 +352,17 @@ impl BlockStoreInner {
         if reference.authority != self.authority {
             return;
         }
+        if reference.round > self.last_own_block.map(|r| r.round).unwrap_or_default() {
+            self.last_own_block = Some(*reference);
+        }
         assert!(self
             .own_blocks
             .insert(reference.round, reference.digest)
             .is_none());
+    }
+
+    pub fn last_own_block(&self) -> Option<BlockReference> {
+        self.last_own_block
     }
 }
 

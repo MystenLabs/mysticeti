@@ -1,5 +1,6 @@
 use crate::block_store::BlockStore;
 use crate::committee::Committee;
+use crate::config::Parameters;
 use crate::core::Core;
 use crate::lock::MonitoredRwLock;
 use crate::network::{Connection, Network, NetworkMessage};
@@ -50,7 +51,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
-        let epoch_signal = core.epoch_close_signal();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -66,17 +66,18 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         );
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
-        epoch_signal.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
+        let (epoch_sender, epoch_receiver) = mpsc::channel(1);
+        epoch_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
             block_store,
             committee,
             stop: stop_sender.clone(),
-            epoch_close_signal: epoch_signal.clone(),
+            epoch_close_signal: epoch_sender.clone(),
         });
-        let main_task = handle.spawn(Self::run(network, inner.clone()));
-        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_signal);
+        let main_task = handle.spawn(Self::run(network, inner.clone(), epoch_receiver));
+        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
             inner,
             main_task,
@@ -96,10 +97,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner.syncer.into_inner()
     }
 
-    async fn run(mut network: Network, inner: Arc<NetworkSyncerInner<H, C>>) {
+    async fn run(
+        mut network: Network,
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        epoch_close_signal: mpsc::Receiver<()>,
+    ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
-        let leader_timeout_task = handle.spawn(Self::leader_timeout_task(inner.clone()));
+        let leader_timeout_task =
+            handle.spawn(Self::leader_timeout_task(inner.clone(), epoch_close_signal));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
@@ -188,7 +194,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
-    async fn leader_timeout_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
+    async fn leader_timeout_task(
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        mut epoch_close_signal: mpsc::Receiver<()>,
+    ) -> Option<()> {
         let leader_timeout = Duration::from_secs(1);
         loop {
             let notified = inner.notify.notified();
@@ -198,6 +207,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .last_own_block()
                 .map(|b| b.round())
                 .unwrap_or_default();
+            let shutdown_duration = if inner.syncer.read().core().epoch_closed() {
+                let closing_time = inner.syncer.read().core().epoch_closing_time();
+                Duration::from_secs(Parameters::SECONDS_AFTER_EPOCH)
+                    .saturating_sub(closing_time.elapsed())
+            } else {
+                // todo: ideally use Duration:Max but causes simulator to panic due to overflow
+                5 * leader_timeout // some duration longer than the leader timeout,
+            };
+            if Duration::is_zero(&shutdown_duration) {
+                return None;
+            }
             select! {
                 _sleep = runtime::sleep(leader_timeout) => {
                     tracing::debug!("Timeout {round}");
@@ -206,6 +226,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 _notified = notified => {
                     // restart loop
+                }
+                _epoch_shutdown = runtime::sleep(shutdown_duration) => {
+                    tracing::info!("Shutting down sync after epoch close");
+                    epoch_close_signal.close();
                 }
                 _stopped = inner.stopped() => {
                     return None;
@@ -367,7 +391,8 @@ mod tests {
         let mut any_closed = false;
         while !any_closed {
             for net_sync in network_syncers.iter() {
-                if let EpochStatus::Closed = net_sync.inner.syncer.read().core().epoch_status() {
+                if let EpochStatus::SafeToClose = net_sync.inner.syncer.read().core().epoch_status()
+                {
                     any_closed = true;
                 }
             }
@@ -377,7 +402,6 @@ mod tests {
         for net_sync in network_syncers.iter() {
             match net_sync.inner.syncer.read().core().epoch_status() {
                 EpochStatus::SafeToClose => epoch_safely_closed += 1,
-                EpochStatus::Closed => epoch_safely_closed += 1,
                 _ => (),
             };
         }

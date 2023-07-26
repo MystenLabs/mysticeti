@@ -8,6 +8,7 @@ pub use tokio::task::JoinHandle;
 pub use tokio::time::sleep;
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct TimeInstant(Instant);
 
 #[allow(dead_code)]

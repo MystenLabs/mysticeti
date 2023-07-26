@@ -8,7 +8,7 @@ use crate::config::Parameters;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
-use crate::runtime::timestamp_utc;
+use crate::runtime::{timestamp_utc, TimeInstant};
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{
@@ -25,7 +25,6 @@ use std::{
     cmp::max,
     collections::{HashSet, VecDeque},
 };
-use tokio::sync::mpsc;
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -44,7 +43,6 @@ pub struct Core<H: BlockHandler> {
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
-    epoch_close_sender: mpsc::Sender<()>,
 }
 
 pub struct CoreOptions {
@@ -123,8 +121,7 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
-        let (epoch_close_sender, epoch_close_receiver) = mpsc::channel(1);
-        let epoch_manager = EpochManager::new(epoch_close_receiver);
+        let epoch_manager = EpochManager::new();
 
         let mut this = Self {
             block_manager,
@@ -142,7 +139,6 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
-            epoch_close_sender,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -426,12 +422,16 @@ impl<H: BlockHandler> Core<H> {
         self.committee.elect_leader(round / period)
     }
 
-    pub fn epoch_close_signal(&self) -> mpsc::Sender<()> {
-        self.epoch_close_sender.clone()
-    }
-
     pub fn epoch_status(&self) -> EpochStatus {
         self.epoch_manager.epoch_status()
+    }
+
+    pub fn epoch_closed(&self) -> bool {
+        self.epoch_manager.closed()
+    }
+
+    pub fn epoch_closing_time(&self) -> TimeInstant {
+        self.epoch_manager.closing_time()
     }
 }
 

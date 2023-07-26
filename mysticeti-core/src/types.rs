@@ -37,24 +37,18 @@ pub enum Vote {
 pub enum EpochStatus {
     #[default]
     Open,
-    /// Change is triggered by an external deterministic mechanism
     BeginChange,
-    /// Epoch is safe to close when committed blocks from >= 2f+1 stake indicate epoch change
     SafeToClose,
-    /// Sync can be closed when >= f+1 stake consider the epoch safe to close
-    Closed,
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum InternalEpochStatus {
     #[default]
     Open,
     /// Change is triggered by an external deterministic mechanism
     BeginChange,
-    /// Epoch is safe to close when committed blocks from >= 2f+1 stake indicate epoch change
+    /// Epoch is safe to close -- committed blocks from >= 2f+1 stake indicate epoch change
     SafeToClose,
-    /// Sync can be closed when >= f+1 stake consider the epoch safe to close
-    Closed,
 }
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
@@ -528,7 +522,6 @@ impl CryptoHash for EpochStatus {
             EpochStatus::Open => [0].crypto_hash(state),
             EpochStatus::BeginChange => [1].crypto_hash(state),
             EpochStatus::SafeToClose => [2].crypto_hash(state),
-            EpochStatus::Closed => [3].crypto_hash(state),
         }
     }
 }

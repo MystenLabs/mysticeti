@@ -51,6 +51,7 @@ impl Parameters {
     pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
 
     pub const ROUNDS_IN_EPOCH: u64 = 3000;
+    pub const SECONDS_AFTER_EPOCH: u64 = 2;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

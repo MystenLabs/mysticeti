@@ -1,22 +1,20 @@
-use crate::committee::{Committee, QuorumThreshold, StakeAggregator, ValidityThreshold};
+use crate::committee::{Committee, QuorumThreshold, StakeAggregator};
 use crate::data::Data;
+use crate::runtime::TimeInstant;
 use crate::types::{EpochStatus, InternalEpochStatus, StatementBlock};
-use tokio::sync::mpsc;
 
 pub struct EpochManager {
     epoch_status: InternalEpochStatus,
     change_aggregator: StakeAggregator<QuorumThreshold>,
-    close_aggregator: StakeAggregator<ValidityThreshold>,
-    close_signal: mpsc::Receiver<()>,
+    epoch_close_time: TimeInstant,
 }
 
 impl EpochManager {
-    pub fn new(close_signal: mpsc::Receiver<()>) -> Self {
+    pub fn new() -> Self {
         Self {
             epoch_status: Default::default(),
             change_aggregator: StakeAggregator::new(),
-            close_aggregator: StakeAggregator::new(),
-            close_signal,
+            epoch_close_time: TimeInstant::now(),
         }
     }
 
@@ -32,7 +30,6 @@ impl EpochManager {
             InternalEpochStatus::Open => EpochStatus::Open,
             InternalEpochStatus::BeginChange => EpochStatus::BeginChange,
             InternalEpochStatus::SafeToClose => EpochStatus::SafeToClose,
-            InternalEpochStatus::Closed => EpochStatus::Closed,
         }
     }
 
@@ -40,20 +37,24 @@ impl EpochManager {
         match block.epoch_marker() {
             EpochStatus::Open => (),
             EpochStatus::BeginChange => {
-                if self.change_aggregator.add(block.author(), committee) {
+                let is_quorum = self.change_aggregator.add(block.author(), committee);
+                if is_quorum && (self.epoch_status != InternalEpochStatus::SafeToClose) {
+                    assert!(self.epoch_status == InternalEpochStatus::BeginChange); // Agreement and total ordering property of BA
                     self.epoch_status = InternalEpochStatus::SafeToClose;
+                    self.epoch_close_time = TimeInstant::now();
                     tracing::info!("Epoch is now safe to close");
                 }
             }
-            EpochStatus::SafeToClose => {
-                if self.close_aggregator.add(block.author(), committee) {
-                    self.epoch_status = InternalEpochStatus::Closed;
-                    tracing::info!("Epoch should be closed now");
-                }
-            }
-            EpochStatus::Closed => {
-                self.close_signal.close(); // corresponding senders unblock and allow all tasks to join
-            }
+            EpochStatus::SafeToClose => (), // other nodes may be shutting down sync soon
         }
+    }
+
+    pub fn closed(&self) -> bool {
+        self.epoch_status == InternalEpochStatus::SafeToClose
+    }
+
+    pub fn closing_time(&self) -> TimeInstant {
+        assert!(self.closed());
+        self.epoch_close_time.clone()
     }
 }

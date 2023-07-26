@@ -146,6 +146,10 @@ impl<H: BlockHandler> Core<H> {
 
     // Note that generally when you update this function you also want to change genesis initialization above
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::add_blocks");
         let processed = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
@@ -178,6 +182,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::try_new_block");
         let clock_round = self.threshold_clock.get_round();
         if clock_round <= self.last_proposed() {
             return None;

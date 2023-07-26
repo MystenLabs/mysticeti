@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_interpreter::CommittedSubDag;
+use crate::committee::Committee;
 use crate::data::Data;
 use crate::metrics::{Metrics, UtilizationTimerExt, UtilizationTimerVecExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};
@@ -29,6 +30,7 @@ struct BlockStoreInner {
     own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
     authority: AuthorityIndex,
+    last_seen_by_authority: Vec<RoundNumber>,
 }
 
 pub trait BlockWriter {
@@ -48,9 +50,12 @@ impl BlockStore {
         block_wal_reader: Arc<WalReader>,
         wal_writer: &WalWriter,
         metrics: Arc<Metrics>,
+        committee: &Committee,
     ) -> RecoveredState {
+        let last_seen_by_authority = committee.authorities().map(|_| 0).collect();
         let mut inner = BlockStoreInner {
             authority,
+            last_seen_by_authority,
             ..Default::default()
         };
         let mut builder = RecoveredStateBuilder::new();
@@ -183,6 +188,10 @@ impl BlockStore {
         self.read_index_vec(entries)
     }
 
+    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
+        self.inner.read().last_seen_by_authority(authority)
+    }
+
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
         match entry {
             IndexEntry::WalPosition(position) => {
@@ -284,16 +293,35 @@ impl BlockStoreInner {
         let map = self.index.entry(reference.round()).or_default();
         map.insert(reference.author_digest(), IndexEntry::WalPosition(position));
         self.add_own_index(reference);
+        self.update_last_seen_by_authority(reference);
     }
 
     pub fn add_loaded(&mut self, position: WalPosition, block: Data<StatementBlock>) {
         self.highest_round = max(self.highest_round, block.round());
         self.add_own_index(block.reference());
+        self.update_last_seen_by_authority(block.reference());
         let map = self.index.entry(block.round()).or_default();
         map.insert(
             (block.author(), block.digest()),
             IndexEntry::Loaded(position, block),
         );
+    }
+
+    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
+        *self
+            .last_seen_by_authority
+            .get(authority as usize)
+            .expect("last_seen_by_authority not found")
+    }
+
+    fn update_last_seen_by_authority(&mut self, reference: &BlockReference) {
+        let last_seen = self
+            .last_seen_by_authority
+            .get_mut(reference.authority as usize)
+            .expect("last_seen_by_authority not found");
+        if reference.round() > *last_seen {
+            *last_seen = reference.round();
+        }
     }
 
     pub fn get_own_blocks(&self, from_excluded: RoundNumber, limit: usize) -> Vec<IndexEntry> {

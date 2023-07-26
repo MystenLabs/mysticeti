@@ -265,10 +265,16 @@ pub struct TestBlockWriter {
 }
 
 impl TestBlockWriter {
-    pub fn new() -> Self {
+    pub fn new(committee: &Committee) -> Self {
         let file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(file).unwrap();
-        let state = BlockStore::open(0, Arc::new(wal_reader), &wal_writer, test_metrics());
+        let state = BlockStore::open(
+            0,
+            Arc::new(wal_reader),
+            &wal_writer,
+            test_metrics(),
+            committee,
+        );
         let block_store = state.block_store;
         Self {
             block_store,
@@ -307,11 +313,5 @@ impl BlockWriter for TestBlockWriter {
 
     fn insert_own_block(&mut self, block: &OwnBlockData) {
         (&mut self.wal_writer, &self.block_store).insert_own_block(block)
-    }
-}
-
-impl Default for TestBlockWriter {
-    fn default() -> Self {
-        Self::new()
     }
 }

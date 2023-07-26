@@ -119,8 +119,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner: Arc<NetworkSyncerInner<H, C>>,
     ) -> Option<()> {
         let last_seen = inner
-            .syncer
-            .read()
+            .block_store
             .last_seen_by_authority(connection.peer_id as AuthorityIndex);
         connection
             .sender

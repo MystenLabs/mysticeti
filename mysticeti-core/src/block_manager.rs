@@ -103,7 +103,7 @@ mod tests {
             Dag::draw("A1:[A0, B0]; B1:[A0, B0]; B2:[A0, B1]; A2:[A1, B2]").add_genesis_blocks();
         assert_eq!(dag.len(), 6); // 4 blocks in dag + 2 genesis
         for seed in 0..100u8 {
-            let mut block_writer = TestBlockWriter::new();
+            let mut block_writer = TestBlockWriter::new(&dag.committee());
             println!("Seed {seed}");
             let iter = dag.random_iter(&mut rng(seed));
             let mut bm = BlockManager::new(block_writer.block_store());

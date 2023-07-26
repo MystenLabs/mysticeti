@@ -6,7 +6,7 @@ use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use minibytes::Bytes;
 use std::collections::HashSet;
@@ -15,7 +15,6 @@ use std::sync::Arc;
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
     last_own_block: Option<Data<StatementBlock>>,
-    last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
@@ -47,7 +46,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
-        let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
             last_own_block: None,
@@ -55,7 +53,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             commit_period,
             signals,
             commit_observer,
-            last_seen_by_authority,
             metrics,
         }
     }
@@ -65,16 +62,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
-        let processed = self.core.add_blocks(blocks);
-        for block in processed {
-            let last_seen = self
-                .last_seen_by_authority
-                .get_mut(block.author() as usize)
-                .expect("last_seen_by_authority not found");
-            if block.round() > *last_seen {
-                *last_seen = block.round();
-            }
-        }
+        self.core.add_blocks(blocks);
         self.try_new_block();
     }
 
@@ -125,13 +113,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
 
     pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
         self.last_own_block.clone()
-    }
-
-    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
-        *self
-            .last_seen_by_authority
-            .get(authority as usize)
-            .expect("last_seen_by_authority not found")
     }
 
     pub fn commit_observer(&self) -> &C {

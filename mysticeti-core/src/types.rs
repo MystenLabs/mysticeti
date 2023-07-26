@@ -527,6 +527,7 @@ mod test {
     use rand::prelude::SliceRandom;
     use rand::Rng;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
     pub struct Dag(HashMap<BlockReference, Data<StatementBlock>>);
 
@@ -610,6 +611,10 @@ mod test {
                 }
             }
             authorities
+        }
+
+        pub fn committee(&self) -> Arc<Committee> {
+            Committee::new_test(vec![1; self.authorities().len()])
         }
     }
 

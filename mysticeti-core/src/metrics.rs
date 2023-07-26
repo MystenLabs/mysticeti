@@ -40,6 +40,7 @@ pub struct Metrics {
     pub block_store_unloaded_blocks: IntCounter,
     pub block_store_loaded_blocks: IntCounter,
     pub block_store_entries: IntCounter,
+    pub block_store_cleanup_util: IntCounter,
 
     pub wal_mappings: IntGauge,
 
@@ -47,6 +48,7 @@ pub struct Metrics {
     pub core_lock_wait: IntCounter,
 
     pub block_handler_pending_certificates: IntGauge,
+    pub block_handler_cleanup_util: IntCounter,
 
     pub commit_handler_pending_certificates: IntGauge,
 
@@ -218,6 +220,12 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
+            block_store_cleanup_util: register_int_counter_with_registry!(
+                "block_store_cleanup_util",
+                "block_store_cleanup_util",
+                registry,
+            )
+            .unwrap(),
 
             wal_mappings: register_int_gauge_with_registry!(
                 "wal_mappings",
@@ -242,6 +250,12 @@ impl Metrics {
             block_handler_pending_certificates: register_int_gauge_with_registry!(
                 "block_handler_pending_certificates",
                 "Number of pending certificates in block handler",
+                registry,
+            )
+            .unwrap(),
+            block_handler_cleanup_util: register_int_counter_with_registry!(
+                "block_handler_cleanup_util",
+                "block_handler_cleanup_util",
                 registry,
             )
             .unwrap(),

@@ -8,6 +8,7 @@ use crate::committee::{
 use crate::config::StorageDir;
 use crate::data::Data;
 use crate::log::TransactionLog;
+use crate::metrics::UtilizationTimerExt;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
@@ -142,6 +143,7 @@ impl BlockHandler for RealBlockHandler {
     }
 
     fn cleanup(&self) {
+        let _timer = self.metrics.block_handler_cleanup_util.utilization_timer();
         // todo - all of this should go away and we should measure tx latency differently
         let mut l = self.transaction_time.lock();
         l.retain(|_k, v| v.elapsed() < Duration::from_secs(10));

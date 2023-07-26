@@ -4,6 +4,7 @@
 use crate::block_store::{BlockStore, CommitData};
 use crate::core::Core;
 use crate::data::Data;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
@@ -85,6 +86,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     }
 
     fn try_new_block(&mut self) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Syncer::try_new_block");
         if self.force_new_block || self.core.ready_new_block(self.commit_period) {
             let Some(block) = self.core.try_new_block() else { return; };
             self.last_own_block = Some(block);

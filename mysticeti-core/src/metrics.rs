@@ -61,6 +61,8 @@ pub struct Metrics {
     pub proposed_block_vote_count: HistogramSender<usize>,
 
     pub connection_latency_sender: Vec<HistogramSender<Duration>>,
+
+    pub utilization_timer: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -267,6 +269,14 @@ impl Metrics {
             )
             .unwrap(),
 
+            utilization_timer: register_int_counter_vec_with_registry!(
+                "utilization_timer",
+                "Utilization timer",
+                &["proc"],
+                registry,
+            )
+            .unwrap(),
+
             transaction_certified_latency,
             certificate_committed_latency,
             transaction_committed_latency,
@@ -437,6 +447,11 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
 
 pub trait UtilizationTimerExt {
     fn utilization_timer(&self) -> UtilizationTimer;
+    fn owned_utilization_timer(&self) -> OwnedUtilizationTimer;
+}
+
+pub trait UtilizationTimerVecExt {
+    fn utilization_timer(&self, label: &str) -> OwnedUtilizationTimer;
 }
 
 impl UtilizationTimerExt for IntCounter {
@@ -446,6 +461,19 @@ impl UtilizationTimerExt for IntCounter {
             start: Instant::now(),
         }
     }
+
+    fn owned_utilization_timer(&self) -> OwnedUtilizationTimer {
+        OwnedUtilizationTimer {
+            metric: self.clone(),
+            start: Instant::now(),
+        }
+    }
+}
+
+impl UtilizationTimerVecExt for IntCounterVec {
+    fn utilization_timer(&self, label: &str) -> OwnedUtilizationTimer {
+        self.with_label_values(&[label]).owned_utilization_timer()
+    }
 }
 
 pub struct UtilizationTimer<'a> {
@@ -453,7 +481,18 @@ pub struct UtilizationTimer<'a> {
     start: Instant,
 }
 
+pub struct OwnedUtilizationTimer {
+    metric: IntCounter,
+    start: Instant,
+}
+
 impl<'a> Drop for UtilizationTimer<'a> {
+    fn drop(&mut self) {
+        self.metric.inc_by(self.start.elapsed().as_micros() as u64);
+    }
+}
+
+impl Drop for OwnedUtilizationTimer {
     fn drop(&mut self) {
         self.metric.inc_by(self.start.elapsed().as_micros() as u64);
     }

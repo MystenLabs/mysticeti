@@ -3,7 +3,7 @@
 
 use crate::commit_interpreter::CommittedSubDag;
 use crate::data::Data;
-use crate::metrics::{Metrics, UtilizationTimerExt};
+use crate::metrics::{Metrics, UtilizationTimerExt, UtilizationTimerVecExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -336,6 +336,11 @@ pub const WAL_ENTRY_COMMIT: Tag = 5;
 
 impl BlockWriter for (&mut WalWriter, &BlockStore) {
     fn insert_block(&mut self, block: Data<StatementBlock>) -> WalPosition {
+        let _timer = self
+            .1
+            .metrics
+            .utilization_timer
+            .utilization_timer("BlockStore::insert_block");
         let pos = self
             .0
             .write(WAL_ENTRY_BLOCK, block.serialized_bytes())
@@ -345,6 +350,11 @@ impl BlockWriter for (&mut WalWriter, &BlockStore) {
     }
 
     fn insert_own_block(&mut self, data: &OwnBlockData) {
+        let _timer = self
+            .1
+            .metrics
+            .utilization_timer
+            .utilization_timer("BlockStore::insert_own_block");
         let block_pos = data.write_to_wal(self.0);
         self.1.insert_block(data.block.clone(), block_pos);
     }

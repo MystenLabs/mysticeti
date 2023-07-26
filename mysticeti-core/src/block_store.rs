@@ -3,7 +3,7 @@
 
 use crate::commit_interpreter::CommittedSubDag;
 use crate::data::Data;
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -165,6 +165,7 @@ impl BlockStore {
         if threshold_round == 0 {
             return;
         }
+        let _timer = self.metrics.block_store_cleanup_util.utilization_timer();
         let unloaded = self.inner.write().unload_below_round(threshold_round);
         self.metrics
             .block_store_unloaded_blocks

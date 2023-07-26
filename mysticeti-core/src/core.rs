@@ -5,6 +5,7 @@ use crate::block_store::{
 use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
@@ -161,6 +162,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::run_block_handler");
         let statements = self.block_handler.handle_blocks(processed);
         let serialized_statements =
             bincode::serialize(&statements).expect("Payload serialization failed");

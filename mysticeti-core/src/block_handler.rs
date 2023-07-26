@@ -9,6 +9,7 @@ use crate::config::StorageDir;
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
@@ -98,6 +99,10 @@ impl RealBlockHandler {
 
 impl BlockHandler for RealBlockHandler {
     fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("BlockHandler::handle_blocks");
         let mut response = vec![];
         while let Some(data) = self.receive_with_limit() {
             for tx in data {

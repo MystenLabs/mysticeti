@@ -341,6 +341,13 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_state(&mut self) {
+        #[cfg(feature = "simulator")]
+        if self.block_handler().state().len() >= crate::wal::MAX_ENTRY_SIZE {
+            // todo - this is something needs a proper fix
+            // Need to revisit this after we have a proper synchronizer
+            // We need to put some limit/backpressure on the accumulator state
+            return;
+        }
         self.wal_writer
             .write(WAL_ENTRY_STATE, &self.block_handler().state())
             .expect("Write to wal has failed");

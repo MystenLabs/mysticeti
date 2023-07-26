@@ -182,7 +182,7 @@ struct WorkerConnection {
 impl Worker {
     const ACTIVE_HANDSHAKE: u64 = 0xFEFE0000;
     const PASSIVE_HANDSHAKE: u64 = 0x0000AEAE;
-    const MAX_SIZE: u32 = 16 * 1024 * 1024;
+    const MAX_SIZE: u32 = 256 * 1024 * 1024;
 
     async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
         let initial_delay = if self.active_immediately {

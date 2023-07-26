@@ -212,8 +212,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 Duration::from_secs(Parameters::SECONDS_AFTER_EPOCH)
                     .saturating_sub(closing_time.elapsed())
             } else {
-                // todo: ideally use Duration:Max but causes simulator to panic due to overflow
-                5 * leader_timeout // some duration longer than the leader timeout,
+                Duration::MAX
             };
             if Duration::is_zero(&shutdown_duration) {
                 return None;

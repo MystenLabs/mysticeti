@@ -400,9 +400,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         // many ssh connections for too long.
         let commit = &self.settings.repository.commit;
         let command = [
-            "git fetch -f",
-            &format!("(git checkout -b {commit} {commit} || git checkout -f {commit})"),
-            "(git pull -f || true)",
+            &format!("git fetch origin {commit}"),
+            &format!("(git checkout -b {commit} {commit} || git checkout origin/{commit})"),
             "source $HOME/.cargo/env",
             "cargo build --release",
         ]

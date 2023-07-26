@@ -375,6 +375,10 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommitData> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("CommitObserver::handle_commit");
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);

@@ -303,6 +303,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::try_commit");
         // todo only create committer once
         let sequence = Committer::new(
             self.committee.clone(),
@@ -354,6 +358,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_state(&mut self) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::write_state");
         #[cfg(feature = "simulator")]
         if self.block_handler().state().len() >= crate::wal::MAX_ENTRY_SIZE {
             // todo - this is something needs a proper fix
@@ -367,6 +375,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_commits(&mut self, commits: &[CommitData], state: &Bytes) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::write_commits");
         let commits = bincode::serialize(&(commits, state)).expect("Commits serialization failed");
         self.wal_writer
             .write(WAL_ENTRY_COMMIT, &commits)

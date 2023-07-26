@@ -1,0 +1,11 @@
+name: check.sh
+run-name: Check.sh started by ${{ github.actor }}
+on: [push]
+jobs:
+  check-sh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: rustup component add rustfmt
+      - run: rustup component add clippy
+      - run: ./check.sh

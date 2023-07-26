@@ -65,6 +65,7 @@ impl<H: BlockHandler> Core<H> {
             Arc::new(wal_reader),
             &wal_writer,
             metrics.clone(),
+            &committee,
         );
         let RecoveredState {
             block_store,

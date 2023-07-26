@@ -45,7 +45,8 @@ pub struct Metrics {
     pub wal_mappings: IntGauge,
 
     pub core_lock_util: IntCounter,
-    pub core_lock_wait: IntCounter,
+    pub core_lock_enqueued: IntCounter,
+    pub core_lock_dequeued: IntCounter,
 
     pub block_handler_pending_certificates: IntGauge,
     pub block_handler_cleanup_util: IntCounter,
@@ -242,9 +243,15 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
-            core_lock_wait: register_int_counter_with_registry!(
-                "core_lock_wait",
-                "Time to wait for core lock",
+            core_lock_enqueued: register_int_counter_with_registry!(
+                "core_lock_enqueued",
+                "Number of enqueued core requests",
+                registry,
+            )
+            .unwrap(),
+            core_lock_dequeued: register_int_counter_with_registry!(
+                "core_lock_dequeued",
+                "Number of dequeued core requests",
                 registry,
             )
             .unwrap(),

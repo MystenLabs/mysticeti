@@ -31,7 +31,9 @@ pub mod validator;
 mod wal;
 
 mod block_store;
+mod core_thread;
 mod crypto;
+#[allow(dead_code)] // todo - delete if unused after a while
 mod lock;
 mod log;
 mod serde;

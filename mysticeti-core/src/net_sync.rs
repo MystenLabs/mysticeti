@@ -1,7 +1,7 @@
 use crate::block_store::BlockStore;
 use crate::committee::Committee;
 use crate::core::Core;
-use crate::lock::MonitoredRwLock;
+use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime;
 use crate::runtime::Handle;
@@ -26,7 +26,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 }
 
 struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
-    syncer: MonitoredRwLock<Syncer<H, Arc<Notify>, C>>,
+    syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
     block_store: BlockStore,
     notify: Arc<Notify>,
     committee: Arc<Committee>,
@@ -57,11 +57,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             metrics.clone(),
         );
         syncer.force_new_block(0);
-        let syncer = MonitoredRwLock::new(
-            syncer,
-            metrics.core_lock_util.clone(),
-            metrics.core_lock_wait.clone(),
-        );
+        let syncer = CoreThreadDispatcher::start(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {
@@ -89,7 +85,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
-        inner.syncer.into_inner()
+        inner.syncer.stop()
     }
 
     async fn run(mut network: Network, inner: Arc<NetworkSyncerInner<H, C>>) {
@@ -156,7 +152,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         return None;
                     }
-                    inner.syncer.write().add_blocks(vec![block]);
+                    inner.syncer.add_blocks(vec![block]).await;
                 }
             }
         }
@@ -196,7 +192,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 _sleep = runtime::sleep(leader_timeout) => {
                     tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
-                    inner.syncer.write().force_new_block(round);
+                    inner.syncer.force_new_block(round).await;
                 }
                 _notified = notified => {
                     // restart loop
@@ -214,7 +210,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             select! {
                 _sleep = runtime::sleep(cleanup_interval) => {
                     // Keep read lock for everything else
-                    inner.syncer.read().core().cleanup();
+                    inner.syncer.cleanup().await;
                 }
                 _stopped = inner.stopped() => {
                     return None;

@@ -220,4 +220,38 @@ mod test {
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }
+
+    /// Ensure that honest validators commit despite the presence of a crash fault.
+    #[tokio::test]
+    async fn validator_crash_faults() {
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips);
+
+        let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_smoke_test").unwrap();
+        for i in 1..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(authority, committee.clone(), &parameters, private)
+                .await
+                .unwrap();
+            handles.push(validator.await_completion());
+        }
+
+        let addresses = parameters
+            .all_metric_addresses()
+            .skip(0)
+            .map(|address| address.to_owned())
+            .collect();
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
+
+        tokio::select! {
+            _ = await_for_commits(addresses) => (),
+            _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
 }

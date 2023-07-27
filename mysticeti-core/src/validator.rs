@@ -176,7 +176,7 @@ mod test {
         Ok(commit)
     }
 
-    /// Await fro all the validators specified by their metrics addresses to commit.
+    /// Await for all the validators specified by their metrics addresses to commit.
     async fn await_for_commits(addresses: Vec<SocketAddr>) {
         let mut queue = VecDeque::from(addresses);
         while let Some(address) = queue.pop_front() {
@@ -217,6 +217,63 @@ mod test {
 
         tokio::select! {
             _ = await_for_commits(addresses) => (),
+            _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
+
+    /// Ensure validators can sync missing blocks
+    #[tokio::test]
+    async fn validator_sync() {
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips);
+
+        let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_sync").unwrap();
+
+        // Boot all validators but one.
+        for i in 1..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(authority, committee.clone(), &parameters, private)
+                .await
+                .unwrap();
+            handles.push(validator.await_completion());
+        }
+
+        // Boot the last validator after they others commit.
+        let addresses = parameters
+            .all_metric_addresses()
+            .skip(1)
+            .map(|address| address.to_owned())
+            .collect();
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
+        println!("addresses: {:?}", addresses);
+        tokio::select! {
+            _ = await_for_commits(addresses) => (),
+            _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+
+        // Boot the last validator.
+        let authority = 0 as AuthorityIndex;
+        let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+        let validator = Validator::start(authority, committee.clone(), &parameters, private)
+            .await
+            .unwrap();
+        handles.push(validator.await_completion());
+
+        // Ensure the last validator commits.
+        let address = parameters
+            .all_metric_addresses()
+            .next()
+            .map(|address| address.to_owned())
+            .unwrap();
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
+        tokio::select! {
+            _ = await_for_commits(vec![address]) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }

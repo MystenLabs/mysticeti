@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crc::{Crc, CRC_32_CKSUM};
 use memmap2::{Mmap, MmapOptions};
 use minibytes::Bytes;
 use parking_lot::Mutex;
@@ -113,10 +112,7 @@ const _: () = assert_constants();
 
 pub const MAX_ENTRY_SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize;
 
-const CRC: Crc<u32> = Crc::<u32>::new(
-    // todo - we still allocate 64 bits for crc in wal header, reconsider it
-    &CRC_32_CKSUM, /*selection of algorithm here is mostly random*/
-);
+// todo - we still allocate 64 bits for crc in wal header, reconsider it
 const HEADER_LEN_BYTES: u64 = 8 + 8;
 // CRC and length
 const HEADER_LEN_BYTES_USIZE: usize = HEADER_LEN_BYTES as usize;
@@ -180,7 +176,7 @@ impl WalWriter {
             debug_assert_eq!(offset(self.pos), self.pos);
             debug_assert_eq!(offset(self.pos), offset(self.pos + len - 1));
         }
-        let mut crc = CRC.digest();
+        let mut crc = crc32fast::Hasher::new();
         for slice in v {
             crc.update(slice);
         }
@@ -255,7 +251,7 @@ impl WalReader {
             );
         }
         let bytes = bytes.slice(buf_offset + HEADER_LEN_BYTES_USIZE..buf_offset + (len as usize));
-        let actual_crc = CRC.checksum(bytes.as_ref()) as u64;
+        let actual_crc = crc32fast::hash(bytes.as_ref()) as u64;
         if actual_crc != crc {
             // todo - return error
             panic!(

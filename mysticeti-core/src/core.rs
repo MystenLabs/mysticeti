@@ -400,6 +400,10 @@ impl<H: BlockHandler> Core<H> {
         &self.block_handler
     }
 
+    pub fn block_manager(&self) -> &BlockManager {
+        &self.block_manager
+    }
+
     pub fn block_handler_mut(&mut self) -> &mut H {
         &mut self.block_handler
     }

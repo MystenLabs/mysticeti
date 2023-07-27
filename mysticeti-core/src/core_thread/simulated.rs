@@ -1,9 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::{HashMap, HashSet};
+
 use crate::block_handler::BlockHandler;
 use crate::data::Data;
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::types::AuthorityIndex;
+use crate::types::BlockReference;
 use crate::types::{RoundNumber, StatementBlock};
 use parking_lot::Mutex;
 
@@ -34,5 +38,14 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
 
     pub async fn cleanup(&self) {
         self.syncer.lock().core().cleanup();
+    }
+
+    pub async fn get_missing_blocks(&self) -> HashMap<AuthorityIndex, HashSet<BlockReference>> {
+        self.syncer
+            .lock()
+            .core()
+            .block_manager()
+            .missing_blocks()
+            .clone()
     }
 }

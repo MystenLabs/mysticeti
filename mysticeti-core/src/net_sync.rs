@@ -1,4 +1,3 @@
-use crate::committee::Committee;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
@@ -11,6 +10,7 @@ use crate::types::AuthorityIndex;
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
+use crate::{committee::Committee, synchronizer::BlockFetcher};
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 }
 
 pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
-    syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
+    pub syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
     committee: Arc<Committee>,
@@ -41,6 +41,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
+        let authority_index = core.authority();
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
         // todo - ugly, probably need to merge syncer and core
@@ -67,7 +68,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             committee,
             stop: stop_sender.clone(),
         });
-        let main_task = handle.spawn(Self::run(network, inner.clone()));
+        let block_fetcher = Arc::new(BlockFetcher::new(authority_index, inner.clone()));
+        let main_task = handle.spawn(Self::run(network, inner.clone(), block_fetcher));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         Self {
             inner,
@@ -88,7 +90,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner.syncer.stop()
     }
 
-    async fn run(mut network: Network, inner: Arc<NetworkSyncerInner<H, C>>) {
+    async fn run(
+        mut network: Network,
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        block_fetcher: Arc<BlockFetcher>,
+    ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
         let leader_timeout_task = handle.spawn(Self::leader_timeout_task(inner.clone()));
@@ -99,7 +105,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 // wait until previous sync task completes
                 task.await.ok();
             }
-            let task = handle.spawn(Self::connection_task(connection, inner.clone()));
+
+            let sender = connection.sender.clone();
+            let authority = peer_id as AuthorityIndex;
+            block_fetcher.register_authority(authority, sender).await;
+
+            let task = handle.spawn(Self::connection_task(
+                connection,
+                inner.clone(),
+                block_fetcher.clone(),
+            ));
             connections.insert(peer_id, task);
         }
         join_all(
@@ -108,11 +123,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .chain([leader_timeout_task, cleanup_task].into_iter()),
         )
         .await;
+        Arc::try_unwrap(block_fetcher)
+            .unwrap_or_else(|_| panic!("Failed to drop all connections"))
+            .shutdown()
+            .await;
     }
 
     async fn connection_task(
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
+        block_fetcher: Arc<BlockFetcher>,
     ) -> Option<()> {
         let last_seen = inner
             .block_store
@@ -156,6 +176,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             }
         }
         disseminator.cleanup().await;
+        let id = connection.peer_id as AuthorityIndex;
+        block_fetcher.remove_authority(id).await;
         None
     }
 
@@ -365,6 +387,35 @@ mod sim_tests {
     // All peers except for peer A are connected in this test. Peer A is disconnected from everyone
     // except for peer B. This test ensures that A eventually manages to commit by syncing with B.
     async fn test_network_partition_async() {
+        let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
+        // Disconnect all A from all peers except for B.
+        simulated_network
+            .connect_some(|a, b| a != 0 || (a == 0 && b == 1))
+            .await;
+
+        println!("Started");
+        runtime::sleep(Duration::from_secs(40)).await;
+        println!("Done");
+        let mut syncers = vec![];
+        for network_syncer in network_syncers {
+            let syncer = network_syncer.shutdown().await;
+            syncers.push(syncer);
+        }
+
+        // Ensure no conflicts.
+        check_commits(&syncers);
+        print_stats(&syncers, &mut reporters);
+    }
+
+    #[test]
+    fn test_network_synchronize() {
+        setup_simulator_tracing();
+        SimulatedExecutorState::run(rng_at_seed(0), test_network_synchronize_async());
+    }
+
+    // All peers except for peer A are connected in this test. Peer A is disconnected from everyone
+    // except for peer B. This test ensures that A eventually manages to commit by syncing with B.
+    async fn test_network_synchronize_async() {
         let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
         // Disconnect all A from all peers except for B.
         simulated_network

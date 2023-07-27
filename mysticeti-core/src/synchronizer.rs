@@ -1,9 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use futures::future::join_all;
+use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -178,132 +179,131 @@ where
     }
 }
 
-// enum BlockFetcherMessage {
-//     RegisterAuthority(AuthorityIndex, mpsc::Sender<NetworkMessage>),
-//     RemoveAuthority(AuthorityIndex),
-// }
+enum BlockFetcherMessage {
+    RegisterAuthority(AuthorityIndex, mpsc::Sender<NetworkMessage>),
+    RemoveAuthority(AuthorityIndex),
+}
 
-// pub struct BlockFetcher {
-//     sender: mpsc::Sender<BlockFetcherMessage>,
-//     handle: JoinHandle<Option<()>>,
-// }
+pub struct BlockFetcher {
+    sender: mpsc::Sender<BlockFetcherMessage>,
+    handle: JoinHandle<Option<()>>,
+}
 
-// impl BlockFetcher {
-//     pub fn new<B, C>(inner: Arc<NetworkSyncerInner<B, C>>) -> Self
-//     where
-//         B: BlockHandler + 'static,
-//         C: CommitObserver + 'static,
-//     {
-//         let (sender, receiver) = mpsc::channel(100);
-//         let worker = BlockFetcherWorker::new(inner, receiver);
-//         let handle = Handle::current().spawn(worker.run());
-//         Self { sender, handle }
-//     }
+impl BlockFetcher {
+    pub fn new<B, C>(id: AuthorityIndex, inner: Arc<NetworkSyncerInner<B, C>>) -> Self
+    where
+        B: BlockHandler + 'static,
+        C: CommitObserver + 'static,
+    {
+        let (sender, receiver) = mpsc::channel(100);
+        let worker = BlockFetcherWorker::new(id, inner, receiver);
+        let handle = Handle::current().spawn(worker.run());
+        Self { sender, handle }
+    }
 
-//     pub async fn register_authority(
-//         &self,
-//         authority: AuthorityIndex,
-//         sender: mpsc::Sender<NetworkMessage>,
-//     ) {
-//         self.sender
-//             .send(BlockFetcherMessage::RegisterAuthority(authority, sender))
-//             .await
-//             .ok();
-//     }
+    pub async fn register_authority(
+        &self,
+        authority: AuthorityIndex,
+        sender: mpsc::Sender<NetworkMessage>,
+    ) {
+        self.sender
+            .send(BlockFetcherMessage::RegisterAuthority(authority, sender))
+            .await
+            .ok();
+    }
 
-//     pub async fn remove_authority(&self, authority: AuthorityIndex) {
-//         self.sender
-//             .send(BlockFetcherMessage::RemoveAuthority(authority))
-//             .await
-//             .ok();
-//     }
+    pub async fn remove_authority(&self, authority: AuthorityIndex) {
+        self.sender
+            .send(BlockFetcherMessage::RemoveAuthority(authority))
+            .await
+            .ok();
+    }
 
-//     pub async fn shutdown(self) {
-//         self.handle.abort();
-//         self.handle.await.ok();
-//     }
-// }
+    pub async fn shutdown(self) {
+        self.handle.abort();
+        self.handle.await.ok();
+    }
+}
 
-// struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
-//     id: AuthorityIndex,
-//     inner: Arc<NetworkSyncerInner<B, C>>,
-//     receiver: mpsc::Receiver<BlockFetcherMessage>,
-//     senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
-//     parameters: SynchronizerParameters,
-// }
+struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
+    id: AuthorityIndex,
+    inner: Arc<NetworkSyncerInner<B, C>>,
+    receiver: mpsc::Receiver<BlockFetcherMessage>,
+    senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
+    parameters: SynchronizerParameters,
+}
 
-// impl<B, C> BlockFetcherWorker<B, C>
-// where
-//     B: BlockHandler + 'static,
-//     C: CommitObserver + 'static,
-// {
-//     pub fn new(
-//         inner: Arc<NetworkSyncerInner<B, C>>,
-//         receiver: mpsc::Receiver<BlockFetcherMessage>,
-//     ) -> Self {
-//         let id = inner.syncer.read().core().authority();
-//         Self {
-//             id,
-//             inner,
-//             receiver,
-//             senders: Default::default(),
-//             parameters: Default::default(),
-//         }
-//     }
+impl<B, C> BlockFetcherWorker<B, C>
+where
+    B: BlockHandler + 'static,
+    C: CommitObserver + 'static,
+{
+    pub fn new(
+        id: AuthorityIndex,
+        inner: Arc<NetworkSyncerInner<B, C>>,
+        receiver: mpsc::Receiver<BlockFetcherMessage>,
+    ) -> Self {
+        Self {
+            id,
+            inner,
+            receiver,
+            senders: Default::default(),
+            parameters: Default::default(),
+        }
+    }
 
-//     async fn run(mut self) -> Option<()> {
-//         loop {
-//             tokio::select! {
-//                 _ = sleep(self.parameters.sample_precision) => {
-//                     for (peer, message) in self.sync_strategy().await {
-//                         let sender = self.senders.get(&peer).unwrap();
-//                         sender.send(message).await.ok()?;
-//                     }
-//                 },
-//                 message = self.receiver.recv() => {
-//                     match message {
-//                         Some(BlockFetcherMessage::RegisterAuthority(authority, sender)) => {
-//                             self.senders.insert(authority, sender);
-//                         },
-//                         Some(BlockFetcherMessage::RemoveAuthority(authority)) => {
-//                             self.senders.remove(&authority);
-//                         },
-//                         None => return None,
-//                     }
-//                 }
-//             }
-//         }
-//     }
+    async fn run(mut self) -> Option<()> {
+        loop {
+            tokio::select! {
+                _ = sleep(self.parameters.sample_precision) => {
+                    for (peer, message) in self.sync_strategy().await {
+                        let sender = self.senders.get(&peer).unwrap();
+                        sender.send(message).await.ok()?;
+                    }
+                },
+                message = self.receiver.recv() => {
+                    match message {
+                        Some(BlockFetcherMessage::RegisterAuthority(authority, sender)) => {
+                            self.senders.insert(authority, sender);
+                        },
+                        Some(BlockFetcherMessage::RemoveAuthority(authority)) => {
+                            self.senders.remove(&authority);
+                        },
+                        None => return None,
+                    }
+                }
+            }
+        }
+    }
 
-//     /// A simple and naive strategy that requests missing blocks from random peers.
-//     async fn sync_strategy(&self) -> Vec<(u64, NetworkMessage)> {
-//         let mut to_request = Vec::new();
-//         let syncer = self.inner.syncer.read();
-//         let missing_blocks = syncer.core().block_manager().missing_blocks();
-//         for missing in missing_blocks.values() {
-//             // TODO: If we are missing many blocks from the same authority
-//             // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
-//             // we have a network partition. We should try to find an other peer from which
-//             // to (temporarily) sync the blocks from that authority.
+    /// A simple and naive strategy that requests missing blocks from random peers.
+    async fn sync_strategy(&self) -> Vec<(u64, NetworkMessage)> {
+        let mut to_request = Vec::new();
+        let missing_blocks = self.inner.syncer.get_missing_blocks().await;
+        for missing in missing_blocks.values() {
+            // TODO: If we are missing many blocks from the same authority
+            // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
+            // we have a network partition. We should try to find an other peer from which
+            // to (temporarily) sync the blocks from that authority.
 
-//             to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
-//         }
+            to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
+        }
 
-//         let mut messages = Vec::new();
-//         for chunks in to_request.chunks(self.parameters.maximum_block_request) {
-//             let Some(peer) = self.sample_peer(&[self.id]) else { break };
-//             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-//             messages.push((peer, message));
-//         }
-//         messages
-//     }
+        let mut messages = Vec::new();
+        for chunks in to_request.chunks(self.parameters.maximum_block_request) {
+            let Some(peer) = self.sample_peer(&[self.id]) else { break };
+            let message = NetworkMessage::RequestBlocks(chunks.to_vec());
+            messages.push((peer, message));
+        }
+        messages
+    }
 
-//     fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<AuthorityIndex> {
-//         self.senders
-//             .keys()
-//             .filter(|&index| !except.contains(index))
-//             .collect::<Vec<_>>()
-//             .choose(&mut thread_rng())
-//             .map(|index| **index)
-//     }
-// }
+    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<AuthorityIndex> {
+        self.senders
+            .keys()
+            .filter(|&index| !except.contains(index))
+            .collect::<Vec<_>>()
+            .choose(&mut thread_rng())
+            .map(|index| **index)
+    }
+}

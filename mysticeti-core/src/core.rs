@@ -258,6 +258,8 @@ impl<H: BlockHandler> Core<H> {
                 block.detailed()
             );
         }
+        self.threshold_clock
+            .add_block(*block.reference(), &self.committee);
         self.block_handler.handle_proposal(&block);
         self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
@@ -464,7 +466,7 @@ mod test {
             blocks.push(block.clone());
         }
         assert_eq!(proposed_transactions.len(), 4);
-        let more_blocks = blocks.split_off(2);
+        let more_blocks = blocks.split_off(1);
 
         eprintln!("===");
 

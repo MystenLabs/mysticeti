@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crc::{Crc, CRC_64_MS};
+use crc::{Crc, CRC_32_CKSUM};
 use memmap2::{Mmap, MmapOptions};
 use minibytes::Bytes;
 use parking_lot::Mutex;
@@ -113,8 +113,9 @@ const _: () = assert_constants();
 
 pub const MAX_ENTRY_SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize;
 
-const CRC: Crc<u64> = Crc::<u64>::new(
-    &CRC_64_MS, /*selection of algorithm here is mostly random*/
+const CRC: Crc<u32> = Crc::<u32>::new(
+    // todo - we still allocate 64 bits for crc in wal header, reconsider it
+    &CRC_32_CKSUM, /*selection of algorithm here is mostly random*/
 );
 const HEADER_LEN_BYTES: u64 = 8 + 8;
 // CRC and length
@@ -183,7 +184,7 @@ impl WalWriter {
         for slice in v {
             crc.update(slice);
         }
-        let crc = crc.finalize();
+        let crc = crc.finalize() as u64;
         let header = combine_header(crc, len, tag);
         let header = header.to_le_bytes();
         buffs.push(IoSlice::new(&header));
@@ -254,7 +255,7 @@ impl WalReader {
             );
         }
         let bytes = bytes.slice(buf_offset + HEADER_LEN_BYTES_USIZE..buf_offset + (len as usize));
-        let actual_crc = CRC.checksum(bytes.as_ref());
+        let actual_crc = CRC.checksum(bytes.as_ref()) as u64;
         if actual_crc != crc {
             // todo - return error
             panic!(

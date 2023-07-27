@@ -394,7 +394,7 @@ mod sim_tests {
             .await;
 
         println!("Started");
-        runtime::sleep(Duration::from_secs(40)).await;
+        runtime::sleep(Duration::from_secs(400)).await;
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {
@@ -423,7 +423,7 @@ mod sim_tests {
             .await;
 
         println!("Started");
-        runtime::sleep(Duration::from_secs(40)).await;
+        runtime::sleep(Duration::from_secs(400)).await;
         println!("Done");
         let mut syncers = vec![];
         for network_syncer in network_syncers {

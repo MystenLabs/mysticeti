@@ -6,8 +6,6 @@ use crate::data::Data;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
-#[cfg(unix)]
-use std::os::unix::thread::JoinHandleExt;
 use std::sync::Arc;
 use std::thread;
 use tokio::sync::{mpsc, oneshot};
@@ -40,11 +38,6 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .name("mysticeti-core".to_string())
             .spawn(move || core_thread.run())
             .unwrap();
-        #[cfg(unix)]
-        tracing::info!(
-            "Started core thread with pid {}",
-            join_handle.as_pthread_t()
-        );
         Self {
             sender,
             join_handle,
@@ -87,6 +80,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
 
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
     pub fn run(mut self) -> Syncer<H, S, C> {
+        tracing::info!("Started core thread with tid {}", gettid::gettid());
         let metrics = self.syncer.core().metrics.clone();
         while let Some(command) = self.receiver.blocking_recv() {
             let _timer = metrics.core_lock_util.utilization_timer();

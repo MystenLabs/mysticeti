@@ -25,7 +25,7 @@ use crate::{
 use super::{ProtocolCommands, ProtocolMetrics};
 
 const CARGO_FLAGS: &str = "--release";
-const RUST_FLAGS: &str = "RUSTFLAGS=\"-C target-cpu=native\"";
+const RUST_FLAGS: &str = "RUSTFLAGS=-C\\ target-cpu=native";
 
 /// The type of benchmarks supported by Mysticeti.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]

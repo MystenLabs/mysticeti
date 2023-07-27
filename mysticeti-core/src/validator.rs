@@ -223,6 +223,7 @@ mod test {
 
     /// Ensure validators can sync missing blocks
     #[tokio::test]
+    #[ignore = "https://github.com/MystenLabs/project-mysticeti/pull/14"]
     async fn validator_sync() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];

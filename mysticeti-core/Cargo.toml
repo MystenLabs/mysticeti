@@ -34,6 +34,7 @@ hex = "0.4.3"
 ed25519-consensus = "2.1.0"
 zeroize = "1.6.0"
 tabled = "0.12.2"
+gettid = "0.1.2"
 
 [dev-dependencies]
 reqwest = { workspace = true }

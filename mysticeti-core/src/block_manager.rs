@@ -1,17 +1,25 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::{BlockStore, BlockWriter};
 use crate::data::Data;
 use crate::types::{BlockReference, StatementBlock};
 use crate::wal::WalPosition;
+use crate::{
+    block_store::{BlockStore, BlockWriter},
+    types::AuthorityIndex,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
 pub struct BlockManager {
+    /// Keeps all pending blocks.
     blocks_pending: HashMap<BlockReference, Data<StatementBlock>>,
+    /// Keeps all the blocks (`HashSet<BlockReference>`) waiting for `BlockReference` to be processed.
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
+    /// Keeps all blocks that need to be synced in order to unblock the processing of other pending
+    /// blocks. This map is used by the synchronizer to determine priorities.
+    missing: HashMap<AuthorityIndex, HashSet<BlockReference>>,
     block_store: BlockStore,
 }
 
@@ -20,6 +28,7 @@ impl BlockManager {
         Self {
             blocks_pending: Default::default(),
             block_references_waiting: Default::default(),
+            missing: Default::default(),
             block_store,
         }
     }
@@ -51,8 +60,18 @@ impl BlockManager {
                         .entry(*included_reference)
                         .or_default()
                         .insert(*block_reference);
+                    if !self.blocks_pending.contains_key(included_reference) {
+                        self.missing
+                            .entry(included_reference.authority)
+                            .or_insert_with(HashSet::new)
+                            .insert(*included_reference);
+                    }
                 }
             }
+            self.missing
+                .get_mut(&block_reference.authority)
+                .map(|set| set.remove(block_reference));
+
             if !processed {
                 self.blocks_pending.insert(*block_reference, block);
             } else {
@@ -86,6 +105,10 @@ impl BlockManager {
         }
 
         newly_blocks_processed
+    }
+
+    pub fn missing_blocks(&self) -> &HashMap<AuthorityIndex, HashSet<BlockReference>> {
+        &self.missing
     }
 }
 

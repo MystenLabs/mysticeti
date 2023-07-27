@@ -1,4 +1,3 @@
-use crate::block_store::BlockStore;
 use crate::committee::Committee;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
@@ -8,9 +7,10 @@ use crate::runtime::Handle;
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
-use crate::types::{AuthorityIndex, RoundNumber};
+use crate::types::AuthorityIndex;
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,10 +25,10 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     stop: mpsc::Receiver<()>,
 }
 
-struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
+pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
-    block_store: BlockStore,
-    notify: Arc<Notify>,
+    pub block_store: BlockStore,
+    pub notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
 }
@@ -122,23 +122,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .send(NetworkMessage::SubscribeOwnFrom(last_seen))
             .await
             .ok()?;
-        let handle = Handle::current();
-        let mut subscribe_handler: Option<JoinHandle<Option<()>>> = None;
+
+        let mut disseminator = BlockDisseminator::new(connection.sender.clone(), inner.clone());
+
         let peer = format_authority_index(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
-                    // todo - send signal if already unloaded blocks at requested round
-                    tracing::debug!("{} subscribed from round {}", peer, round);
-                    if let Some(send_blocks_handler) = subscribe_handler.take() {
-                        send_blocks_handler.abort();
-                        send_blocks_handler.await.ok();
-                    }
-                    subscribe_handler = Some(handle.spawn(Self::send_blocks(
-                        connection.sender.clone(),
-                        inner.clone(),
-                        round,
-                    )));
+                    disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
@@ -150,33 +141,22 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                             e
                         );
                         // Terminate connection on receiving incorrect block
-                        return None;
+                        break;
                     }
                     inner.syncer.add_blocks(vec![block]).await;
                 }
+                NetworkMessage::RequestBlocks(references) => {
+                    if disseminator.send_blocks(references).await.is_none() {
+                        break;
+                    }
+                }
+                NetworkMessage::BlockNotFound(_references) => {
+                    // TODO: leverage this signal to request blocks from other peers
+                }
             }
         }
-        if let Some(subscribe_handler) = subscribe_handler.take() {
-            subscribe_handler.abort();
-            subscribe_handler.await.ok();
-        }
+        disseminator.cleanup().await;
         None
-    }
-
-    async fn send_blocks(
-        to: mpsc::Sender<NetworkMessage>,
-        inner: Arc<NetworkSyncerInner<H, C>>,
-        mut round: RoundNumber,
-    ) -> Option<()> {
-        loop {
-            let notified = inner.notify.notified();
-            let blocks = inner.block_store.get_own_blocks(round, 10);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
-            }
-            notified.await
-        }
     }
 
     async fn leader_timeout_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {

@@ -41,3 +41,4 @@ mod serde;
 mod simulator_tracing;
 mod stat;
 mod state;
+mod synchronizer;

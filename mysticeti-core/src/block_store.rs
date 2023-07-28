@@ -26,7 +26,7 @@ pub struct BlockStore {
 
 #[derive(Default)]
 struct BlockStoreInner {
-    index: HashMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
+    index: BTreeMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
     own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
     authority: AuthorityIndex,
@@ -189,6 +189,19 @@ impl BlockStore {
         self.read_index_vec(entries)
     }
 
+    pub fn get_others_blocks(
+        &self,
+        from_excluded: RoundNumber,
+        authority: AuthorityIndex,
+        limit: usize,
+    ) -> Vec<Data<StatementBlock>> {
+        let entries = self
+            .inner
+            .read()
+            .get_others_blocks(from_excluded, authority, limit);
+        self.read_index_vec(entries)
+    }
+
     pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
         self.inner.read().last_seen_by_authority(authority)
     }
@@ -344,6 +357,31 @@ impl BlockStoreInner {
                 } else {
                     panic!("Own block index corrupted, not found: {reference}");
                 }
+            })
+            .collect()
+    }
+
+    pub fn get_others_blocks(
+        &self,
+        from_excluded: RoundNumber,
+        authority: AuthorityIndex,
+        limit: usize,
+    ) -> Vec<IndexEntry> {
+        self.index
+            .range((from_excluded + 1)..)
+            .take(limit)
+            .flat_map(|(round, map)| {
+                map.keys()
+                    .filter(|(a, _)| *a == authority)
+                    .map(|(a, d)| BlockReference {
+                        authority: *a,
+                        round: *round,
+                        digest: *d,
+                    })
+            })
+            .map(|reference| {
+                self.get_block(reference)
+                    .unwrap_or_else(|| panic!("Block index corrupted, not found: {reference}"))
             })
             .collect()
     }

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::BlockHandler;
-use crate::data::Data;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
+use crate::{data::Data, types::BlockReference};
 use std::sync::Arc;
-use std::thread;
+use std::{collections::HashSet, thread};
 use tokio::sync::{mpsc, oneshot};
 
 pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -25,6 +25,8 @@ enum CoreThreadCommand {
     AddBlocks(Vec<Data<StatementBlock>>, oneshot::Sender<()>),
     ForceNewBlock(RoundNumber, oneshot::Sender<()>),
     Cleanup(oneshot::Sender<()>),
+    /// Request missing blocks that need to be synched.
+    GetMissing(oneshot::Sender<Vec<HashSet<BlockReference>>>),
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -70,6 +72,12 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         receiver.await.expect("core thread is not expected to stop");
     }
 
+    pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
+        let (sender, receiver) = oneshot::channel();
+        self.send(CoreThreadCommand::GetMissing(sender)).await;
+        receiver.await.expect("core thread is not expected to stop")
+    }
+
     async fn send(&self, command: CoreThreadCommand) {
         self.metrics.core_lock_enqueued.inc();
         if self.sender.send(command).await.is_err() {
@@ -97,6 +105,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
                 CoreThreadCommand::Cleanup(sender) => {
                     self.syncer.core().cleanup();
                     sender.send(()).ok();
+                }
+                CoreThreadCommand::GetMissing(sender) => {
+                    let missing = self.syncer.core().block_manager().missing_blocks();
+                    sender.send(missing.to_vec()).ok();
                 }
             }
         }

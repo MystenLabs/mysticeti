@@ -107,7 +107,7 @@ impl<H: BlockHandler> Core<H> {
             block_writer.insert_own_block(&own_block_data);
             own_block_data
         };
-        let block_manager = BlockManager::new(block_store.clone());
+        let block_manager = BlockManager::new(block_store.clone(), &committee);
         let last_commit_round = last_committed_leader
             .as_ref()
             .map(BlockReference::round)
@@ -400,6 +400,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn block_handler(&self) -> &H {
         &self.block_handler
+    }
+
+    pub fn block_manager(&self) -> &BlockManager {
+        &self.block_manager
     }
 
     pub fn block_handler_mut(&mut self) -> &mut H {

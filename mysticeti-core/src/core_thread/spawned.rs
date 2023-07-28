@@ -6,8 +6,6 @@ use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
 use crate::{data::Data, types::BlockReference};
-#[cfg(unix)]
-use std::os::unix::thread::JoinHandleExt;
 use std::sync::Arc;
 use std::{collections::HashSet, thread};
 use tokio::sync::{mpsc, oneshot};

@@ -24,7 +24,11 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub trait BlockHandler: Send + Sync {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement>;
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>);
 
@@ -78,19 +82,30 @@ impl RealBlockHandler {
 }
 
 impl BlockHandler for RealBlockHandler {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement> {
         let mut response = vec![];
         let transaction_time = self.transaction_time.lock();
-        while let Ok(data) = self.receiver.try_recv() {
-            // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
-            for tx in data {
-                response.push(BaseStatement::Share(tx));
+        if require_response {
+            while let Ok(data) = self.receiver.try_recv() {
+                // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
+                for tx in data {
+                    response.push(BaseStatement::Share(tx));
+                }
             }
         }
         for block in blocks {
+            let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
+                Some(&mut response)
+            } else {
+                None
+            };
             let processed =
                 self.transaction_votes
-                    .process_block(block, Some(&mut response), &self.committee);
+                    .process_block(block, response_option, &self.committee);
             for processed_locator in processed {
                 if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics
@@ -169,29 +184,40 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement> {
         // todo - this is ugly, but right now we need a way to recover self.last_transaction
-        for block in blocks {
-            if block.author() == self.authority {
-                // We can see our own block in handle_blocks - this can happen during core recovery
-                // Todo - we might also need to process pending Payload statements as well
-                for statement in block.statements() {
-                    if let BaseStatement::Share(_) = statement {
-                        self.last_transaction += 1;
+        let mut response = vec![];
+        if require_response {
+            for block in blocks {
+                if block.author() == self.authority {
+                    // We can see our own block in handle_blocks - this can happen during core recovery
+                    // Todo - we might also need to process pending Payload statements as well
+                    for statement in block.statements() {
+                        if let BaseStatement::Share(_) = statement {
+                            self.last_transaction += 1;
+                        }
                     }
                 }
             }
+            self.last_transaction += 1;
+            let next_transaction = Self::make_transaction(self.last_transaction);
+            response.push(BaseStatement::Share(next_transaction));
         }
-        let mut response = vec![];
-        self.last_transaction += 1;
-        let next_transaction = Self::make_transaction(self.last_transaction);
-        response.push(BaseStatement::Share(next_transaction));
         let transaction_time = self.transaction_time.lock();
         for block in blocks {
             println!("Processing {block:?}");
+            let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
+                Some(&mut response)
+            } else {
+                None
+            };
             let processed =
                 self.transaction_votes
-                    .process_block(block, Some(&mut response), &self.committee);
+                    .process_block(block, response_option, &self.committee);
             for processed_locator in processed {
                 if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics

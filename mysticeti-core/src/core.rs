@@ -170,7 +170,9 @@ impl<H: BlockHandler> Core<H> {
     }
 
     fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
-        let statements = self.block_handler.handle_blocks(processed);
+        let statements = self
+            .block_handler
+            .handle_blocks(processed, !self.epoch_changing());
         let serialized_statements =
             bincode::serialize(&statements).expect("Payload serialization failed");
         let position = self
@@ -223,7 +225,9 @@ impl<H: BlockHandler> Core<H> {
                     }
                 }
                 MetaStatement::Payload(payload) => {
-                    statements.extend(payload);
+                    if !self.epoch_changing() {
+                        statements.extend(payload);
+                    }
                 }
             }
         }
@@ -428,6 +432,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn epoch_closed(&self) -> bool {
         self.epoch_manager.closed()
+    }
+
+    pub fn epoch_changing(&self) -> bool {
+        self.epoch_manager.changing()
     }
 
     pub fn epoch_closing_time(&self) -> TimeInstant {

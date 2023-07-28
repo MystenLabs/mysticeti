@@ -49,6 +49,10 @@ impl EpochManager {
         }
     }
 
+    pub fn changing(&self) -> bool {
+        self.epoch_status != InternalEpochStatus::Open
+    }
+
     pub fn closed(&self) -> bool {
         self.epoch_status == InternalEpochStatus::SafeToClose
     }

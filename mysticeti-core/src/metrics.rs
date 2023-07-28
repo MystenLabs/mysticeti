@@ -53,6 +53,10 @@ pub struct Metrics {
 
     pub commit_handler_pending_certificates: IntGauge,
 
+    pub missing_blocks: IntGaugeVec,
+    pub block_sync_requests_sent: IntCounterVec,
+    pub block_sync_requests_received: IntCounterVec,
+
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
     pub transaction_committed_latency: HistogramSender<Duration>,
@@ -272,6 +276,28 @@ impl Metrics {
             commit_handler_pending_certificates: register_int_gauge_with_registry!(
                 "commit_handler_pending_certificates",
                 "Number of pending certificates in commit handler",
+                registry,
+            )
+            .unwrap(),
+
+            missing_blocks: register_int_gauge_vec_with_registry!(
+                "missing_blocks",
+                "Number of missing blocks per authority",
+                &["authority"],
+                registry,
+            )
+            .unwrap(),
+            block_sync_requests_sent: register_int_counter_vec_with_registry!(
+                "block_sync_requests_sent",
+                "Number of block sync requests sent per authority",
+                &["authority"],
+                registry,
+            )
+            .unwrap(),
+            block_sync_requests_received: register_int_counter_vec_with_registry!(
+                "block_sync_requests_received",
+                "Number of block sync requests received per authority and whether they have been fulfilled",
+                &["authority", "fulfilled"],
                 registry,
             )
             .unwrap(),

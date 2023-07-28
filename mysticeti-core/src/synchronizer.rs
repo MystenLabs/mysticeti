@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     block_handler::BlockHandler,
+    metrics::Metrics,
     net_sync::{self, NetworkSyncerInner},
     network::NetworkMessage,
     runtime::{sleep, Handle, JoinHandle},
@@ -56,6 +57,8 @@ pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver> {
     other_blocks: Vec<JoinHandle<Option<()>>>,
     /// The parameters of the synchronizer.
     parameters: SynchronizerParameters,
+    /// Metrics.
+    metrics: Arc<Metrics>,
 }
 
 impl<H, C> BlockDisseminator<H, C>
@@ -63,13 +66,18 @@ where
     H: BlockHandler + 'static,
     C: CommitObserver + 'static,
 {
-    pub fn new(sender: mpsc::Sender<NetworkMessage>, inner: Arc<NetworkSyncerInner<H, C>>) -> Self {
+    pub fn new(
+        sender: mpsc::Sender<NetworkMessage>,
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             sender,
             inner,
             own_blocks: None,
             other_blocks: Vec::new(),
             parameters: SynchronizerParameters::default(),
+            metrics,
         }
     }
 
@@ -86,14 +94,24 @@ where
         join_all(waiters).await;
     }
 
-    pub async fn send_blocks(&mut self, references: Vec<BlockReference>) -> Option<()> {
+    pub async fn send_blocks(
+        &mut self,
+        peer: AuthorityIndex,
+        references: Vec<BlockReference>,
+    ) -> Option<()> {
         let mut missing = Vec::new();
         for reference in references {
-            match self.inner.block_store.get_block(reference) {
+            let stored_block = self.inner.block_store.get_block(reference);
+            let found = stored_block.is_some();
+            match stored_block {
                 // TODO: Should we be able to send more than one block in a single network message?
                 Some(block) => self.sender.send(NetworkMessage::Block(block)).await.ok()?,
                 None => missing.push(reference),
             }
+            self.metrics
+                .block_sync_requests_received
+                .with_label_values(&[&peer.to_string(), &found.to_string()])
+                .inc();
         }
         self.sender
             .send(NetworkMessage::BlockNotFound(missing))
@@ -185,13 +203,17 @@ pub struct BlockFetcher {
 }
 
 impl BlockFetcher {
-    pub fn start<B, C>(id: AuthorityIndex, inner: Arc<NetworkSyncerInner<B, C>>) -> Self
+    pub fn start<B, C>(
+        id: AuthorityIndex,
+        inner: Arc<NetworkSyncerInner<B, C>>,
+        metrics: Arc<Metrics>,
+    ) -> Self
     where
         B: BlockHandler + 'static,
         C: CommitObserver + 'static,
     {
         let (sender, receiver) = mpsc::channel(100);
-        let worker = BlockFetcherWorker::new(id, inner, receiver);
+        let worker = BlockFetcherWorker::new(id, inner, receiver, metrics);
         let handle = Handle::current().spawn(worker.run());
         Self { sender, handle }
     }
@@ -226,6 +248,7 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
     receiver: mpsc::Receiver<BlockFetcherMessage>,
     senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
     parameters: SynchronizerParameters,
+    metrics: Arc<Metrics>,
 }
 
 impl<B, C> BlockFetcherWorker<B, C>
@@ -237,6 +260,7 @@ where
         id: AuthorityIndex,
         inner: Arc<NetworkSyncerInner<B, C>>,
         receiver: mpsc::Receiver<BlockFetcherMessage>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             id,
@@ -244,6 +268,7 @@ where
             receiver,
             senders: Default::default(),
             parameters: Default::default(),
+            metrics,
         }
     }
 
@@ -270,7 +295,12 @@ where
     async fn sync_strategy(&self) {
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
-        for missing in missing_blocks {
+        for (authority, missing) in missing_blocks.into_iter().enumerate() {
+            self.metrics
+                .missing_blocks
+                .with_label_values(&[&authority.to_string()])
+                .set(missing.len() as i64);
+
             // TODO: If we are missing many blocks from the same authority
             // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
             // we have a network partition. We should try to find an other peer from which
@@ -280,25 +310,32 @@ where
         }
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
-            let Some(sender) = self.sample_peer(&[self.id]) else { break };
+            let Some((peer, permit)) = self.sample_peer(&[self.id]) else { break };
             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-            sender.send(message);
+            permit.send(message);
+
+            self.metrics
+                .block_sync_requests_sent
+                .with_label_values(&[&peer.to_string()])
+                .inc();
         }
     }
 
-    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<mpsc::Permit<NetworkMessage>> {
+    fn sample_peer(
+        &self,
+        except: &[AuthorityIndex],
+    ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
         let mut senders = self
             .senders
             .iter()
             .filter(|&(index, _)| !except.contains(index))
-            .map(|(_, sender)| sender)
             .collect::<Vec<_>>();
 
         senders.shuffle(&mut thread_rng());
 
-        for sender in senders {
+        for (peer, sender) in senders {
             if let Ok(permit) = sender.try_reserve() {
-                return Some(permit);
+                return Some((*peer, permit));
             }
         }
         None

@@ -71,8 +71,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             committee,
             stop: stop_sender.clone(),
         });
-        let block_fetcher = Arc::new(BlockFetcher::start(authority_index, inner.clone()));
-        let main_task = handle.spawn(Self::run(network, inner.clone(), block_fetcher));
+        let block_fetcher = Arc::new(BlockFetcher::start(
+            authority_index,
+            inner.clone(),
+            metrics.clone(),
+        ));
+        let main_task = handle.spawn(Self::run(
+            network,
+            inner.clone(),
+            block_fetcher,
+            metrics.clone(),
+        ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         Self {
             inner,
@@ -97,6 +106,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut network: Network,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
+        metrics: Arc<Metrics>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
@@ -117,6 +127,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 connection,
                 inner.clone(),
                 block_fetcher.clone(),
+                metrics.clone(),
             ));
             connections.insert(peer_id, task);
         }
@@ -136,6 +147,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
+        metrics: Arc<Metrics>,
     ) -> Option<()> {
         let last_seen = inner
             .block_store
@@ -146,7 +158,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .await
             .ok()?;
 
-        let mut disseminator = BlockDisseminator::new(connection.sender.clone(), inner.clone());
+        let mut disseminator =
+            BlockDisseminator::new(connection.sender.clone(), inner.clone(), metrics.clone());
 
         let peer = format_authority_index(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
@@ -173,7 +186,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving invalid message.
                         break;
                     }
-                    if disseminator.send_blocks(references).await.is_none() {
+                    let authority = connection.peer_id as AuthorityIndex;
+                    if disseminator
+                        .send_blocks(authority, references)
+                        .await
+                        .is_none()
+                    {
                         break;
                     }
                 }

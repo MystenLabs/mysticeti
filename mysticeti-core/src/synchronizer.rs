@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     block_handler::BlockHandler,
-    net_sync::NetworkSyncerInner,
+    net_sync::{self, NetworkSyncerInner},
     network::NetworkMessage,
     runtime::{sleep, Handle, JoinHandle},
     syncer::CommitObserver,
@@ -30,8 +30,6 @@ pub struct SynchronizerParameters {
     pub stream_interval: Duration,
     /// Threshold number of missing block from an authority to open a new stream.
     pub new_stream_threshold: usize,
-    /// The maximum number of blocks to request in a single request.
-    pub maximum_block_request: usize,
 }
 
 impl Default for SynchronizerParameters {
@@ -43,7 +41,6 @@ impl Default for SynchronizerParameters {
             sample_precision: Duration::from_secs(5),
             stream_interval: Duration::from_secs(1),
             new_stream_threshold: 10,
-            maximum_block_request: 10,
         }
     }
 }
@@ -89,10 +86,7 @@ where
         join_all(waiters).await;
     }
 
-    pub async fn send_blocks(&mut self, mut references: Vec<BlockReference>) -> Option<()> {
-        // Ensure that we don't send too many blocks from a single request.
-        references.truncate(self.parameters.maximum_block_request);
-
+    pub async fn send_blocks(&mut self, references: Vec<BlockReference>) -> Option<()> {
         let mut missing = Vec::new();
         for reference in references {
             match self.inner.block_store.get_block(reference) {
@@ -256,9 +250,7 @@ where
     async fn run(mut self) -> Option<()> {
         loop {
             tokio::select! {
-                _ = sleep(self.parameters.sample_precision) => {
-                    self.sync_strategy().await;
-                },
+                _ = sleep(self.parameters.sample_precision) => self.sync_strategy().await,
                 message = self.receiver.recv() => {
                     match message {
                         Some(BlockFetcherMessage::RegisterAuthority(authority, sender)) => {
@@ -275,7 +267,7 @@ where
     }
 
     /// A simple and naive strategy that requests missing blocks from random peers.
-    async fn sync_strategy(&self) -> Option<()> {
+    async fn sync_strategy(&self) {
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for missing in missing_blocks {
@@ -287,20 +279,28 @@ where
             to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
         }
 
-        for chunks in to_request.chunks(self.parameters.maximum_block_request) {
+        for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
             let Some(sender) = self.sample_peer(&[self.id]) else { break };
             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-            sender.send(message).await.ok()?;
+            sender.send(message);
         }
-        None
     }
 
-    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<&mpsc::Sender<NetworkMessage>> {
-        self.senders
+    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<mpsc::Permit<NetworkMessage>> {
+        let mut senders = self
+            .senders
             .iter()
             .filter(|&(index, _)| !except.contains(index))
-            .collect::<Vec<_>>()
-            .choose(&mut thread_rng())
-            .map(|&(_, sender)| sender)
+            .map(|(_, sender)| sender)
+            .collect::<Vec<_>>();
+
+        senders.shuffle(&mut thread_rng());
+
+        for sender in senders {
+            if let Ok(permit) = sender.try_reserve() {
+                return Some(permit);
+            }
+        }
+        None
     }
 }

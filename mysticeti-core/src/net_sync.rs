@@ -18,6 +18,9 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::{mpsc, oneshot, Notify};
 
+/// The maximum number of blocks that can be requested in a single message.
+pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
+
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
@@ -166,6 +169,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     inner.syncer.add_blocks(vec![block]).await;
                 }
                 NetworkMessage::RequestBlocks(references) => {
+                    if references.len() > MAXIMUM_BLOCK_REQUEST {
+                        // Terminate connection on receiving invalid message.
+                        break;
+                    }
                     if disseminator.send_blocks(references).await.is_none() {
                         break;
                     }

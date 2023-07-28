@@ -68,7 +68,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             committee,
             stop: stop_sender.clone(),
         });
-        let block_fetcher = Arc::new(BlockFetcher::new(authority_index, inner.clone()));
+        let block_fetcher = Arc::new(BlockFetcher::start(authority_index, inner.clone()));
         let main_task = handle.spawn(Self::run(network, inner.clone(), block_fetcher));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
         Self {
@@ -175,7 +175,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
             }
         }
-        disseminator.cleanup().await;
+        disseminator.shutdown().await;
         let id = connection.peer_id as AuthorityIndex;
         block_fetcher.remove_authority(id).await;
         None

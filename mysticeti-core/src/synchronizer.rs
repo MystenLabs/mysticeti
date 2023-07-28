@@ -76,8 +76,8 @@ where
         }
     }
 
-    pub async fn cleanup(mut self) {
-        let mut waiters = Vec::new();
+    pub async fn shutdown(mut self) {
+        let mut waiters = Vec::with_capacity(1 + self.other_blocks.len());
         if let Some(handle) = self.own_blocks.take() {
             handle.abort();
             waiters.push(handle);
@@ -96,6 +96,7 @@ where
         let mut missing = Vec::new();
         for reference in references {
             match self.inner.block_store.get_block(reference) {
+                // TODO: Should we be able to send more than one block in a single network message?
                 Some(block) => self.sender.send(NetworkMessage::Block(block)).await.ok()?,
                 None => missing.push(reference),
             }
@@ -190,7 +191,7 @@ pub struct BlockFetcher {
 }
 
 impl BlockFetcher {
-    pub fn new<B, C>(id: AuthorityIndex, inner: Arc<NetworkSyncerInner<B, C>>) -> Self
+    pub fn start<B, C>(id: AuthorityIndex, inner: Arc<NetworkSyncerInner<B, C>>) -> Self
     where
         B: BlockHandler + 'static,
         C: CommitObserver + 'static,

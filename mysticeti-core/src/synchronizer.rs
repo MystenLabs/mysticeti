@@ -256,10 +256,7 @@ where
         loop {
             tokio::select! {
                 _ = sleep(self.parameters.sample_precision) => {
-                    for (peer, message) in self.sync_strategy().await {
-                        let sender = self.senders.get(&peer).unwrap();
-                        sender.send(message).await.ok()?;
-                    }
+                    self.sync_strategy().await;
                 },
                 message = self.receiver.recv() => {
                     match message {
@@ -277,7 +274,7 @@ where
     }
 
     /// A simple and naive strategy that requests missing blocks from random peers.
-    async fn sync_strategy(&self) -> Vec<(u64, NetworkMessage)> {
+    async fn sync_strategy(&self) -> Option<()> {
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for missing in missing_blocks {
@@ -289,21 +286,20 @@ where
             to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
         }
 
-        let mut messages = Vec::new();
         for chunks in to_request.chunks(self.parameters.maximum_block_request) {
-            let Some(peer) = self.sample_peer(&[self.id]) else { break };
+            let Some(sender) = self.sample_peer(&[self.id]) else { break };
             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-            messages.push((peer, message));
+            sender.send(message).await.ok()?;
         }
-        messages
+        None
     }
 
-    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<AuthorityIndex> {
+    fn sample_peer(&self, except: &[AuthorityIndex]) -> Option<&mpsc::Sender<NetworkMessage>> {
         self.senders
-            .keys()
-            .filter(|&index| !except.contains(index))
+            .iter()
+            .filter(|&(index, _)| !except.contains(index))
             .collect::<Vec<_>>()
             .choose(&mut thread_rng())
-            .map(|index| **index)
+            .map(|&(_, sender)| sender)
     }
 }

@@ -24,6 +24,9 @@ use crate::{
 
 use super::{ProtocolCommands, ProtocolMetrics};
 
+const CARGO_FLAGS: &str = "--release";
+const RUST_FLAGS: &str = "RUSTFLAGS=-C\\ target-cpu=native";
+
 /// The type of benchmarks supported by Mysticeti.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MysticetiBenchmarkType {
@@ -86,7 +89,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         let working_directory = self.working_dir.display();
 
         let genesis = [
-            "cargo run --release --bin mysticeti --",
+            &format!("{RUST_FLAGS} cargo run {CARGO_FLAGS} --bin mysticeti --"),
             "benchmark-genesis",
             &format!("--ips {ips} --working-directory {working_directory}"),
         ]
@@ -141,7 +144,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                 let env = env::var("ENV").unwrap_or_default();
                 let run = [
                     &env,
-                    "cargo run --release --bin mysticeti --",
+                    &format!("{RUST_FLAGS} cargo run {CARGO_FLAGS} --bin mysticeti --"),
                     "run",
                     &format!(
                         "--authority {authority} --committee-path {}",

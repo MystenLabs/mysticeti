@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::block_handler::BlockHandler;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
-use crate::{block_handler::BlockHandler, types::AuthorityIndex};
 use crate::{data::Data, types::BlockReference};
 #[cfg(unix)]
 use std::os::unix::thread::JoinHandleExt;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use std::{collections::HashSet, thread};
 use tokio::sync::{mpsc, oneshot};
 
@@ -28,7 +28,7 @@ enum CoreThreadCommand {
     ForceNewBlock(RoundNumber, oneshot::Sender<()>),
     Cleanup(oneshot::Sender<()>),
     /// Request missing blocks that need to be synched.
-    GetMissing(oneshot::Sender<HashMap<AuthorityIndex, HashSet<BlockReference>>>),
+    GetMissing(oneshot::Sender<Vec<HashSet<BlockReference>>>),
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -79,7 +79,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         receiver.await.expect("core thread is not expected to stop");
     }
 
-    pub async fn get_missing_blocks(&self) -> HashMap<AuthorityIndex, HashSet<BlockReference>> {
+    pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::GetMissing(sender)).await;
         receiver.await.expect("core thread is not expected to stop")
@@ -114,7 +114,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
                 }
                 CoreThreadCommand::GetMissing(sender) => {
                     let missing = self.syncer.core().block_manager().missing_blocks();
-                    sender.send(missing.clone()).ok();
+                    sender.send(missing.to_vec()).ok();
                 }
             }
         }

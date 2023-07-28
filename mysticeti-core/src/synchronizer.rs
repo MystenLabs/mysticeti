@@ -280,7 +280,7 @@ where
     async fn sync_strategy(&self) -> Vec<(u64, NetworkMessage)> {
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
-        for missing in missing_blocks.values() {
+        for missing in missing_blocks {
             // TODO: If we are missing many blocks from the same authority
             // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
             // we have a network partition. We should try to find an other peer from which

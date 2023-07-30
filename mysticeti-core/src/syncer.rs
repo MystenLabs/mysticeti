@@ -92,6 +92,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.signals.new_block_ready();
             self.force_new_block = false;
 
+            if self.core.epoch_closed() {
+                return;
+            }; // No need to commit after epoch is safe to close
+
             let newly_committed = self.core.try_commit(3);
             let utc_now = timestamp_utc();
             if !newly_committed.is_empty() {

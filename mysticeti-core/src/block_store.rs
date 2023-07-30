@@ -214,6 +214,27 @@ impl BlockStore {
             .map(|pos| self.read_index(pos))
             .collect()
     }
+
+    /// Check whether `earlier_block` is an ancestor of `later_block`.
+    pub fn linked(
+        &self,
+        later_block: &Data<StatementBlock>,
+        earlier_block: &Data<StatementBlock>,
+    ) -> bool {
+        let mut parents = vec![later_block.clone()];
+        for r in (earlier_block.round()..later_block.round()).rev() {
+            parents = self
+                .get_blocks_by_round(r)
+                .into_iter()
+                .filter(|block| {
+                    parents
+                        .iter()
+                        .any(|x| x.includes().contains(block.reference()))
+                })
+                .collect();
+        }
+        parents.contains(earlier_block)
+    }
 }
 
 impl BlockStoreInner {

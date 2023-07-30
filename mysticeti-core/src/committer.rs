@@ -80,28 +80,6 @@ impl Committer {
         wave * self.wave_length + self.wave_length - 1
     }
 
-    /// Check whether `earlier_block` is an ancestor of `later_block`.
-    fn linked(
-        &self,
-        later_block: &Data<StatementBlock>,
-        earlier_block: &Data<StatementBlock>,
-    ) -> bool {
-        let mut parents = vec![later_block.clone()];
-        for r in (earlier_block.round()..later_block.round()).rev() {
-            parents = self
-                .block_store
-                .get_blocks_by_round(r)
-                .into_iter()
-                .filter(|block| {
-                    parents
-                        .iter()
-                        .any(|x| x.includes().contains(block.reference()))
-                })
-                .collect();
-        }
-        parents.contains(earlier_block)
-    }
-
     /// Check whether the specified block (`potential_certificate`) is a vote for
     /// the specified leader (`leader_block`).
     fn is_vote(
@@ -217,7 +195,7 @@ impl Committer {
             let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
             let potential_certificates: Vec<_> = decision_blocks
                 .iter()
-                .filter(|block| self.linked(&current_leader_block, block))
+                .filter(|block| self.block_store.linked(&current_leader_block, block))
                 .collect();
 
             // Use those potential certificates to determine which (if any) of the previous leader

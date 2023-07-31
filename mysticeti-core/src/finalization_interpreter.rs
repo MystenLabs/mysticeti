@@ -146,42 +146,4 @@ impl<'a> FinalizationInterpreter<'a> {
     ) -> &mut HashMap<TransactionLocator, StakeAggregator<QuorumThreshold>> {
         self.transaction_aggregator.get_mut(block).unwrap()
     }
-
-    // fn is_tx_finalized(
-    //     &mut self,
-    //     block_reference: BlockReference,
-    //     transaction: &TransactionLocator,
-    // ) -> bool {
-    //     let block = self
-    //         .block_store
-    //         .get_block(block_reference)
-    //         .expect("We should have the whole sub-dag by now");
-    //     for statement in block.statements() {
-    //         if let BaseStatement::Vote(locator, vote) = statement {
-    //             if locator == transaction {
-    //                 if let Vote::Accept = vote {
-    //                     if self
-    //                         .transaction_aggregator
-    //                         .add(block.author(), &self.committee)
-    //                     {
-    //                         if let EpochStatus::Open = block.epoch_marker() {
-    //                             if self
-    //                                 .certificate_aggregator
-    //                                 .add(block.author(), &self.committee)
-    //                             {
-    //                                 return true;
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     for parent in block.includes() {
-    //         if self.is_tx_finalized(*parent, transaction) {
-    //             return true;
-    //         }
-    //     }
-    //     return false;
-    // }
 }

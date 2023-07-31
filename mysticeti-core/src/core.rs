@@ -4,7 +4,6 @@ use crate::block_store::{
 };
 use crate::commit_interpreter::CommittedSubDag;
 use crate::committee::Committee;
-use crate::config::Parameters;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -43,6 +42,7 @@ pub struct Core<H: BlockHandler> {
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
+    rounds_in_epoch: RoundNumber,
 }
 
 pub struct CoreOptions {
@@ -60,6 +60,7 @@ impl<H: BlockHandler> Core<H> {
         mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
+        rounds_in_epoch: RoundNumber,
         metrics: Arc<Metrics>,
         wal_file: File,
         options: CoreOptions,
@@ -139,6 +140,7 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
+            rounds_in_epoch,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -319,7 +321,7 @@ impl<H: BlockHandler> Core<H> {
         );
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_round > Parameters::ROUNDS_IN_EPOCH {
+        if self.last_commit_round > self.rounds_in_epoch {
             self.epoch_manager.epoch_change_begun();
         }
 

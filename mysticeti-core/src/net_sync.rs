@@ -1,6 +1,5 @@
 use crate::block_store::BlockStore;
 use crate::committee::Committee;
-use crate::config::Parameters;
 use crate::core::Core;
 use crate::lock::MonitoredRwLock;
 use crate::network::{Connection, Network, NetworkMessage};
@@ -41,6 +40,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut core: Core<H>,
         commit_period: u64,
         mut commit_observer: C,
+        shutdown_grace_period: Duration,
         metrics: Arc<Metrics>,
     ) -> Self {
         let handle = Handle::current();
@@ -76,7 +76,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
         });
-        let main_task = handle.spawn(Self::run(network, inner.clone(), epoch_receiver));
+        let main_task = handle.spawn(Self::run(
+            network,
+            inner.clone(),
+            epoch_receiver,
+            shutdown_grace_period,
+        ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
             inner,
@@ -101,11 +106,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut network: Network,
         inner: Arc<NetworkSyncerInner<H, C>>,
         epoch_close_signal: mpsc::Receiver<()>,
+        shutdown_grace_period: Duration,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
-        let leader_timeout_task =
-            handle.spawn(Self::leader_timeout_task(inner.clone(), epoch_close_signal));
+        let leader_timeout_task = handle.spawn(Self::leader_timeout_task(
+            inner.clone(),
+            epoch_close_signal,
+            shutdown_grace_period,
+        ));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
@@ -197,6 +206,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     async fn leader_timeout_task(
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut epoch_close_signal: mpsc::Receiver<()>,
+        shutdown_grace_period: Duration,
     ) -> Option<()> {
         let leader_timeout = Duration::from_secs(1);
         loop {
@@ -209,8 +219,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .unwrap_or_default();
             let shutdown_duration = if inner.syncer.read().core().epoch_closed() {
                 let closing_time = inner.syncer.read().core().epoch_closing_time();
-                Duration::from_secs(Parameters::SECONDS_AFTER_EPOCH)
-                    .saturating_sub(closing_time.elapsed())
+                shutdown_grace_period.saturating_sub(closing_time.elapsed())
             } else {
                 Duration::MAX
             };
@@ -362,10 +371,16 @@ impl AsyncWalSyncer {
 #[cfg(test)]
 mod tests {
     use crate::{
-        test_util::{check_commits, network_syncers},
+        block_handler::{TestBlockHandler, TestCommitHandler},
+        config::Parameters,
+        finalization_interpreter::FinalizationInterpreter,
+        test_util::{check_commits, network_syncers, network_syncers_with_epoch_duration},
         types::EpochStatus,
     };
+    use core::panic;
     use std::time::Duration;
+
+    use super::NetworkSyncer;
 
     #[tokio::test]
     async fn test_network_sync() {
@@ -385,8 +400,84 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_epoch_close() {
-        let f = 1;
-        let network_syncers = network_syncers(3 * f + 1).await;
+        let n = 4;
+        let rounds_in_epoch = 3000;
+        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        wait_for_epoch_to_close(&network_syncers).await;
+        for net_sync in network_syncers.iter() {
+            if let EpochStatus::SafeToClose = net_sync.inner.syncer.read().core().epoch_status() {
+                ()
+            } else {
+                panic!("Epoch should have closed!")
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_exact_commits_in_epoch() {
+        let n = 4;
+        let rounds_in_epoch = 3000;
+        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        wait_for_epoch_to_close(&network_syncers).await;
+        let canonical_commit_seq = network_syncers[0]
+            .inner
+            .syncer
+            .read()
+            .commit_observer()
+            .committed_leaders()
+            .clone();
+        for net_sync in network_syncers {
+            let commit_seq = net_sync
+                .inner
+                .syncer
+                .read()
+                .commit_observer()
+                .committed_leaders()
+                .clone();
+            assert_eq!(canonical_commit_seq, commit_seq);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_finalization_safety() {
+        // todo - no cleanup of block store
+        let n = 4;
+        let rounds_in_epoch = 10;
+        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        wait_for_epoch_to_close(&network_syncers).await;
+        for net_sync in network_syncers {
+            let syncer = net_sync.inner.syncer.read();
+            let block_store = syncer.core().block_store();
+            let committee = syncer.core().committee().clone();
+            let latest_committed_leader =
+                syncer.commit_observer().committed_leaders().last().unwrap();
+
+            let mut finalization_interpreter = FinalizationInterpreter::new(block_store, committee);
+            let finalized_tx_certifying_blocks =
+                finalization_interpreter.finalized_tx_certifying_blocks();
+
+            for (_, certificates) in finalized_tx_certifying_blocks {
+                // check if at least one certificate is committed
+                let mut committed = false;
+                for certifying_block in certificates {
+                    if block_store.linked(
+                        &block_store.get_block(*latest_committed_leader).unwrap(),
+                        &block_store.get_block(certifying_block).unwrap(),
+                    ) {
+                        committed = true;
+                        break;
+                    }
+                }
+                assert!(committed);
+            }
+        }
+    }
+
+    async fn wait_for_epoch_to_close(
+        network_syncers: &Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    ) {
         let mut any_closed = false;
         while !any_closed {
             for net_sync in network_syncers.iter() {
@@ -397,14 +488,7 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        let mut epoch_safely_closed = 0;
-        for net_sync in network_syncers.iter() {
-            match net_sync.inner.syncer.read().core().epoch_status() {
-                EpochStatus::SafeToClose => epoch_safely_closed += 1,
-                _ => (),
-            };
-        }
-        assert!(epoch_safely_closed >= f + 1);
+        tokio::time::sleep(Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD).await;
     }
 }
 

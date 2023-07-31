@@ -418,6 +418,10 @@ impl AuthoritySet {
         true
     }
 
+    pub fn present(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
+        (0..128).filter(|bit| (self.0 & 1 << bit) != 0)
+    }
+
     #[inline]
     pub fn clear(&mut self) {
         self.0 = 0;
@@ -701,5 +705,15 @@ mod test {
         assert!(a.insert(3));
         assert!(!a.insert(3));
         assert!(!a.insert(2));
+    }
+
+    #[test]
+    fn authority_present_test() {
+        let mut a = AuthoritySet::default();
+        let present = vec![1, 2, 3, 4, 5, 64, 127];
+        for x in &present {
+            a.insert(*x);
+        }
+        assert_eq!(present, a.present().collect::<Vec<_>>());
     }
 }

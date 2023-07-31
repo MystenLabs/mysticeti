@@ -41,3 +41,4 @@ mod stat;
 mod state;
 
 mod epoch_close;
+mod finalization_interpreter;

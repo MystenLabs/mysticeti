@@ -9,6 +9,7 @@ echo -e "${BLUE}Running cargo test...${NC}"
 cargo test || { echo -e "${RED}cargo test failed${NC}"; exit 1; }
 echo -e "${BLUE}Running simulator tests...${NC}"
 cargo test -p mysticeti-core --features simulator test_network_sync_sim || { echo -e "${RED}Simulator test failed${NC}"; exit 1; }
+cargo test -p mysticeti-core --features simulator epoch || { echo -e "${RED}Simulator Epoch test failed${NC}"; exit 1; }
 echo -e "${BLUE}Running cargo fmt --check...${NC}"
 cargo fmt --check || { echo -e "${RED}Formatting failed${NC}"; exit 1; }
 echo -e "${BLUE}Running clippy...${NC}"

@@ -164,7 +164,19 @@ pub fn simulated_network_syncers(
     Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
     Vec<MetricReporter>,
 ) {
-    let (committee, cores, reporters) = committee_and_cores(n);
+    simulated_network_syncers_with_epoch_duration(n, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+}
+
+#[cfg(feature = "simulator")]
+pub fn simulated_network_syncers_with_epoch_duration(
+    n: usize,
+    rounds_in_epoch: RoundNumber,
+) -> (
+    SimulatedNetwork,
+    Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    Vec<MetricReporter>,
+) {
+    let (committee, cores, reporters) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {

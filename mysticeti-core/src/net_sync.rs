@@ -370,17 +370,8 @@ impl AsyncWalSyncer {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        block_handler::{TestBlockHandler, TestCommitHandler},
-        config::Parameters,
-        finalization_interpreter::FinalizationInterpreter,
-        test_util::{check_commits, network_syncers, network_syncers_with_epoch_duration},
-        types::EpochStatus,
-    };
-    use core::panic;
+    use crate::test_util::{check_commits, network_syncers};
     use std::time::Duration;
-
-    use super::NetworkSyncer;
 
     #[tokio::test]
     async fn test_network_sync() {
@@ -396,13 +387,36 @@ mod tests {
 
         check_commits(&syncers);
     }
+}
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_epoch_close() {
+#[cfg(test)]
+#[cfg(feature = "simulator")]
+mod sim_tests {
+    use super::NetworkSyncer;
+    use crate::block_handler::{TestBlockHandler, TestCommitHandler};
+    use crate::config::Parameters;
+    use crate::finalization_interpreter::FinalizationInterpreter;
+    use crate::future_simulator::SimulatedExecutorState;
+    use crate::runtime;
+    use crate::simulator_tracing::setup_simulator_tracing;
+    use crate::test_util::{
+        check_commits, print_stats, rng_at_seed, simulated_network_syncers,
+        simulated_network_syncers_with_epoch_duration,
+    };
+    use crate::types::EpochStatus;
+    use std::time::Duration;
+
+    #[test]
+    fn test_epoch_close() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_epoch_close_async());
+    }
+
+    async fn test_epoch_close_async() {
         let n = 4;
         let rounds_in_epoch = 3000;
-        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
         wait_for_epoch_to_close(&network_syncers).await;
         for net_sync in network_syncers.iter() {
             if let EpochStatus::SafeToClose = net_sync.inner.syncer.read().core().epoch_status() {
@@ -413,12 +427,32 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_exact_commits_in_epoch() {
+    async fn wait_for_epoch_to_close(
+        network_syncers: &Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    ) {
+        let mut any_closed = false;
+        while !any_closed {
+            for net_sync in network_syncers.iter() {
+                if let EpochStatus::SafeToClose = net_sync.inner.syncer.read().core().epoch_status()
+                {
+                    any_closed = true;
+                }
+            }
+            runtime::sleep(Duration::from_secs(2)).await;
+        }
+        runtime::sleep(Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD).await;
+    }
+    #[test]
+    fn test_exact_commits_in_epoch() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_exact_commits_in_epoch_async());
+    }
+
+    async fn test_exact_commits_in_epoch_async() {
         let n = 4;
         let rounds_in_epoch = 3000;
-        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
         wait_for_epoch_to_close(&network_syncers).await;
         let canonical_commit_seq = network_syncers[0]
             .inner
@@ -439,13 +473,18 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_finalization_safety() {
+    #[test]
+    fn test_finalization_epoch_safety() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_finalization_safety_async());
+    }
+
+    async fn test_finalization_safety_async() {
         // todo - no cleanup of block store
         let n = 4;
         let rounds_in_epoch = 10;
-        let network_syncers = network_syncers_with_epoch_duration(n, rounds_in_epoch).await;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
         wait_for_epoch_to_close(&network_syncers).await;
         for net_sync in network_syncers {
             let syncer = net_sync.inner.syncer.read();
@@ -453,6 +492,11 @@ mod tests {
             let committee = syncer.core().committee().clone();
             let latest_committed_leader =
                 syncer.commit_observer().committed_leaders().last().unwrap();
+
+            println!(
+                "Num of Committed leaders: {:?}",
+                syncer.commit_observer().committed_leaders()
+            );
 
             let mut finalization_interpreter = FinalizationInterpreter::new(block_store, committee);
             let finalized_tx_certifying_blocks =
@@ -474,32 +518,6 @@ mod tests {
             }
         }
     }
-
-    async fn wait_for_epoch_to_close(
-        network_syncers: &Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
-    ) {
-        let mut any_closed = false;
-        while !any_closed {
-            for net_sync in network_syncers.iter() {
-                if let EpochStatus::SafeToClose = net_sync.inner.syncer.read().core().epoch_status()
-                {
-                    any_closed = true;
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-        tokio::time::sleep(Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD).await;
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "simulator")]
-mod sim_tests {
-    use crate::future_simulator::SimulatedExecutorState;
-    use crate::runtime;
-    use crate::simulator_tracing::setup_simulator_tracing;
-    use crate::test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers};
-    use std::time::Duration;
 
     #[test]
     fn test_network_sync_sim_all_up() {

@@ -5,8 +5,9 @@ use crate::block_store::BlockStore;
 use crate::commit_interpreter::CommittedSubDag;
 use crate::core::Core;
 use crate::data::Data;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use minibytes::Bytes;
 use std::collections::HashSet;
@@ -14,8 +15,6 @@ use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
-    last_own_block: Option<Data<StatementBlock>>,
-    last_seen_by_authority: Vec<RoundNumber>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
@@ -47,30 +46,22 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
-        let last_seen_by_authority = core.committee().authorities().map(|_| 0).collect();
         Self {
             core,
-            last_own_block: None,
             force_new_block: false,
             commit_period,
             signals,
             commit_observer,
-            last_seen_by_authority,
             metrics,
         }
     }
 
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
-        let processed = self.core.add_blocks(blocks);
-        for block in processed {
-            let last_seen = self
-                .last_seen_by_authority
-                .get_mut(block.author() as usize)
-                .expect("last_seen_by_authority not found");
-            if block.round() > *last_seen {
-                *last_seen = block.round();
-            }
-        }
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Syncer::add_blocks");
+        self.core.add_blocks(blocks);
         self.try_new_block();
     }
 
@@ -86,9 +77,14 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     }
 
     fn try_new_block(&mut self) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Syncer::try_new_block");
         if self.force_new_block || self.core.ready_new_block(self.commit_period) {
-            let Some(block) = self.core.try_new_block() else { return; };
-            self.last_own_block = Some(block);
+            if self.core.try_new_block().is_none() {
+                return;
+            }
             self.signals.new_block_ready();
             self.force_new_block = false;
 
@@ -118,17 +114,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 &self.commit_observer.aggregator_state(),
             );
         }
-    }
-
-    pub fn last_own_block(&self) -> Option<Data<StatementBlock>> {
-        self.last_own_block.clone()
-    }
-
-    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
-        *self
-            .last_seen_by_authority
-            .get(authority as usize)
-            .expect("last_seen_by_authority not found")
     }
 
     pub fn commit_observer(&self) -> &C {
@@ -189,7 +174,7 @@ mod tests {
             // New block was created
             if self.signals {
                 self.signals = false;
-                let last_block = self.last_own_block().unwrap();
+                let last_block = self.core.last_own_block().clone();
                 Scheduler::schedule_event(
                     ROUND_TIMEOUT,
                     self.scheduler_state_id(),

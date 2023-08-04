@@ -40,15 +40,22 @@ pub struct Metrics {
     pub block_store_unloaded_blocks: IntCounter,
     pub block_store_loaded_blocks: IntCounter,
     pub block_store_entries: IntCounter,
+    pub block_store_cleanup_util: IntCounter,
 
     pub wal_mappings: IntGauge,
 
     pub core_lock_util: IntCounter,
-    pub core_lock_wait: IntCounter,
+    pub core_lock_enqueued: IntCounter,
+    pub core_lock_dequeued: IntCounter,
 
     pub block_handler_pending_certificates: IntGauge,
+    pub block_handler_cleanup_util: IntCounter,
 
     pub commit_handler_pending_certificates: IntGauge,
+
+    pub missing_blocks: IntGaugeVec,
+    pub block_sync_requests_sent: IntCounterVec,
+    pub block_sync_requests_received: IntCounterVec,
 
     pub transaction_certified_latency: HistogramSender<Duration>,
     pub certificate_committed_latency: HistogramSender<Duration>,
@@ -59,6 +66,8 @@ pub struct Metrics {
     pub proposed_block_vote_count: HistogramSender<usize>,
 
     pub connection_latency_sender: Vec<HistogramSender<Duration>>,
+
+    pub utilization_timer: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -218,6 +227,12 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
+            block_store_cleanup_util: register_int_counter_with_registry!(
+                "block_store_cleanup_util",
+                "block_store_cleanup_util",
+                registry,
+            )
+            .unwrap(),
 
             wal_mappings: register_int_gauge_with_registry!(
                 "wal_mappings",
@@ -232,9 +247,15 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
-            core_lock_wait: register_int_counter_with_registry!(
-                "core_lock_wait",
-                "Time to wait for core lock",
+            core_lock_enqueued: register_int_counter_with_registry!(
+                "core_lock_enqueued",
+                "Number of enqueued core requests",
+                registry,
+            )
+            .unwrap(),
+            core_lock_dequeued: register_int_counter_with_registry!(
+                "core_lock_dequeued",
+                "Number of dequeued core requests",
                 registry,
             )
             .unwrap(),
@@ -245,10 +266,46 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
+            block_handler_cleanup_util: register_int_counter_with_registry!(
+                "block_handler_cleanup_util",
+                "block_handler_cleanup_util",
+                registry,
+            )
+            .unwrap(),
 
             commit_handler_pending_certificates: register_int_gauge_with_registry!(
                 "commit_handler_pending_certificates",
                 "Number of pending certificates in commit handler",
+                registry,
+            )
+            .unwrap(),
+
+            missing_blocks: register_int_gauge_vec_with_registry!(
+                "missing_blocks",
+                "Number of missing blocks per authority",
+                &["authority"],
+                registry,
+            )
+            .unwrap(),
+            block_sync_requests_sent: register_int_counter_vec_with_registry!(
+                "block_sync_requests_sent",
+                "Number of block sync requests sent per authority",
+                &["authority"],
+                registry,
+            )
+            .unwrap(),
+            block_sync_requests_received: register_int_counter_vec_with_registry!(
+                "block_sync_requests_received",
+                "Number of block sync requests received per authority and whether they have been fulfilled",
+                &["authority", "fulfilled"],
+                registry,
+            )
+            .unwrap(),
+
+            utilization_timer: register_int_counter_vec_with_registry!(
+                "utilization_timer",
+                "Utilization timer",
+                &["proc"],
                 registry,
             )
             .unwrap(),
@@ -423,6 +480,11 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
 
 pub trait UtilizationTimerExt {
     fn utilization_timer(&self) -> UtilizationTimer;
+    fn owned_utilization_timer(&self) -> OwnedUtilizationTimer;
+}
+
+pub trait UtilizationTimerVecExt {
+    fn utilization_timer(&self, label: &str) -> OwnedUtilizationTimer;
 }
 
 impl UtilizationTimerExt for IntCounter {
@@ -432,6 +494,19 @@ impl UtilizationTimerExt for IntCounter {
             start: Instant::now(),
         }
     }
+
+    fn owned_utilization_timer(&self) -> OwnedUtilizationTimer {
+        OwnedUtilizationTimer {
+            metric: self.clone(),
+            start: Instant::now(),
+        }
+    }
+}
+
+impl UtilizationTimerVecExt for IntCounterVec {
+    fn utilization_timer(&self, label: &str) -> OwnedUtilizationTimer {
+        self.with_label_values(&[label]).owned_utilization_timer()
+    }
 }
 
 pub struct UtilizationTimer<'a> {
@@ -439,7 +514,18 @@ pub struct UtilizationTimer<'a> {
     start: Instant,
 }
 
+pub struct OwnedUtilizationTimer {
+    metric: IntCounter,
+    start: Instant,
+}
+
 impl<'a> Drop for UtilizationTimer<'a> {
+    fn drop(&mut self) {
+        self.metric.inc_by(self.start.elapsed().as_micros() as u64);
+    }
+}
+
+impl Drop for OwnedUtilizationTimer {
     fn drop(&mut self) {
         self.metric.inc_by(self.start.elapsed().as_micros() as u64);
     }

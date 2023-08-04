@@ -7,7 +7,8 @@ use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
-use crate::runtime::{timestamp_utc, TimeInstant};
+use crate::metrics::UtilizationTimerVecExt;
+use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{
@@ -19,6 +20,7 @@ use crate::{block_manager::BlockManager, metrics::Metrics};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::{
     cmp::max,
@@ -71,6 +73,7 @@ impl<H: BlockHandler> Core<H> {
             Arc::new(wal_reader),
             &wal_writer,
             metrics.clone(),
+            &committee,
         );
         let RecoveredState {
             block_store,
@@ -112,7 +115,7 @@ impl<H: BlockHandler> Core<H> {
             block_writer.insert_own_block(&own_block_data);
             own_block_data
         };
-        let block_manager = BlockManager::new(block_store.clone());
+        let block_manager = BlockManager::new(block_store.clone(), &committee);
         let last_commit_round = last_committed_leader
             .as_ref()
             .map(BlockReference::round)
@@ -156,6 +159,10 @@ impl<H: BlockHandler> Core<H> {
 
     // Note that generally when you update this function you also want to change genesis initialization above
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::add_blocks");
         let processed = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
@@ -172,6 +179,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::run_block_handler");
         let statements = self
             .block_handler
             .handle_blocks(processed, !self.epoch_changing());
@@ -186,6 +197,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::try_new_block");
         let clock_round = self.threshold_clock.get_round();
         if clock_round <= self.last_proposed() {
             return None;
@@ -260,6 +275,8 @@ impl<H: BlockHandler> Core<H> {
                 block.detailed()
             );
         }
+        self.threshold_clock
+            .add_block(*block.reference(), &self.committee);
         self.block_handler.handle_proposal(&block);
         self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
@@ -380,6 +397,13 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_state(&mut self) {
+        #[cfg(feature = "simulator")]
+        if self.block_handler().state().len() >= crate::wal::MAX_ENTRY_SIZE {
+            // todo - this is something needs a proper fix
+            // Need to revisit this after we have a proper synchronizer
+            // We need to put some limit/backpressure on the accumulator state
+            return;
+        }
         self.wal_writer
             .write(WAL_ENTRY_STATE, &self.block_handler().state())
             .expect("Write to wal has failed");
@@ -402,6 +426,10 @@ impl<H: BlockHandler> Core<H> {
         &self.block_store
     }
 
+    pub fn last_own_block(&self) -> &Data<StatementBlock> {
+        &self.last_own_block.block
+    }
+
     pub fn last_proposed(&self) -> RoundNumber {
         self.last_own_block.block.round()
     }
@@ -412,6 +440,10 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn block_handler(&self) -> &H {
         &self.block_handler
+    }
+
+    pub fn block_manager(&self) -> &BlockManager {
+        &self.block_manager
     }
 
     pub fn block_handler_mut(&mut self) -> &mut H {
@@ -440,7 +472,7 @@ impl<H: BlockHandler> Core<H> {
         self.epoch_manager.changing()
     }
 
-    pub fn epoch_closing_time(&self) -> TimeInstant {
+    pub fn epoch_closing_time(&self) -> Arc<AtomicU64> {
         self.epoch_manager.closing_time()
     }
 }
@@ -482,7 +514,7 @@ mod test {
             blocks.push(block.clone());
         }
         assert_eq!(proposed_transactions.len(), 4);
-        let more_blocks = blocks.split_off(2);
+        let more_blocks = blocks.split_off(1);
 
         eprintln!("===");
 

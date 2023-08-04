@@ -340,7 +340,7 @@ impl TransactionLocatorRange {
             self.offset_start_inclusive,
         );
         // todo - should have constant for max transactions per block and use it here
-        const MAX_LEN: u64 = 10 * 1024;
+        const MAX_LEN: u64 = 1024 * 1024;
         let len = self.len() as u64;
         ensure!(
             len < MAX_LEN,
@@ -573,6 +573,7 @@ mod test {
     use rand::prelude::SliceRandom;
     use rand::Rng;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
     pub struct Dag(HashMap<BlockReference, Data<StatementBlock>>);
 
@@ -657,6 +658,10 @@ mod test {
                 }
             }
             authorities
+        }
+
+        pub fn committee(&self) -> Arc<Committee> {
+            Committee::new_test(vec![1; self.authorities().len()])
         }
     }
 

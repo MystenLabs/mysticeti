@@ -384,7 +384,7 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
         let committer = Committer::new(
@@ -407,7 +407,7 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
         let committer = Committer::new(
@@ -432,7 +432,7 @@ mod test {
 
         let n = 10;
         let enough_blocks = wave_length * (n + 1) - 1;
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
         let committer = Committer::new(
@@ -460,7 +460,7 @@ mod test {
 
         let first_commit_round = 2 * wave_length - 1;
         for r in 0..first_commit_round - 1 {
-            let mut block_writer = TestBlockWriter::default();
+            let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, r);
 
             let committer = Committer::new(
@@ -486,7 +486,7 @@ mod test {
         let mut last_committed_round = 0;
         for n in 1..=10 {
             let enough_blocks = wave_length * (n + 1) - 1;
-            let mut block_writer = TestBlockWriter::default();
+            let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, enough_blocks);
 
             let committer = Committer::new(
@@ -513,7 +513,7 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to finish the first wave.
         let round_decision_1 = wave_length - 1;
@@ -570,7 +570,7 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to reach the second leader. Remember that he second leader is part of
         // the genesis.
@@ -612,7 +612,7 @@ mod test {
         let committee = committee(4);
         let wave_length = 3;
 
-        let mut block_writer = TestBlockWriter::default();
+        let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to reach the third leader.
         let round_leader_3 = 2 * wave_length;

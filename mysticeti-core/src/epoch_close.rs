@@ -1,12 +1,15 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use crate::committee::{Committee, QuorumThreshold, StakeAggregator};
 use crate::data::Data;
-use crate::runtime::TimeInstant;
+use crate::runtime::timestamp_utc;
 use crate::types::{EpochStatus, InternalEpochStatus, StatementBlock};
 
 pub struct EpochManager {
     epoch_status: InternalEpochStatus,
     change_aggregator: StakeAggregator<QuorumThreshold>,
-    epoch_close_time: TimeInstant,
+    epoch_close_time: Arc<AtomicU64>,
 }
 
 impl EpochManager {
@@ -14,7 +17,7 @@ impl EpochManager {
         Self {
             epoch_status: Default::default(),
             change_aggregator: StakeAggregator::new(),
-            epoch_close_time: TimeInstant::now(),
+            epoch_close_time: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -41,7 +44,8 @@ impl EpochManager {
                 if is_quorum && (self.epoch_status != InternalEpochStatus::SafeToClose) {
                     assert!(self.epoch_status == InternalEpochStatus::BeginChange); // Agreement and total ordering property of BA
                     self.epoch_status = InternalEpochStatus::SafeToClose;
-                    self.epoch_close_time = TimeInstant::now();
+                    self.epoch_close_time
+                        .store(timestamp_utc().as_millis() as u64, Ordering::Relaxed);
                     tracing::info!("Epoch is now safe to close");
                 }
             }
@@ -57,8 +61,7 @@ impl EpochManager {
         self.epoch_status == InternalEpochStatus::SafeToClose
     }
 
-    pub fn closing_time(&self) -> TimeInstant {
-        assert!(self.closed());
+    pub fn closing_time(&self) -> Arc<AtomicU64> {
         self.epoch_close_time.clone()
     }
 }

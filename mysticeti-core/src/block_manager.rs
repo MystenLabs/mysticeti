@@ -3,23 +3,35 @@
 
 use crate::block_store::{BlockStore, BlockWriter};
 use crate::data::Data;
-use crate::types::{BlockReference, StatementBlock};
 use crate::wal::WalPosition;
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::{
+    committee::Committee,
+    types::{BlockReference, StatementBlock},
+};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 /// Block manager suspends incoming blocks until they are connected to the existing graph,
 /// returning newly connected blocks
 pub struct BlockManager {
+    /// Keeps all pending blocks.
     blocks_pending: HashMap<BlockReference, Data<StatementBlock>>,
+    /// Keeps all the blocks (`HashSet<BlockReference>`) waiting for `BlockReference` to be processed.
     block_references_waiting: HashMap<BlockReference, HashSet<BlockReference>>,
+    /// Keeps all blocks that need to be synced in order to unblock the processing of other pending
+    /// blocks. The indices of the vector correspond the authority indices.
+    missing: Vec<HashSet<BlockReference>>,
     block_store: BlockStore,
 }
 
 impl BlockManager {
-    pub fn new(block_store: BlockStore) -> Self {
+    pub fn new(block_store: BlockStore, committee: &Arc<Committee>) -> Self {
         Self {
             blocks_pending: Default::default(),
             block_references_waiting: Default::default(),
+            missing: (0..committee.len()).map(|_| HashSet::new()).collect(),
             block_store,
         }
     }
@@ -51,8 +63,14 @@ impl BlockManager {
                         .entry(*included_reference)
                         .or_default()
                         .insert(*block_reference);
+                    if !self.blocks_pending.contains_key(included_reference) {
+                        self.missing[included_reference.authority as usize]
+                            .insert(*included_reference);
+                    }
                 }
             }
+            self.missing[block_reference.authority as usize].remove(block_reference);
+
             if !processed {
                 self.blocks_pending.insert(*block_reference, block);
             } else {
@@ -87,6 +105,10 @@ impl BlockManager {
 
         newly_blocks_processed
     }
+
+    pub fn missing_blocks(&self) -> &[HashSet<BlockReference>] {
+        &self.missing
+    }
 }
 
 #[cfg(test)]
@@ -103,10 +125,10 @@ mod tests {
             Dag::draw("A1:[A0, B0]; B1:[A0, B0]; B2:[A0, B1]; A2:[A1, B2]").add_genesis_blocks();
         assert_eq!(dag.len(), 6); // 4 blocks in dag + 2 genesis
         for seed in 0..100u8 {
-            let mut block_writer = TestBlockWriter::new();
+            let mut block_writer = TestBlockWriter::new(&dag.committee());
             println!("Seed {seed}");
             let iter = dag.random_iter(&mut rng(seed));
-            let mut bm = BlockManager::new(block_writer.block_store());
+            let mut bm = BlockManager::new(block_writer.block_store(), &dag.committee());
             let mut processed_blocks = HashSet::new();
             for block in iter {
                 let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);

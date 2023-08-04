@@ -312,6 +312,9 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             "chmod +x install_node_exporter.sh",
             "./install_node_exporter.sh",
 
+            "sudo sysctl net.ipv4.tcp_rmem=\"8192 262144 536870912\"",
+            "sudo sysctl net.ipv4.tcp_wmem=\"4096 16384 536870912\"",
+
             // Create the working directory.
             &format!("mkdir -p {working_dir}"),
             // Clone the repo.
@@ -400,9 +403,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         // many ssh connections for too long.
         let commit = &self.settings.repository.commit;
         let command = [
-            "git fetch -f",
-            &format!("(git checkout -b {commit} {commit} || git checkout -f {commit})"),
-            "(git pull -f || true)",
+            &format!("git fetch origin {commit}"),
+            &format!("(git checkout -b {commit} {commit} || git checkout origin/{commit})"),
             "source $HOME/.cargo/env",
             "cargo build --release",
         ]

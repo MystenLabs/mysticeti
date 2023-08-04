@@ -8,6 +8,8 @@ use crate::committee::{
 use crate::config::StorageDir;
 use crate::data::Data;
 use crate::log::TransactionLog;
+use crate::metrics::UtilizationTimerExt;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
@@ -57,7 +59,10 @@ pub struct RealBlockHandler {
     authority: AuthorityIndex,
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
+    pending_transactions: usize,
 }
+
+const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
 
 impl RealBlockHandler {
     pub fn new(
@@ -76,8 +81,20 @@ impl RealBlockHandler {
             authority,
             metrics,
             receiver,
+            pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
         };
         (this, sender)
+    }
+}
+
+impl RealBlockHandler {
+    fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
+        if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
+            return None;
+        }
+        let received = self.receiver.try_recv().ok()?;
+        self.pending_transactions += received.len();
+        Some(received)
     }
 }
 
@@ -87,16 +104,19 @@ impl BlockHandler for RealBlockHandler {
         blocks: &[Data<StatementBlock>],
         require_response: bool,
     ) -> Vec<BaseStatement> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("BlockHandler::handle_blocks");
         let mut response = vec![];
-        let transaction_time = self.transaction_time.lock();
         if require_response {
-            while let Ok(data) = self.receiver.try_recv() {
-                // todo - we need a semaphore to limit number of transactions in wal not yet included in the block
+            while let Some(data) = self.receive_with_limit() {
                 for tx in data {
                     response.push(BaseStatement::Share(tx));
                 }
             }
         }
+        let transaction_time = self.transaction_time.lock();
         for block in blocks {
             let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
                 Some(&mut response)
@@ -121,6 +141,8 @@ impl BlockHandler for RealBlockHandler {
     }
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+        // todo - this is not super efficient
+        self.pending_transactions -= block.shared_transactions().count();
         let mut transaction_time = self.transaction_time.lock();
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
@@ -138,6 +160,7 @@ impl BlockHandler for RealBlockHandler {
     }
 
     fn cleanup(&self) {
+        let _timer = self.metrics.block_handler_cleanup_util.utilization_timer();
         // todo - all of this should go away and we should measure tx latency differently
         let mut l = self.transaction_time.lock();
         l.retain(|_k, v| v.elapsed() < Duration::from_secs(10));

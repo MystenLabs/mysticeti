@@ -1,10 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::metrics::{print_network_address_table, Metrics};
 use crate::stat::HistogramSender;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
+use crate::{
+    metrics::{print_network_address_table, Metrics},
+    types::BlockReference,
+};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use rand::prelude::ThreadRng;
@@ -30,6 +33,10 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
+    /// Request a few specific block references (this is not indented for large requests).
+    RequestBlocks(Vec<BlockReference>),
+    /// Indicate that a requested block is not found.
+    BlockNotFound(Vec<BlockReference>),
 }
 
 pub struct Network {

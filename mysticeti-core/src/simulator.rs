@@ -31,7 +31,7 @@ pub trait SimulatorState {
     fn handle_event(&mut self, event: Self::Event);
 }
 
-impl<S: SimulatorState> Simulator<S>
+impl<S: SimulatorState + 'static> Simulator<S>
 where
     S::Event: 'static,
 {
@@ -76,11 +76,22 @@ where
 
     fn run_event(&mut self, state: usize, event: S::Event) {
         Scheduler::<S::Event>::enter(self.time, self.rng.take().unwrap());
-        let state = &mut self.states[state];
+        // Exiting scheduler in the drop handler to make sure it rungs even if handle_event panics
+        let guard = SchedulerEnterGuard { simulator: self };
+        let state = &mut guard.simulator.states[state];
         state.handle_event(event);
+    }
+}
+
+struct SchedulerEnterGuard<'a, E: SimulatorState + 'static> {
+    simulator: &'a mut Simulator<E>,
+}
+
+impl<'a, E: SimulatorState + 'static> Drop for SchedulerEnterGuard<'a, E> {
+    fn drop(&mut self) {
         let (events, rng) = Scheduler::exit();
-        self.rng = Some(rng);
-        self.events.extend(events);
+        self.simulator.rng = Some(rng);
+        self.simulator.events.extend(events);
     }
 }
 

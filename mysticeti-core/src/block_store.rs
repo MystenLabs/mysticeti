@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_interpreter::CommittedSubDag;
+use crate::committee::Committee;
 use crate::data::Data;
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -25,10 +26,12 @@ pub struct BlockStore {
 
 #[derive(Default)]
 struct BlockStoreInner {
-    index: HashMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
+    index: BTreeMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
     own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
     authority: AuthorityIndex,
+    last_seen_by_authority: Vec<RoundNumber>,
+    last_own_block: Option<BlockReference>,
 }
 
 pub trait BlockWriter {
@@ -48,9 +51,12 @@ impl BlockStore {
         block_wal_reader: Arc<WalReader>,
         wal_writer: &WalWriter,
         metrics: Arc<Metrics>,
+        committee: &Committee,
     ) -> RecoveredState {
+        let last_seen_by_authority = committee.authorities().map(|_| 0).collect();
         let mut inner = BlockStoreInner {
             authority,
+            last_seen_by_authority,
             ..Default::default()
         };
         let mut builder = RecoveredStateBuilder::new();
@@ -165,6 +171,7 @@ impl BlockStore {
         if threshold_round == 0 {
             return;
         }
+        let _timer = self.metrics.block_store_cleanup_util.utilization_timer();
         let unloaded = self.inner.write().unload_below_round(threshold_round);
         self.metrics
             .block_store_unloaded_blocks
@@ -180,6 +187,27 @@ impl BlockStore {
     ) -> Vec<Data<StatementBlock>> {
         let entries = self.inner.read().get_own_blocks(from_excluded, limit);
         self.read_index_vec(entries)
+    }
+
+    pub fn get_others_blocks(
+        &self,
+        from_excluded: RoundNumber,
+        authority: AuthorityIndex,
+        limit: usize,
+    ) -> Vec<Data<StatementBlock>> {
+        let entries = self
+            .inner
+            .read()
+            .get_others_blocks(from_excluded, authority, limit);
+        self.read_index_vec(entries)
+    }
+
+    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
+        self.inner.read().last_seen_by_authority(authority)
+    }
+
+    pub fn last_own_block_ref(&self) -> Option<BlockReference> {
+        self.inner.read().last_own_block()
     }
 
     fn read_index(&self, entry: IndexEntry) -> Data<StatementBlock> {
@@ -304,16 +332,35 @@ impl BlockStoreInner {
         let map = self.index.entry(reference.round()).or_default();
         map.insert(reference.author_digest(), IndexEntry::WalPosition(position));
         self.add_own_index(reference);
+        self.update_last_seen_by_authority(reference);
     }
 
     pub fn add_loaded(&mut self, position: WalPosition, block: Data<StatementBlock>) {
         self.highest_round = max(self.highest_round, block.round());
         self.add_own_index(block.reference());
+        self.update_last_seen_by_authority(block.reference());
         let map = self.index.entry(block.round()).or_default();
         map.insert(
             (block.author(), block.digest()),
             IndexEntry::Loaded(position, block),
         );
+    }
+
+    pub fn last_seen_by_authority(&self, authority: AuthorityIndex) -> RoundNumber {
+        *self
+            .last_seen_by_authority
+            .get(authority as usize)
+            .expect("last_seen_by_authority not found")
+    }
+
+    fn update_last_seen_by_authority(&mut self, reference: &BlockReference) {
+        let last_seen = self
+            .last_seen_by_authority
+            .get_mut(reference.authority as usize)
+            .expect("last_seen_by_authority not found");
+        if reference.round() > *last_seen {
+            *last_seen = reference.round();
+        }
     }
 
     pub fn get_own_blocks(&self, from_excluded: RoundNumber, limit: usize) -> Vec<IndexEntry> {
@@ -335,14 +382,46 @@ impl BlockStoreInner {
             .collect()
     }
 
+    pub fn get_others_blocks(
+        &self,
+        from_excluded: RoundNumber,
+        authority: AuthorityIndex,
+        limit: usize,
+    ) -> Vec<IndexEntry> {
+        self.index
+            .range((from_excluded + 1)..)
+            .take(limit)
+            .flat_map(|(round, map)| {
+                map.keys()
+                    .filter(|(a, _)| *a == authority)
+                    .map(|(a, d)| BlockReference {
+                        authority: *a,
+                        round: *round,
+                        digest: *d,
+                    })
+            })
+            .map(|reference| {
+                self.get_block(reference)
+                    .unwrap_or_else(|| panic!("Block index corrupted, not found: {reference}"))
+            })
+            .collect()
+    }
+
     fn add_own_index(&mut self, reference: &BlockReference) {
         if reference.authority != self.authority {
             return;
+        }
+        if reference.round > self.last_own_block.map(|r| r.round).unwrap_or_default() {
+            self.last_own_block = Some(*reference);
         }
         assert!(self
             .own_blocks
             .insert(reference.round, reference.digest)
             .is_none());
+    }
+
+    pub fn last_own_block(&self) -> Option<BlockReference> {
+        self.last_own_block
     }
 }
 

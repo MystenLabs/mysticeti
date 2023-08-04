@@ -391,6 +391,8 @@ impl<H: BlockHandler> Core<H> {
         }
         self.write_state(); // todo - this can be done less frequently to reduce IO
         self.write_commits(&commit_data, state);
+        // todo - We should also persist state of the epoch manager, otherwise if validator
+        // restarts during epoch change it will fork on the epoch change state.
         commit_data
     }
 

@@ -248,6 +248,10 @@ impl<TH: CommitteeThreshold> StakeAggregator<TH> {
         self.votes.clear();
         self.stake = 0;
     }
+
+    pub fn voters(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
+        self.votes.present()
+    }
 }
 
 impl<

@@ -5,7 +5,8 @@ use crate::serde::{ByteRepr, BytesVisitor};
 #[cfg(not(test))]
 use crate::types::Vote;
 use crate::types::{
-    AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock, TimestampNs,
+    AuthorityIndex, BaseStatement, BlockReference, EpochStatus, RoundNumber, StatementBlock,
+    TimestampNs,
 };
 use digest::Digest;
 #[cfg(not(test))]
@@ -40,6 +41,7 @@ impl BlockDigest {
         includes: &[BlockReference],
         statements: &[BaseStatement],
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
         signature: &SignatureBytes,
     ) -> Self {
         let mut hasher = BlockHasher::default();
@@ -50,6 +52,7 @@ impl BlockDigest {
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
         );
         hasher.update(signature);
         Self(hasher.finalize().into())
@@ -62,6 +65,7 @@ impl BlockDigest {
         _includes: &[BlockReference],
         _statements: &[BaseStatement],
         _meta_creation_time_ns: TimestampNs,
+        _epoch_marker: EpochStatus,
         _signature: &SignatureBytes,
     ) -> Self {
         Default::default()
@@ -82,6 +86,7 @@ impl BlockDigest {
         includes: &[BlockReference],
         statements: &[BaseStatement],
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
     ) {
         authority.crypto_hash(hasher);
         round.crypto_hash(hasher);
@@ -114,6 +119,7 @@ impl BlockDigest {
             }
         }
         meta_creation_time_ns.crypto_hash(hasher);
+        epoch_marker.crypto_hash(hasher);
     }
 }
 
@@ -170,6 +176,7 @@ impl PublicKey {
             block.includes(),
             block.statements(),
             block.meta_creation_time_ns(),
+            block.epoch_changed(),
         );
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
         self.0.verify(&signature, digest.as_ref())
@@ -190,6 +197,7 @@ impl Signer {
         includes: &[BlockReference],
         statements: &[BaseStatement],
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
     ) -> SignatureBytes {
         let mut hasher = BlockHasher::default();
         BlockDigest::digest_without_signature(
@@ -199,6 +207,7 @@ impl Signer {
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
         );
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
         let signature = self.0.sign(digest.as_ref());
@@ -213,6 +222,7 @@ impl Signer {
         _includes: &[BlockReference],
         _statements: &[BaseStatement],
         _meta_creation_time_ns: TimestampNs,
+        _epoch_marker: EpochStatus,
     ) -> SignatureBytes {
         Default::default()
     }

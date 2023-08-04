@@ -4,6 +4,7 @@
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
 use crate::committee::Committee;
+use crate::config::Parameters;
 use crate::core::{Core, CoreOptions};
 use crate::data::Data;
 #[cfg(feature = "simulator")]
@@ -14,7 +15,9 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{format_authority_index, AuthorityIndex, BlockReference, StatementBlock};
+use crate::types::{
+    format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,
+};
 use crate::wal::{open_file_for_wal, walf, WalPosition, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
 use futures::future::join_all;
@@ -40,12 +43,35 @@ pub fn committee_and_cores(
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted(n, None)
+    committee_and_cores_persisted_epoch_duration(n, None, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+}
+
+pub fn committee_and_cores_epoch_duration(
+    n: usize,
+    rounds_in_epoch: RoundNumber,
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
+    committee_and_cores_persisted_epoch_duration(n, None, rounds_in_epoch)
 }
 
 pub fn committee_and_cores_persisted(
     n: usize,
     path: Option<&Path>,
+) -> (
+    Arc<Committee>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<MetricReporter>,
+) {
+    committee_and_cores_persisted_epoch_duration(n, path, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+}
+
+pub fn committee_and_cores_persisted_epoch_duration(
+    n: usize,
+    path: Option<&Path>,
+    rounds_in_epoch: RoundNumber,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
@@ -74,6 +100,7 @@ pub fn committee_and_cores_persisted(
                 block_handler,
                 authority,
                 committee.clone(),
+                rounds_in_epoch,
                 metrics,
                 wal_file,
                 CoreOptions::test(),
@@ -137,7 +164,19 @@ pub fn simulated_network_syncers(
     Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
     Vec<MetricReporter>,
 ) {
-    let (committee, cores, reporters) = committee_and_cores(n);
+    simulated_network_syncers_with_epoch_duration(n, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+}
+
+#[cfg(feature = "simulator")]
+pub fn simulated_network_syncers_with_epoch_duration(
+    n: usize,
+    rounds_in_epoch: RoundNumber,
+) -> (
+    SimulatedNetwork,
+    Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    Vec<MetricReporter>,
+) {
+    let (committee, cores, reporters) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
@@ -147,7 +186,14 @@ pub fn simulated_network_syncers(
             core.metrics.clone(),
         );
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+        let network_syncer = NetworkSyncer::start(
+            network,
+            core,
+            3,
+            commit_handler,
+            Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            test_metrics(),
+        );
         drop(node_context);
         network_syncers.push(network_syncer);
     }
@@ -155,7 +201,14 @@ pub fn simulated_network_syncers(
 }
 
 pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    let (committee, cores, _) = committee_and_cores(n);
+    network_syncers_with_epoch_duration(n, Parameters::DEFAULT_ROUNDS_IN_EPOCH).await
+}
+
+pub async fn network_syncers_with_epoch_duration(
+    n: usize,
+    rounds_in_epoch: RoundNumber,
+) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
+    let (committee, cores, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
@@ -165,7 +218,14 @@ pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, Te
             core.block_handler().transaction_time.clone(),
             test_metrics(),
         );
-        let network_syncer = NetworkSyncer::start(network, core, 3, commit_handler, test_metrics());
+        let network_syncer = NetworkSyncer::start(
+            network,
+            core,
+            3,
+            commit_handler,
+            Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            test_metrics(),
+        );
         network_syncers.push(network_syncer);
     }
     network_syncers

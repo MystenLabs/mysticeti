@@ -40,6 +40,8 @@ pub struct Parameters {
     identifiers: Vec<Identifier>,
     wave_length: RoundNumber,
     leader_timeout: Duration,
+    rounds_in_epoch: RoundNumber,
+    shutdown_grace_period: Duration,
 }
 
 impl Parameters {
@@ -49,6 +51,10 @@ impl Parameters {
     pub const DEFAULT_LEADER_TIMEOUT: Duration = Duration::from_secs(2);
 
     pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
+
+    // needs to be sufficiently long to run benchmarks
+    pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 3_600_000;
+    pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;
@@ -69,6 +75,8 @@ impl Parameters {
             identifiers,
             wave_length: Self::DEFAULT_WAVE_LENGTH,
             leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
+            rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
+            shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
         }
     }
 
@@ -96,6 +104,14 @@ impl Parameters {
 
     pub fn wave_length(&self) -> RoundNumber {
         self.wave_length
+    }
+
+    pub fn shutdown_grace_period(&self) -> Duration {
+        self.shutdown_grace_period
+    }
+
+    pub fn rounds_in_epoch(&self) -> RoundNumber {
+        self.rounds_in_epoch
     }
 }
 

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::commit_interpreter::CommitInterpreter;
+use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
@@ -16,10 +16,7 @@ use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
-use crate::{
-    block_store::{BlockStore, CommitData},
-    metrics::Metrics,
-};
+use crate::{block_store::BlockStore, metrics::Metrics};
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -29,7 +26,11 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub trait BlockHandler: Send + Sync {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement>;
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement>;
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>);
 
@@ -98,22 +99,33 @@ impl RealBlockHandler {
 }
 
 impl BlockHandler for RealBlockHandler {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement> {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("BlockHandler::handle_blocks");
         let mut response = vec![];
-        while let Some(data) = self.receive_with_limit() {
-            for tx in data {
-                response.push(BaseStatement::Share(tx));
+        if require_response {
+            while let Some(data) = self.receive_with_limit() {
+                for tx in data {
+                    response.push(BaseStatement::Share(tx));
+                }
             }
         }
         let transaction_time = self.transaction_time.lock();
         for block in blocks {
+            let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
+                Some(&mut response)
+            } else {
+                None
+            };
             let processed =
                 self.transaction_votes
-                    .process_block(block, Some(&mut response), &self.committee);
+                    .process_block(block, response_option, &self.committee);
             for processed_locator in processed {
                 if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics
@@ -195,29 +207,40 @@ impl TestBlockHandler {
 }
 
 impl BlockHandler for TestBlockHandler {
-    fn handle_blocks(&mut self, blocks: &[Data<StatementBlock>]) -> Vec<BaseStatement> {
+    fn handle_blocks(
+        &mut self,
+        blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement> {
         // todo - this is ugly, but right now we need a way to recover self.last_transaction
-        for block in blocks {
-            if block.author() == self.authority {
-                // We can see our own block in handle_blocks - this can happen during core recovery
-                // Todo - we might also need to process pending Payload statements as well
-                for statement in block.statements() {
-                    if let BaseStatement::Share(_) = statement {
-                        self.last_transaction += 1;
+        let mut response = vec![];
+        if require_response {
+            for block in blocks {
+                if block.author() == self.authority {
+                    // We can see our own block in handle_blocks - this can happen during core recovery
+                    // Todo - we might also need to process pending Payload statements as well
+                    for statement in block.statements() {
+                        if let BaseStatement::Share(_) = statement {
+                            self.last_transaction += 1;
+                        }
                     }
                 }
             }
+            self.last_transaction += 1;
+            let next_transaction = Self::make_transaction(self.last_transaction);
+            response.push(BaseStatement::Share(next_transaction));
         }
-        let mut response = vec![];
-        self.last_transaction += 1;
-        let next_transaction = Self::make_transaction(self.last_transaction);
-        response.push(BaseStatement::Share(next_transaction));
         let transaction_time = self.transaction_time.lock();
         for block in blocks {
             println!("Processing {block:?}");
+            let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
+                Some(&mut response)
+            } else {
+                None
+            };
             let processed =
                 self.transaction_votes
-                    .process_block(block, Some(&mut response), &self.committee);
+                    .process_block(block, response_option, &self.committee);
             for processed_locator in processed {
                 if let Some(instant) = transaction_time.get(&processed_locator) {
                     self.metrics
@@ -374,13 +397,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-    ) -> Vec<CommitData> {
+    ) -> Vec<CommittedSubDag> {
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);
         let transaction_time = self.transaction_time.lock();
-        let mut commit_data = vec![];
-        for commit in committed {
+        for commit in &committed {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
                 let processed = self
@@ -405,13 +427,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                     }
                 }
             }
-            commit_data.push(CommitData::from(&commit));
             // self.committed_dags.push(commit);
         }
         self.metrics
             .commit_handler_pending_certificates
             .set(self.transaction_votes.len() as i64);
-        commit_data
+        committed
     }
 
     fn aggregator_state(&self) -> Bytes {

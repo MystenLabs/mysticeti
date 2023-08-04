@@ -28,6 +28,7 @@ pub fn sleep(duration: Duration) -> Sleep {
     Sleep::new(duration)
 }
 
+#[derive(Clone)]
 pub struct TimeInstant(Duration);
 
 impl TimeInstant {

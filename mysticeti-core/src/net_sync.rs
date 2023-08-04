@@ -1,8 +1,8 @@
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
-use crate::runtime;
 use crate::runtime::Handle;
+use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
@@ -13,6 +13,8 @@ use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
 use futures::future::join_all;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
@@ -34,6 +36,8 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     pub notify: Arc<Notify>,
     committee: Arc<Committee>,
     stop: mpsc::Sender<()>,
+    epoch_close_signal: mpsc::Sender<()>,
+    pub epoch_closing_time: Arc<AtomicU64>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -42,6 +46,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut core: Core<H>,
         commit_period: u64,
         mut commit_observer: C,
+        shutdown_grace_period: Duration,
         metrics: Arc<Metrics>,
     ) -> Self {
         let authority_index = core.authority();
@@ -53,6 +58,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
+        let epoch_closing_time = core.epoch_closing_time();
         let mut syncer = Syncer::new(
             core,
             commit_period,
@@ -64,12 +70,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let syncer = CoreThreadDispatcher::start(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
+        let (epoch_sender, epoch_receiver) = mpsc::channel(1);
+        epoch_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
             block_store,
             committee,
             stop: stop_sender.clone(),
+            epoch_close_signal: epoch_sender.clone(),
+            epoch_closing_time,
         });
         let block_fetcher = Arc::new(BlockFetcher::start(
             authority_index,
@@ -79,10 +89,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let main_task = handle.spawn(Self::run(
             network,
             inner.clone(),
+            epoch_receiver,
+            shutdown_grace_period,
             block_fetcher,
             metrics.clone(),
         ));
-        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender);
+        let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
             inner,
             main_task,
@@ -105,12 +117,18 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     async fn run(
         mut network: Network,
         inner: Arc<NetworkSyncerInner<H, C>>,
+        epoch_close_signal: mpsc::Receiver<()>,
+        shutdown_grace_period: Duration,
         block_fetcher: Arc<BlockFetcher>,
         metrics: Arc<Metrics>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
-        let leader_timeout_task = handle.spawn(Self::leader_timeout_task(inner.clone()));
+        let leader_timeout_task = handle.spawn(Self::leader_timeout_task(
+            inner.clone(),
+            epoch_close_signal,
+            shutdown_grace_period,
+        ));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
@@ -206,7 +224,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         None
     }
 
-    async fn leader_timeout_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
+    async fn leader_timeout_task(
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        mut epoch_close_signal: mpsc::Receiver<()>,
+        shutdown_grace_period: Duration,
+    ) -> Option<()> {
         let leader_timeout = Duration::from_secs(1);
         loop {
             let notified = inner.notify.notified();
@@ -215,6 +237,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 .last_own_block_ref()
                 .map(|b| b.round())
                 .unwrap_or_default();
+            let closing_time = inner.epoch_closing_time.load(Ordering::Relaxed);
+            let shutdown_duration = if closing_time != 0 {
+                shutdown_grace_period.saturating_sub(
+                    timestamp_utc().saturating_sub(Duration::from_millis(closing_time)),
+                )
+            } else {
+                Duration::MAX
+            };
+            if Duration::is_zero(&shutdown_duration) {
+                return None;
+            }
             select! {
                 _sleep = runtime::sleep(leader_timeout) => {
                     tracing::debug!("Timeout {round}");
@@ -223,6 +256,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 _notified = notified => {
                     // restart loop
+                }
+                _epoch_shutdown = runtime::sleep(shutdown_duration) => {
+                    tracing::info!("Shutting down sync after epoch close");
+                    epoch_close_signal.close();
                 }
                 _stopped = inner.stopped() => {
                     return None;
@@ -259,6 +296,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
                 assert!(stopped.is_err());
                 None
             }
+            closed = self.epoch_close_signal.send(()) => {
+                assert!(closed.is_err());
+                None
+            }
             data = channel.recv() => {
                 data
             }
@@ -266,8 +307,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
     }
 
     async fn stopped(&self) {
-        let res = self.stop.send(()).await;
-        assert!(res.is_err());
+        select! {
+            stopped = self.stop.send(()) => {
+                assert!(stopped.is_err());
+            }
+            closed = self.epoch_close_signal.send(()) => {
+                assert!(closed.is_err());
+            }
+        }
     }
 }
 
@@ -280,17 +327,23 @@ impl SyncerSignals for Arc<Notify> {
 pub struct AsyncWalSyncer {
     wal_syncer: WalSyncer,
     stop: mpsc::Sender<()>,
+    epoch_signal: mpsc::Sender<()>,
     _sender: oneshot::Sender<()>,
     runtime: tokio::runtime::Handle,
 }
 
 impl AsyncWalSyncer {
     #[cfg(not(feature = "simulator"))]
-    pub fn start(wal_syncer: WalSyncer, stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+    pub fn start(
+        wal_syncer: WalSyncer,
+        stop: mpsc::Sender<()>,
+        epoch_signal: mpsc::Sender<()>,
+    ) -> oneshot::Receiver<()> {
         let (sender, receiver) = oneshot::channel();
         let this = Self {
             wal_syncer,
             stop,
+            epoch_signal,
             _sender: sender,
             runtime: tokio::runtime::Handle::current(),
         };
@@ -302,7 +355,11 @@ impl AsyncWalSyncer {
     }
 
     #[cfg(feature = "simulator")]
-    pub fn start(_wal_syncer: WalSyncer, _stop: mpsc::Sender<()>) -> oneshot::Receiver<()> {
+    pub fn start(
+        _wal_syncer: WalSyncer,
+        _stop: mpsc::Sender<()>,
+        _epoch_signal: mpsc::Sender<()>,
+    ) -> oneshot::Receiver<()> {
         oneshot::channel().1
     }
 
@@ -323,6 +380,10 @@ impl AsyncWalSyncer {
                 false
             }
             _signal = self.stop.send(()) => {
+                true
+            }
+            _ = self.epoch_signal.send(()) => {
+                // might need to sync wal completely before shutting down
                 true
             }
         }
@@ -353,11 +414,127 @@ mod tests {
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod sim_tests {
+    use super::NetworkSyncer;
+    use crate::block_handler::{TestBlockHandler, TestCommitHandler};
+    use crate::config::Parameters;
+    use crate::finalization_interpreter::FinalizationInterpreter;
     use crate::future_simulator::SimulatedExecutorState;
     use crate::runtime;
     use crate::simulator_tracing::setup_simulator_tracing;
-    use crate::test_util::{check_commits, print_stats, rng_at_seed, simulated_network_syncers};
+    use crate::syncer::Syncer;
+    use crate::test_util::{
+        check_commits, print_stats, rng_at_seed, simulated_network_syncers,
+        simulated_network_syncers_with_epoch_duration,
+    };
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::Notify;
+
+    #[test]
+    fn test_epoch_close() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_epoch_close_async());
+    }
+
+    async fn test_epoch_close_async() {
+        let n = 4;
+        let rounds_in_epoch = 3000;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
+        let syncers = wait_for_epoch_to_close(network_syncers).await;
+        for syncer in syncers.iter() {
+            if syncer.core().epoch_closed() {
+                ()
+            } else {
+                panic!("Epoch should have closed!")
+            }
+        }
+    }
+
+    async fn wait_for_epoch_to_close(
+        network_syncers: Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
+    ) -> Vec<Syncer<TestBlockHandler, Arc<Notify>, TestCommitHandler>> {
+        let mut any_closed = false;
+        while !any_closed {
+            for net_sync in network_syncers.iter() {
+                if net_sync.inner.epoch_closing_time.load(Ordering::Relaxed) != 0 {
+                    any_closed = true;
+                }
+            }
+            runtime::sleep(Duration::from_secs(10)).await;
+        }
+        runtime::sleep(Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD).await;
+        let mut syncers = vec![];
+        for net_sync in network_syncers {
+            let syncer = net_sync.shutdown().await;
+            syncers.push(syncer);
+        }
+        syncers
+    }
+    #[test]
+    fn test_exact_commits_in_epoch() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_exact_commits_in_epoch_async());
+    }
+
+    async fn test_exact_commits_in_epoch_async() {
+        let n = 4;
+        let rounds_in_epoch = 3000;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
+        let syncers = wait_for_epoch_to_close(network_syncers).await;
+        let canonical_commit_seq = syncers[0].commit_observer().committed_leaders().clone();
+        for syncer in syncers {
+            let commit_seq = syncer.commit_observer().committed_leaders().clone();
+            assert_eq!(canonical_commit_seq, commit_seq);
+        }
+    }
+
+    #[test]
+    fn test_finalization_epoch_safety() {
+        SimulatedExecutorState::run(rng_at_seed(0), test_finalization_safety_async());
+    }
+
+    async fn test_finalization_safety_async() {
+        // todo - no cleanup of block store
+        let n = 4;
+        let rounds_in_epoch = 10;
+        let (simulated_network, network_syncers, _) =
+            simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
+        simulated_network.connect_all().await;
+        let syncers = wait_for_epoch_to_close(network_syncers).await;
+        for syncer in syncers.iter() {
+            let block_store = syncer.core().block_store();
+            let committee = syncer.core().committee().clone();
+            let latest_committed_leader =
+                syncer.commit_observer().committed_leaders().last().unwrap();
+
+            println!(
+                "Num of Committed leaders: {:?}",
+                syncer.commit_observer().committed_leaders()
+            );
+
+            let mut finalization_interpreter = FinalizationInterpreter::new(block_store, committee);
+            let finalized_tx_certifying_blocks =
+                finalization_interpreter.finalized_tx_certifying_blocks();
+
+            for (_, certificates) in finalized_tx_certifying_blocks {
+                // check if at least one certificate is committed
+                let mut committed = false;
+                for certifying_block in certificates {
+                    if block_store.linked(
+                        &block_store.get_block(*latest_committed_leader).unwrap(),
+                        &block_store.get_block(certifying_block).unwrap(),
+                    ) {
+                        committed = true;
+                        break;
+                    }
+                }
+                assert!(committed);
+            }
+        }
+    }
 
     #[test]
     fn test_network_sync_sim_all_up() {

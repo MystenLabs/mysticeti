@@ -41,4 +41,7 @@ mod serde;
 mod simulator_tracing;
 mod stat;
 mod state;
+
+mod epoch_close;
+mod finalization_interpreter;
 mod synchronizer;

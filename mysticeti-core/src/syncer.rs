@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::{BlockStore, CommitData};
+use crate::block_store::BlockStore;
+use crate::commit_interpreter::CommittedSubDag;
 use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
@@ -30,7 +31,7 @@ pub trait CommitObserver: Send + Sync {
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
-    ) -> Vec<CommitData>;
+    ) -> Vec<CommittedSubDag>;
 
     fn aggregator_state(&self) -> Bytes;
 
@@ -87,6 +88,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             self.signals.new_block_ready();
             self.force_new_block = false;
 
+            if self.core.epoch_closed() {
+                return;
+            }; // No need to commit after epoch is safe to close
+
             let newly_committed = self.core.try_commit(3);
             let utc_now = timestamp_utc();
             if !newly_committed.is_empty() {
@@ -101,12 +106,13 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
-            let commit_data = self
+            let committed_subdag = self
                 .commit_observer
                 .handle_commit(self.core.block_store(), newly_committed);
-            self.core.write_state(); // todo - this can be done less frequently to reduce IO
-            self.core
-                .write_commits(&commit_data, &self.commit_observer.aggregator_state());
+            self.core.handle_committed_subdag(
+                committed_subdag,
+                &self.commit_observer.aggregator_state(),
+            );
         }
     }
 

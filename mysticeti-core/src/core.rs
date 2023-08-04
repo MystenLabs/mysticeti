@@ -2,9 +2,11 @@ use crate::block_store::{
     BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
     WAL_ENTRY_STATE,
 };
+use crate::commit_interpreter::CommittedSubDag;
 use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
+use crate::epoch_close::EpochManager;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
@@ -16,6 +18,7 @@ use crate::{block_manager::BlockManager, metrics::Metrics};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::{
     cmp::max,
@@ -38,6 +41,8 @@ pub struct Core<H: BlockHandler> {
     signer: Signer,
     // todo - ugly, probably need to merge syncer and core
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
+    epoch_manager: EpochManager,
+    rounds_in_epoch: RoundNumber,
 }
 
 pub struct CoreOptions {
@@ -55,6 +60,7 @@ impl<H: BlockHandler> Core<H> {
         mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
+        rounds_in_epoch: RoundNumber,
         metrics: Arc<Metrics>,
         wal_file: File,
         options: CoreOptions,
@@ -117,6 +123,8 @@ impl<H: BlockHandler> Core<H> {
             block_handler.recover_state(&state);
         }
 
+        let epoch_manager = EpochManager::new();
+
         let mut this = Self {
             block_manager,
             pending,
@@ -132,6 +140,8 @@ impl<H: BlockHandler> Core<H> {
             options,
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
+            epoch_manager,
+            rounds_in_epoch,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -171,7 +181,9 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::run_block_handler");
-        let statements = self.block_handler.handle_blocks(processed);
+        let statements = self
+            .block_handler
+            .handle_blocks(processed, !self.epoch_changing());
         let serialized_statements =
             bincode::serialize(&statements).expect("Payload serialization failed");
         let position = self
@@ -228,7 +240,9 @@ impl<H: BlockHandler> Core<H> {
                     }
                 }
                 MetaStatement::Payload(payload) => {
-                    statements.extend(payload);
+                    if !self.epoch_changing() {
+                        statements.extend(payload);
+                    }
                 }
             }
         }
@@ -241,6 +255,7 @@ impl<H: BlockHandler> Core<H> {
             includes,
             statements,
             time_ns,
+            self.epoch_changing(),
             &self.signer,
         );
         assert_eq!(
@@ -320,6 +335,11 @@ impl<H: BlockHandler> Core<H> {
             sequence.iter().last().map_or(0, |x| x.round()),
         );
 
+        // todo: should ideally come from execution result of epoch smart contract
+        if self.last_commit_round > self.rounds_in_epoch {
+            self.epoch_manager.epoch_change_begun();
+        }
+
         sequence
     }
 
@@ -354,6 +374,26 @@ impl<H: BlockHandler> Core<H> {
                 false
             }
         }
+    }
+
+    pub fn handle_committed_subdag(
+        &mut self,
+        committed: Vec<CommittedSubDag>,
+        state: &Bytes,
+    ) -> Vec<CommitData> {
+        let mut commit_data = vec![];
+        for commit in &committed {
+            for block in &commit.blocks {
+                self.epoch_manager
+                    .observe_committed_block(block, &self.committee);
+            }
+            commit_data.push(CommitData::from(commit));
+        }
+        self.write_state(); // todo - this can be done less frequently to reduce IO
+        self.write_commits(&commit_data, state);
+        // todo - We should also persist state of the epoch manager, otherwise if validator
+        // restarts during epoch change it will fork on the epoch change state.
+        commit_data
     }
 
     pub fn write_state(&mut self) {
@@ -418,6 +458,18 @@ impl<H: BlockHandler> Core<H> {
         assert!(round == 0 || round % period == 0);
 
         self.committee.elect_leader(round / period)
+    }
+
+    pub fn epoch_closed(&self) -> bool {
+        self.epoch_manager.closed()
+    }
+
+    pub fn epoch_changing(&self) -> bool {
+        self.epoch_manager.changing()
+    }
+
+    pub fn epoch_closing_time(&self) -> Arc<AtomicU64> {
+        self.epoch_manager.closing_time()
     }
 }
 

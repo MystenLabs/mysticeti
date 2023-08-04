@@ -102,6 +102,7 @@ impl Validator {
             block_handler,
             authority,
             committee.clone(),
+            parameters.rounds_in_epoch(),
             metrics.clone(),
             wal_file,
             CoreOptions::test(),
@@ -118,6 +119,7 @@ impl Validator {
             core,
             parameters.wave_length(),
             commit_handler,
+            parameters.shutdown_grace_period(),
             metrics,
         );
 

@@ -46,7 +46,7 @@ where
 
     pub fn schedule_event(&mut self, after: Duration, state: usize, event: S::Event) {
         self.events.push(ScheduledEvent {
-            time: self.time + after,
+            time: self.time.saturating_add(after),
             state,
             event,
         });
@@ -102,7 +102,7 @@ thread_local! {
 impl<E: 'static> Scheduler<E> {
     pub fn schedule_event(after: Duration, state: usize, event: E) -> Duration {
         Self::with(|scheduler| {
-            let time = scheduler.time + after;
+            let time = scheduler.time.saturating_add(after);
             scheduler.events.push(ScheduledEvent { time, state, event });
             time
         })

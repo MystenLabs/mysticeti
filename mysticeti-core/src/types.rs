@@ -33,6 +33,18 @@ pub enum Vote {
     Reject(Option<TransactionLocator>),
 }
 
+pub type EpochStatus = bool;
+
+#[derive(PartialEq, Default, Clone, Copy, Serialize, Deserialize)]
+pub enum InternalEpochStatus {
+    #[default]
+    Open,
+    /// Change is triggered by an external deterministic mechanism
+    BeginChange,
+    /// Epoch is safe to close -- committed blocks from >= 2f+1 stake indicate epoch change
+    SafeToClose,
+}
+
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
@@ -66,6 +78,8 @@ pub struct StatementBlock {
     // Creation time of the block as reported by creator, currently not enforced
     meta_creation_time_ns: TimestampNs,
 
+    epoch_marker: EpochStatus,
+
     // Signature by the block author
     signature: SignatureBytes,
 }
@@ -86,6 +100,7 @@ impl StatementBlock {
             vec![],
             vec![],
             0,
+            false,
             SignatureBytes::default(),
         ))
     }
@@ -96,6 +111,7 @@ impl StatementBlock {
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
         signer: &Signer,
     ) -> Self {
         let signature = signer.sign_block(
@@ -104,6 +120,7 @@ impl StatementBlock {
             &includes,
             &statements,
             meta_creation_time_ns,
+            epoch_marker,
         );
         Self::new(
             authority,
@@ -111,6 +128,7 @@ impl StatementBlock {
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
             signature,
         )
     }
@@ -121,6 +139,7 @@ impl StatementBlock {
         includes: Vec<BlockReference>,
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
+        epoch_marker: EpochStatus,
         signature: SignatureBytes,
     ) -> Self {
         Self {
@@ -133,12 +152,14 @@ impl StatementBlock {
                     &includes,
                     &statements,
                     meta_creation_time_ns,
+                    epoch_marker,
                     &signature,
                 ),
             },
             includes,
             statements,
             meta_creation_time_ns,
+            epoch_marker,
             signature,
         }
     }
@@ -194,6 +215,10 @@ impl StatementBlock {
         self.meta_creation_time_ns
     }
 
+    pub fn epoch_changed(&self) -> EpochStatus {
+        self.epoch_marker
+    }
+
     pub fn meta_creation_time(&self) -> Duration {
         // Some context: https://github.com/rust-lang/rust/issues/51107
         let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
@@ -209,6 +234,7 @@ impl StatementBlock {
             &self.includes,
             &self.statements,
             self.meta_creation_time_ns,
+            self.epoch_marker,
             &self.signature,
         );
         ensure!(
@@ -386,6 +412,10 @@ impl AuthoritySet {
         true
     }
 
+    pub fn present(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
+        (0..128).filter(|bit| (self.0 & 1 << bit) != 0)
+    }
+
     #[inline]
     pub fn clear(&mut self) {
         self.0 = 0;
@@ -484,6 +514,15 @@ impl CryptoHash for TransactionLocatorRange {
     }
 }
 
+impl CryptoHash for EpochStatus {
+    fn crypto_hash(&self, state: &mut impl Digest) {
+        match self {
+            false => [0].crypto_hash(state),
+            true => [1].crypto_hash(state),
+        }
+    }
+}
+
 impl fmt::Display for BaseStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -566,6 +605,7 @@ mod test {
                 includes,
                 statements: vec![],
                 meta_creation_time_ns: 0,
+                epoch_marker: false,
                 signature: Default::default(),
             }
         }
@@ -663,5 +703,15 @@ mod test {
         assert!(a.insert(3));
         assert!(!a.insert(3));
         assert!(!a.insert(2));
+    }
+
+    #[test]
+    fn authority_present_test() {
+        let mut a = AuthoritySet::default();
+        let present = vec![1, 2, 3, 4, 5, 64, 127];
+        for x in &present {
+            a.insert(*x);
+        }
+        assert_eq!(present, a.present().collect::<Vec<_>>());
     }
 }

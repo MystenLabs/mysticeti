@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::block_store::BlockStore;
-use crate::types::{AuthorityIndex, BaseStatement, EpochStatus, TransactionLocator, Vote};
+use crate::types::{AuthorityIndex, BaseStatement, TransactionLocator, Vote};
 use crate::{
     committee::{Committee, QuorumThreshold, StakeAggregator},
     data::Data,
@@ -111,31 +111,30 @@ impl<'a> FinalizationInterpreter<'a> {
             .get_mut(transaction)
             .unwrap()
             .add(tx_voter, &self.committee)
+            && !block.epoch_changed()
         {
-            if let EpochStatus::Open = block.epoch_marker() {
-                // this is a certifying block
-                if !self.transaction_certificates.contains_key(transaction) {
-                    self.transaction_certificates
-                        .insert(*transaction, Default::default());
-                }
+            // this is a certifying block
+            if !self.transaction_certificates.contains_key(transaction) {
                 self.transaction_certificates
-                    .get_mut(transaction)
-                    .unwrap()
-                    .insert(*block.reference());
+                    .insert(*transaction, Default::default());
+            }
+            self.transaction_certificates
+                .get_mut(transaction)
+                .unwrap()
+                .insert(*block.reference());
 
-                if !self.certificate_aggregator.contains_key(transaction) {
-                    self.certificate_aggregator
-                        .insert(*transaction, StakeAggregator::new());
-                }
+            if !self.certificate_aggregator.contains_key(transaction) {
+                self.certificate_aggregator
+                    .insert(*transaction, StakeAggregator::new());
+            }
 
-                if self
-                    .certificate_aggregator
-                    .get_mut(transaction)
-                    .unwrap()
-                    .add(block.author(), &self.committee)
-                {
-                    self.finalized_transactions.insert(*transaction);
-                }
+            if self
+                .certificate_aggregator
+                .get_mut(transaction)
+                .unwrap()
+                .add(block.author(), &self.committee)
+            {
+                self.finalized_transactions.insert(*transaction);
             }
         }
     }

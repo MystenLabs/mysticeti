@@ -11,9 +11,7 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
-use crate::types::{
-    AuthorityIndex, BaseStatement, BlockReference, EpochStatus, RoundNumber, StatementBlock,
-};
+use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
@@ -257,7 +255,7 @@ impl<H: BlockHandler> Core<H> {
             includes,
             statements,
             time_ns,
-            self.epoch_manager.epoch_status(),
+            self.epoch_changing(),
             &self.signer,
         );
         assert_eq!(
@@ -458,10 +456,6 @@ impl<H: BlockHandler> Core<H> {
         assert!(round == 0 || round % period == 0);
 
         self.committee.elect_leader(round / period)
-    }
-
-    pub fn epoch_status(&self) -> EpochStatus {
-        self.epoch_manager.epoch_status()
     }
 
     pub fn epoch_closed(&self) -> bool {

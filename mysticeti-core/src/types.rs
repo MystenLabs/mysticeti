@@ -33,13 +33,7 @@ pub enum Vote {
     Reject(Option<TransactionLocator>),
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-pub enum EpochStatus {
-    #[default]
-    Open,
-    BeginChange,
-    SafeToClose,
-}
+pub type EpochStatus = bool;
 
 #[derive(PartialEq, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum InternalEpochStatus {
@@ -106,7 +100,7 @@ impl StatementBlock {
             vec![],
             vec![],
             0,
-            EpochStatus::Open,
+            false,
             SignatureBytes::default(),
         ))
     }
@@ -126,7 +120,7 @@ impl StatementBlock {
             &includes,
             &statements,
             meta_creation_time_ns,
-            &epoch_marker,
+            epoch_marker,
         );
         Self::new(
             authority,
@@ -158,7 +152,7 @@ impl StatementBlock {
                     &includes,
                     &statements,
                     meta_creation_time_ns,
-                    &epoch_marker,
+                    epoch_marker,
                     &signature,
                 ),
             },
@@ -221,8 +215,8 @@ impl StatementBlock {
         self.meta_creation_time_ns
     }
 
-    pub fn epoch_marker(&self) -> &EpochStatus {
-        &self.epoch_marker
+    pub fn epoch_changed(&self) -> EpochStatus {
+        self.epoch_marker
     }
 
     pub fn meta_creation_time(&self) -> Duration {
@@ -240,7 +234,7 @@ impl StatementBlock {
             &self.includes,
             &self.statements,
             self.meta_creation_time_ns,
-            &self.epoch_marker,
+            self.epoch_marker,
             &self.signature,
         );
         ensure!(
@@ -523,9 +517,8 @@ impl CryptoHash for TransactionLocatorRange {
 impl CryptoHash for EpochStatus {
     fn crypto_hash(&self, state: &mut impl Digest) {
         match self {
-            EpochStatus::Open => [0].crypto_hash(state),
-            EpochStatus::BeginChange => [1].crypto_hash(state),
-            EpochStatus::SafeToClose => [2].crypto_hash(state),
+            false => [0].crypto_hash(state),
+            true => [1].crypto_hash(state),
         }
     }
 }
@@ -612,7 +605,7 @@ mod test {
                 includes,
                 statements: vec![],
                 meta_creation_time_ns: 0,
-                epoch_marker: EpochStatus::Open,
+                epoch_marker: false,
                 signature: Default::default(),
             }
         }

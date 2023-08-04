@@ -316,7 +316,6 @@ mod test {
     use prometheus::default_registry;
 
     use crate::test_util::TestBlockWriter;
-    use crate::types::EpochStatus;
     use crate::{
         committee::Committee,
         data::Data,
@@ -364,7 +363,7 @@ mod test {
                         includes.clone(),
                         vec![],
                         0,
-                        EpochStatus::Open,
+                        false,
                         Default::default(),
                     ));
                     (*block.reference(), block)
@@ -533,7 +532,7 @@ mod test {
                     references.clone(),
                     vec![],
                     0,
-                    EpochStatus::Open,
+                    false,
                     Default::default(),
                 ));
                 (*block.reference(), block)

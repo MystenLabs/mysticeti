@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::committee::{Committee, QuorumThreshold, StakeAggregator};
 use crate::data::Data;
 use crate::runtime::timestamp_utc;
-use crate::types::{EpochStatus, InternalEpochStatus, StatementBlock};
+use crate::types::{InternalEpochStatus, StatementBlock};
 
 pub struct EpochManager {
     epoch_status: InternalEpochStatus,
@@ -28,28 +28,16 @@ impl EpochManager {
         }
     }
 
-    pub fn epoch_status(&self) -> EpochStatus {
-        match self.epoch_status {
-            InternalEpochStatus::Open => EpochStatus::Open,
-            InternalEpochStatus::BeginChange => EpochStatus::BeginChange,
-            InternalEpochStatus::SafeToClose => EpochStatus::SafeToClose,
-        }
-    }
-
     pub fn observe_committed_block(&mut self, block: &Data<StatementBlock>, committee: &Committee) {
-        match block.epoch_marker() {
-            EpochStatus::Open => (),
-            EpochStatus::BeginChange => {
-                let is_quorum = self.change_aggregator.add(block.author(), committee);
-                if is_quorum && (self.epoch_status != InternalEpochStatus::SafeToClose) {
-                    assert!(self.epoch_status == InternalEpochStatus::BeginChange); // Agreement and total ordering property of BA
-                    self.epoch_status = InternalEpochStatus::SafeToClose;
-                    self.epoch_close_time
-                        .store(timestamp_utc().as_millis() as u64, Ordering::Relaxed);
-                    tracing::info!("Epoch is now safe to close");
-                }
+        if block.epoch_changed() {
+            let is_quorum = self.change_aggregator.add(block.author(), committee);
+            if is_quorum && (self.epoch_status != InternalEpochStatus::SafeToClose) {
+                assert!(self.epoch_status == InternalEpochStatus::BeginChange); // Agreement and total ordering property of BA
+                self.epoch_status = InternalEpochStatus::SafeToClose;
+                self.epoch_close_time
+                    .store(timestamp_utc().as_millis() as u64, Ordering::Relaxed);
+                tracing::info!("Epoch is now safe to close");
             }
-            EpochStatus::SafeToClose => (), // other nodes may be shutting down sync soon
         }
     }
 

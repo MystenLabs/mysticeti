@@ -426,7 +426,6 @@ mod sim_tests {
         check_commits, print_stats, rng_at_seed, simulated_network_syncers,
         simulated_network_syncers_with_epoch_duration,
     };
-    use crate::types::EpochStatus;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::Duration;
@@ -445,7 +444,7 @@ mod sim_tests {
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
         for syncer in syncers.iter() {
-            if let EpochStatus::SafeToClose = syncer.core().epoch_status() {
+            if syncer.core().epoch_closed() {
                 ()
             } else {
                 panic!("Epoch should have closed!")

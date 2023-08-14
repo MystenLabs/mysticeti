@@ -98,4 +98,26 @@ mod test {
             _ => panic!("Expected a committed leader"),
         }
     }
+
+    /// Ensure idempotent replies.
+    #[test]
+    #[tracing_test::traced_test]
+    fn idempotence() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+        build_dag(&committee, &mut block_writer, None, 5);
+
+        let committer = BaseCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 3;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
+    }
 }

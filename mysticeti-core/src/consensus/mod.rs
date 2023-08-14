@@ -3,12 +3,14 @@ use crate::{
     types::{RoundNumber, StatementBlock},
 };
 
+use self::base_committer::BaseCommitter;
+
 pub mod base_committer;
 pub mod linearizer;
 pub mod pipelined_committer;
 
 /// Default wave length for all committers.
-pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
+pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
 
 /// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with

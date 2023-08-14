@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 use crate::{block_store::BlockStore, consensus::DEFAULT_WAVE_LENGTH};
 use crate::{
@@ -41,6 +41,9 @@ pub struct BaseCommitter {
 }
 
 impl BaseCommitter {
+    /// We need at least one leader round, one voting round, and one decision round.
+    pub const MINIMUM_WAVE_LENGTH: u64 = 3;
+
     /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
     pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
         Self {
@@ -53,7 +56,7 @@ impl BaseCommitter {
     }
 
     pub fn with_wave_length(mut self, wave_length: u64) -> Self {
-        assert!(wave_length >= 3);
+        assert!(wave_length >= Self::MINIMUM_WAVE_LENGTH);
         self.wave_length = wave_length;
         self
     }
@@ -286,7 +289,7 @@ impl Committer for BaseCommitter {
 
         tracing::debug!(
             "Trying to commit ( \
-                highest_round: {highest_round} \
+                highest_round: {highest_round}, \
                 leader_round: {leader_round}, \
                 decision round: {decision_round} \
             )"
@@ -323,6 +326,12 @@ impl Committer for BaseCommitter {
             }
             None => vec![],
         }
+    }
+}
+
+impl Display for BaseCommitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Committer-{}", self.offset)
     }
 }
 

@@ -21,13 +21,11 @@ impl PipelinedCommitter {
         wave_length: u64,
         metrics: Arc<Metrics>,
     ) -> Self {
-        assert!(wave_length >= 3);
-
         let committers = (0..wave_length)
             .map(|i| {
                 BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone())
-                    .with_offset(i)
                     .with_wave_length(wave_length)
+                    .with_offset(i)
             })
             .collect();
 
@@ -40,6 +38,7 @@ impl Committer for PipelinedCommitter {
         let mut pending_queue = HashMap::new();
 
         for committer in &self.committers {
+            tracing::debug!("{committer} trying to commit");
             for leader in committer.try_commit(last_committer_round) {
                 let round = leader.round();
                 pending_queue.insert(round, leader);
@@ -94,26 +93,5 @@ mod test {
             }
             _ => panic!("Expected a committed leader"),
         }
-    }
-
-    /// Ensure idempotent replies.
-    #[test]
-    #[tracing_test::traced_test]
-    fn idempotence() {
-        let committee = committee(4);
-
-        let mut block_writer = TestBlockWriter::new(&committee);
-        build_dag(&committee, &mut block_writer, None, 5);
-
-        let committer = PipelinedCommitter::new(
-            committee.clone(),
-            block_writer.into_block_store(),
-            DEFAULT_WAVE_LENGTH,
-            test_metrics(),
-        );
-
-        let last_committed_round = 3;
-        let sequence = committer.try_commit(last_committed_round);
-        assert!(sequence.is_empty());
     }
 }

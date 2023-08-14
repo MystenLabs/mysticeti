@@ -486,12 +486,12 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to finish wave 0.
-        let round_decision_0 = wave_length - 1;
-        let references = build_dag(&committee, &mut block_writer, None, round_decision_0);
+        let decision_round_0 = wave_length - 1;
+        let references = build_dag(&committee, &mut block_writer, None, decision_round_0);
 
         // Add enough blocks to reach the decision round of wave 1 (but without the second leader).
-        let round_leader_1 = wave_length;
-        let leader_1 = committee.elect_leader(round_leader_1);
+        let leader_round_1 = wave_length;
+        let leader_1 = committee.elect_leader(leader_round_1);
 
         let (references, blocks): (Vec<_>, Vec<_>) = committee
             .authorities()
@@ -499,7 +499,7 @@ mod test {
             .map(|authority| {
                 let block = Data::new(StatementBlock::new(
                     authority,
-                    round_leader_1,
+                    leader_round_1,
                     references.clone(),
                     vec![],
                     0,
@@ -512,12 +512,12 @@ mod test {
 
         block_writer.add_blocks(blocks);
 
-        let round_decision_1 = 2 * wave_length - 1;
+        let decision_round_1 = 2 * wave_length - 1;
         build_dag(
             &committee,
             &mut block_writer,
             Some(references),
-            round_decision_1,
+            decision_round_1,
         );
 
         // Ensure no blocks are committed.
@@ -542,22 +542,22 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to reach the leader of wave 1.
-        let round_leader_1 = wave_length;
-        let references_1 = build_dag(&committee, &mut block_writer, None, round_leader_1);
+        let leader_round_1 = wave_length;
+        let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
         // Filter out that leader.
         let references_1_without_leader: Vec<_> = references_1
             .into_iter()
-            .filter(|x| x.authority != committee.elect_leader(round_leader_1))
+            .filter(|x| x.authority != committee.elect_leader(leader_round_1))
             .collect();
 
         // Add enough blocks to reach the decision round of wave 1.
-        let round_decision_1 = 2 * wave_length - 1;
+        let decision_round_1 = 2 * wave_length - 1;
         build_dag(
             &committee,
             &mut block_writer,
             Some(references_1_without_leader),
-            round_decision_1,
+            decision_round_1,
         );
 
         // Ensure no blocks are committed.
@@ -582,22 +582,22 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
 
         // Add enough blocks to reach the leader of wave 2.
-        let round_leader_2 = 2 * wave_length;
-        let references_2 = build_dag(&committee, &mut block_writer, None, round_leader_2);
+        let leader_round_2 = 2 * wave_length;
+        let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
 
         // Filter out that leader.
         let references_2_without_leader: Vec<_> = references_2
             .into_iter()
-            .filter(|x| x.authority != committee.elect_leader(round_leader_2))
+            .filter(|x| x.authority != committee.elect_leader(leader_round_2))
             .collect();
 
         // Add enough blocks to reach the decision round of wave 3.
-        let round_decision_3 = 4 * wave_length - 1;
+        let decision_round_3 = 4 * wave_length - 1;
         build_dag(
             &committee,
             &mut block_writer,
             Some(references_2_without_leader),
-            round_decision_3,
+            decision_round_3,
         );
 
         // Ensure we commit the leaders of wave 1 and 3
@@ -612,8 +612,8 @@ mod test {
         assert_eq!(sequence.len(), 3);
 
         // Ensure we commit the leader of wave 1.
-        let round_leader_1 = wave_length;
-        let leader_1 = committee.elect_leader(round_leader_1);
+        let leader_round_1 = wave_length;
+        let leader_1 = committee.elect_leader(leader_round_1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
             assert_eq!(block.author(), leader_1);
         } else {
@@ -621,16 +621,16 @@ mod test {
         };
 
         // Ensure we skip the leader of wave 2.
-        let round_leader_2 = 2 * wave_length;
+        let leader_round_2 = 2 * wave_length;
         if let LeaderStatus::Skip(round) = sequence[1] {
-            assert_eq!(round, round_leader_2);
+            assert_eq!(round, leader_round_2);
         } else {
             panic!("Expected a skipped leader")
         }
 
         // Ensure we commit the leader of wave 3.
-        let round_leader_3 = 3 * wave_length;
-        let leader_3 = committee.elect_leader(round_leader_3);
+        let leader_round_3 = 3 * wave_length;
+        let leader_3 = committee.elect_leader(leader_round_3);
         if let LeaderStatus::Commit(ref block) = sequence[2] {
             assert_eq!(block.author(), leader_3);
         } else {

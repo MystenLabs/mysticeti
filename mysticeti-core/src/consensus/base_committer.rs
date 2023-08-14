@@ -17,9 +17,9 @@ use crate::{
 use super::{Committer, LeaderStatus};
 
 enum LeaderSupport {
-    DirectCommit,
-    DirectSkip,
-    Undecided,
+    DirectCommit(Data<StatementBlock>),
+    DirectSkip(RoundNumber),
+    Undecided(RoundNumber),
 }
 
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
@@ -174,7 +174,7 @@ impl BaseCommitter {
         &self,
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
-    ) -> LeaderSupport {
+    ) -> bool {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -183,11 +183,45 @@ impl BaseCommitter {
             if self.is_certificate(decision_block, leader_block) {
                 tracing::debug!("{decision_block:?} is a certificate for leader {leader_block:?}");
                 if certificate_stake_aggregator.add(authority, &self.committee) {
-                    return LeaderSupport::DirectCommit;
+                    return true;
                 }
             }
         }
-        return LeaderSupport::Undecided;
+        return false;
+    }
+
+    fn supported_leader(
+        &self,
+        leader: AuthorityIndex,
+        leader_round: RoundNumber,
+        decision_round: RoundNumber,
+    ) -> LeaderSupport {
+        // Check whether the leader(s) has enough support. That is, whether there are 2f+1
+        // certificates over the leader. Note that there could be more than one leader block
+        // (created by Byzantine leaders).
+        let leader_blocks = self
+            .block_store
+            .get_blocks_at_authority_round(leader, leader_round);
+        let mut leaders_with_enough_support: Vec<_> = leader_blocks
+            .into_iter()
+            .map(|l| {
+                if self.enough_leader_support(decision_round, &l) {
+                    LeaderSupport::DirectCommit(l)
+                } else {
+                    LeaderSupport::Undecided(l.round())
+                }
+            })
+            .collect();
+
+        // There can be at most one leader with enough support for each round.
+        if leaders_with_enough_support.len() > 1 {
+            panic!("More than one certified block at round {leader_round} from leader {leader}")
+        }
+
+        match leaders_with_enough_support.pop() {
+            Some(x) => x,
+            None => LeaderSupport::Undecided(leader_round),
+        }
     }
 
     /// Output an ordered list of leader blocks (that we should commit in order).
@@ -301,37 +335,19 @@ impl Committer for BaseCommitter {
                 )"
             );
 
-            // Check whether the leader(s) has enough support. That is, whether there are 2f+1
-            // certificates over the leader. Note that there could be more than one leader block
-            // (created by Byzantine leaders).
+            // Check whether the leader(s) has enough support.
             let leader = self.committee.elect_leader(leader_round);
-            let leader_blocks = self
-                .block_store
-                .get_blocks_at_authority_round(leader, leader_round);
-            let mut leaders_with_enough_support: Vec<_> = leader_blocks
-                .into_iter()
-                .filter(|l| {
-                    matches!(
-                        self.enough_leader_support(decision_round, l),
-                        LeaderSupport::DirectCommit
-                    )
-                })
-                .collect();
-
-            // There can be at most one leader with enough support for each round.
-            if leaders_with_enough_support.len() > 1 {
-                panic!("More than one certified block at wave {wave} from leader {leader}")
-            }
+            let supported_leader = self.supported_leader(leader, leader_round, decision_round);
 
             // If a leader has enough support, we commit it along with its linked predecessors.
-            let new_commits = match leaders_with_enough_support.pop() {
-                Some(leader_block) => {
+            let new_commits = match supported_leader {
+                LeaderSupport::DirectCommit(leader_block) => {
                     tracing::debug!("leader {leader_block} has enough support to be committed");
                     let commits = self.commit(last_committed_wave, leader_block);
                     last_committed_wave = wave;
                     commits
                 }
-                None => vec![],
+                _ => vec![],
             };
             sequence.extend(new_commits);
         }

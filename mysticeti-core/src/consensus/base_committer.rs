@@ -57,6 +57,7 @@ impl BaseCommitter {
 
     pub fn with_wave_length(mut self, wave_length: u64) -> Self {
         assert!(wave_length >= Self::MINIMUM_WAVE_LENGTH);
+        assert!(wave_length > self.offset);
         self.wave_length = wave_length;
         self
     }
@@ -69,7 +70,7 @@ impl BaseCommitter {
 
     /// Return the wave in which the specified round belongs.
     fn wave_number(&self, round: RoundNumber) -> WaveNumber {
-        (round - self.offset) / self.wave_length
+        round.saturating_sub(self.offset) / self.wave_length
     }
 
     /// Return the highest wave number that can be committed given the highest round number.
@@ -277,10 +278,6 @@ impl BaseCommitter {
 
 impl Committer for BaseCommitter {
     fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
-        if last_committer_round < self.offset {
-            return vec![];
-        }
-
         let last_committed_wave = self.wave_number(last_committer_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
@@ -338,12 +335,10 @@ impl Display for BaseCommitter {
 #[cfg(test)]
 mod test {
     use super::*;
-    use prometheus::default_registry;
 
     use crate::test_util::{build_dag, TestBlockWriter};
     use crate::{
         data::Data,
-        metrics::Metrics,
         test_util::{committee, test_metrics},
         types::StatementBlock,
     };
@@ -397,7 +392,6 @@ mod test {
     #[test]
     #[tracing_test::traced_test]
     fn commit_10() {
-        let (metrics, _) = Metrics::new(default_registry(), None);
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -406,20 +400,22 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer =
-            BaseCommitter::new(committee.clone(), block_writer.into_block_store(), metrics);
+        let committer = BaseCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            test_metrics(),
+        );
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         assert_eq!(sequence.len(), n as usize);
         for (i, leader_block) in sequence.iter().enumerate() {
             let leader_round = (i as u64 + 1) * wave_length;
-            match leader_block {
-                LeaderStatus::Commit(ref block) => {
-                    assert_eq!(block.author(), committee.elect_leader(leader_round));
-                }
-                _ => panic!("Expected a committed leader"),
-            }
+            if let LeaderStatus::Commit(ref block) = leader_block {
+                assert_eq!(block.author(), committee.elect_leader(leader_round));
+            } else {
+                panic!("Expected a committed leader")
+            };
         }
     }
 

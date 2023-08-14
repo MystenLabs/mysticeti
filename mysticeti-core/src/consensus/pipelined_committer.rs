@@ -120,4 +120,36 @@ mod test {
         let sequence = committer.try_commit(last_committed_round);
         assert!(sequence.is_empty());
     }
+
+    /// Commit 10 leaders in a row (9 of them are committed recursively).
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_10() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let n = 10;
+        let enough_blocks = (wave_length - 1) + n + (wave_length - 1);
+        let mut block_writer = TestBlockWriter::new(&committee);
+        build_dag(&committee, &mut block_writer, None, enough_blocks);
+
+        let committer = PipelinedCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert_eq!(sequence.len(), n as usize);
+        for (i, leader_block) in sequence.iter().enumerate() {
+            let leader_round = wave_length + i as u64;
+            if let LeaderStatus::Commit(ref block) = leader_block {
+                assert_eq!(block.author(), committee.elect_leader(leader_round));
+            } else {
+                panic!("Expected a committed leader")
+            };
+        }
+    }
 }

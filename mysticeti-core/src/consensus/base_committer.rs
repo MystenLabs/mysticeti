@@ -489,7 +489,7 @@ mod test {
         let decision_round_0 = wave_length - 1;
         let references = build_dag(&committee, &mut block_writer, None, decision_round_0);
 
-        // Add enough blocks to reach the decision round of wave 1 (but without the second leader).
+        // Add enough blocks to reach the decision round of wave 1 (but without its leader).
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 

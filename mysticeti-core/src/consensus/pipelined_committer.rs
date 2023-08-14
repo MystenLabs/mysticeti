@@ -9,13 +9,14 @@ use crate::{committee::Committee, types::RoundNumber};
 
 use super::{Committer, LeaderStatus};
 
+/// The [`PipelinedCommitter`] uses three [`BaseCommitter`] instances, each shifted by one round,
+/// to commit every dag round (in the ideal case).
 pub struct PipelinedCommitter {
     committers: Vec<BaseCommitter>,
     wave_length: RoundNumber,
 }
 
 impl PipelinedCommitter {
-    /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
     pub fn new(
         committee: Arc<Committee>,
         block_store: BlockStore,
@@ -41,6 +42,7 @@ impl Committer for PipelinedCommitter {
     fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
         let mut pending_queue = HashMap::new();
 
+        // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
             for leader in committer.try_commit(last_committer_round) {
                 let round = leader.round();
@@ -49,9 +51,10 @@ impl Committer for PipelinedCommitter {
             }
         }
 
-        // The first leader to commit has round = wave_length.
+        // The very first leader to commit has round = wave_length.
         let mut r = max(self.wave_length, last_committer_round + 1);
 
+        // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();
         loop {
             match pending_queue.remove(&r) {
@@ -60,7 +63,6 @@ impl Committer for PipelinedCommitter {
             }
             r += 1;
         }
-
         sequence
     }
 }
@@ -228,8 +230,8 @@ mod test {
         let decision_round_0 = wave_length - 1;
         let references = build_dag(&committee, &mut block_writer, None, decision_round_0);
 
-        // Add enough blocks to reach the decision round of wave 1 (but without the second
-        // leader), as viewed by the first pipeline.
+        // Add enough blocks to reach the decision round of wave 1 (but without it leader),
+        // as viewed by the first pipeline.
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 
@@ -392,6 +394,59 @@ mod test {
             assert_eq!(block.author(), leader_3);
         } else {
             panic!("Expected a committed leader")
+        }
+    }
+
+    /// Commit all leaders of wave 1; then miss the first leader of wave 2 (first pipeline) and
+    /// ensure the other leaders of wave 2 are not committed.
+    #[test]
+    #[tracing_test::traced_test]
+    fn blocked_pipeline() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        // Add enough blocks to reach the leader of wave 2, as seen by the first pipeline.
+        let leader_round_2 = 2 * wave_length;
+        let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
+
+        // Filter out that leader.
+        let references_2_without_leader: Vec<_> = references_2
+            .into_iter()
+            .filter(|x| x.authority != committee.elect_leader(leader_round_2))
+            .collect();
+
+        // Add enough blocks to reach the voting round of wave 3, as seen by the first pipeline.
+        let voting_round_3 = (4 * wave_length - 1) - 1;
+        build_dag(
+            &committee,
+            &mut block_writer,
+            Some(references_2_without_leader),
+            voting_round_3,
+        );
+
+        // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
+        let committer = PipelinedCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert_eq!(sequence.len(), 3);
+
+        // Ensure we commit the leaders of wave 1.
+        for i in 0..=2 {
+            let leader_round_1 = wave_length + i;
+            let leader_1 = committee.elect_leader(leader_round_1);
+            if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
+                assert_eq!(block.author(), leader_1);
+            } else {
+                panic!("Expected a committed leader")
+            };
         }
     }
 }

@@ -39,6 +39,8 @@ pub struct BaseCommitter {
     block_store: BlockStore,
     /// The length of a wave (minimum 3)
     wave_length: u64,
+    ///
+    leader_number: usize,
     /// The offset of the first wave. This is used in the pipelined committer to ensure that each
     /// [`BaseCommitter`] operates on a different view of the dag.
     offset: u64,
@@ -56,6 +58,7 @@ impl BaseCommitter {
             committee,
             block_store,
             wave_length: DEFAULT_WAVE_LENGTH,
+            leader_number: 0,
             offset: 0,
             metrics,
         }
@@ -68,10 +71,25 @@ impl BaseCommitter {
         self
     }
 
+    pub fn with_leader_number(mut self, leader_number: usize) -> Self {
+        assert!(leader_number < self.committee.len());
+        self.leader_number = leader_number;
+        self
+    }
+
     pub fn with_offset(mut self, offset: u64) -> Self {
         assert!(offset < self.wave_length);
         self.offset = offset;
         self
+    }
+
+    pub fn leader_number(&self) -> usize {
+        self.leader_number
+    }
+
+    fn elect_leader(&self, round: RoundNumber) -> AuthorityIndex {
+        self.committee
+            .elect_leader(round + self.leader_number as RoundNumber)
     }
 
     /// Return the wave in which the specified round belongs.
@@ -239,7 +257,7 @@ impl BaseCommitter {
             // Get the block(s) proposed by the previous leader. There could be more than one
             // leader block per round (produced by a Byzantine leader).
             let leader_round = self.leader_round(w);
-            let leader = self.committee.elect_leader(leader_round);
+            let leader = self.elect_leader(leader_round);
             let leader_blocks = self
                 .block_store
                 .get_blocks_at_authority_round(leader, leader_round);
@@ -336,7 +354,7 @@ impl Committer for BaseCommitter {
             );
 
             // Check whether the leader(s) has enough support.
-            let leader = self.committee.elect_leader(leader_round);
+            let leader = self.elect_leader(leader_round);
             let supported_leader = self.supported_leader(leader, leader_round, decision_round);
 
             // If a leader has enough support, we commit it along with its linked predecessors.

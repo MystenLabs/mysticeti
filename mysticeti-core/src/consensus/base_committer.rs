@@ -489,7 +489,7 @@ mod test {
         let round_decision_1 = wave_length - 1;
         let references = build_dag(&committee, &mut block_writer, None, round_decision_1);
 
-        // Add enough blocks to reach the second decision round (but without the second leader).
+        // Add enough blocks to reach the decision round of the first wave (but without the second leader).
         let round_leader_2 = wave_length;
         let leader_2 = committee.elect_leader(round_leader_2);
 
@@ -541,12 +541,11 @@ mod test {
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
-        // Add enough blocks to reach the second leader. Remember that he second leader is part of
-        // the genesis.
+        // Add enough blocks to reach the leader of the first wave.
         let round_leader_2 = wave_length;
         let references_2 = build_dag(&committee, &mut block_writer, None, round_leader_2);
 
-        // Filter out the leader.
+        // Filter out that leader.
         let references_2_without_leader: Vec<_> = references_2
             .into_iter()
             .filter(|x| x.authority != committee.elect_leader(round_leader_2))

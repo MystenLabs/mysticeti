@@ -71,7 +71,9 @@ mod test {
         consensus::{
             pipelined_committer::PipelinedCommitter, Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
         },
+        data::Data,
         test_util::{build_dag, committee, test_metrics, TestBlockWriter},
+        types::StatementBlock,
     };
 
     /// Commit one leader.
@@ -211,5 +213,105 @@ mod test {
 
             last_committed_round = leader_round;
         }
+    }
+
+    /// We do not commit anything if there is no leader.
+    #[test]
+    #[tracing_test::traced_test]
+    fn no_leader() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        // Add enough blocks to finish the first wave.
+        let round_decision_1 = wave_length - 1;
+        let references = build_dag(&committee, &mut block_writer, None, round_decision_1);
+
+        // Add enough blocks to reach the decision round of the first wave (but without the second
+        // leader), as viewed by the first pipeline.
+        let round_leader_2 = wave_length;
+        let leader_2 = committee.elect_leader(round_leader_2);
+
+        let (references, blocks): (Vec<_>, Vec<_>) = committee
+            .authorities()
+            .filter(|&authority| authority != leader_2)
+            .map(|authority| {
+                let block = Data::new(StatementBlock::new(
+                    authority,
+                    round_leader_2,
+                    references.clone(),
+                    vec![],
+                    0,
+                    false,
+                    Default::default(),
+                ));
+                (*block.reference(), block)
+            })
+            .unzip();
+
+        block_writer.add_blocks(blocks);
+
+        let round_decision_2 = 2 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_writer,
+            Some(references),
+            round_decision_2,
+        );
+
+        // Ensure no blocks are committed.
+        let committer = PipelinedCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
+    }
+
+    /// If there is no leader with enough support, we commit nothing.
+    #[test]
+    #[tracing_test::traced_test]
+    fn not_enough_support() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        // Add enough blocks to reach the first leader, as seen by the first pipeline.
+        let round_leader_2 = wave_length;
+        let references_2 = build_dag(&committee, &mut block_writer, None, round_leader_2);
+
+        // Filter out that leader.
+        let references_2_without_leader: Vec<_> = references_2
+            .into_iter()
+            .filter(|x| x.authority != committee.elect_leader(round_leader_2))
+            .collect();
+
+        // Add enough blocks to reach the decision round of the first wave, as seen by the
+        // first pipeline.
+        let round_decision_2 = 2 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_writer,
+            Some(references_2_without_leader),
+            round_decision_2,
+        );
+
+        // Ensure no blocks are committed.
+        let committer = PipelinedCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert!(sequence.is_empty());
     }
 }

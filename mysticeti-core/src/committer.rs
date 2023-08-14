@@ -14,6 +14,23 @@ use crate::{
     types::{AuthorityIndex, BlockReference},
 };
 
+/// The status of every leader output by the [`Committer`]. While the core only cares about committed
+/// leaders, providing a richer status allows for easier debugging, testing, and composition with
+/// advanced commit strategies.
+pub enum LeaderStatus {
+    Commit(Data<StatementBlock>),
+    Skip(RoundNumber),
+}
+
+impl LeaderStatus {
+    pub fn round(&self) -> RoundNumber {
+        match self {
+            LeaderStatus::Commit(block) => block.round(),
+            LeaderStatus::Skip(round) => *round,
+        }
+    }
+}
+
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
 /// voting round, and one decision round.
 type WaveNumber = u64;
@@ -31,6 +48,7 @@ pub struct Committer {
     block_store: BlockStore,
     /// The length of a wave (minimum 3)
     wave_length: u64,
+    offset: u64,
     /// Metrics information
     metrics: Arc<Metrics>,
 }
@@ -49,13 +67,20 @@ impl Committer {
             committee,
             block_store,
             wave_length,
+            offset: 0,
             metrics,
         }
     }
 
+    pub fn with_offset(mut self, offset: u64) -> Self {
+        assert!(offset < self.wave_length);
+        self.offset = offset;
+        self
+    }
+
     /// Return the wave in which the specified round belongs.
     fn wave_number(&self, round: RoundNumber) -> WaveNumber {
-        round / self.wave_length
+        (round - self.offset) / self.wave_length
     }
 
     /// Return the highest wave number that can be committed given the highest round number.
@@ -71,13 +96,13 @@ impl Committer {
     /// Return the leader round of the specified wave number. The leader round is always the first
     /// round of the wave.
     fn leader_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave * self.wave_length
+        wave * self.wave_length + self.offset
     }
 
     /// Return the decision round of the specified wave. The decision round is always the last
     /// round of the wave.
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave * self.wave_length + self.wave_length - 1
+        wave * self.wave_length + self.wave_length - 1 + self.offset
     }
 
     /// Check whether the specified block (`potential_certificate`) is a vote for
@@ -174,9 +199,9 @@ impl Committer {
         &self,
         last_committed_wave: WaveNumber,
         latest_leader_block: Data<StatementBlock>,
-    ) -> Vec<Data<StatementBlock>> {
+    ) -> Vec<LeaderStatus> {
         let latest_wave = self.wave_number(latest_leader_block.round());
-        let mut to_commit = vec![latest_leader_block.clone()];
+        let mut to_commit = vec![LeaderStatus::Commit(latest_leader_block.clone())];
         let mut current_leader_block = latest_leader_block;
 
         let earliest_wave = last_committed_wave + 1;
@@ -216,9 +241,14 @@ impl Committer {
 
             // We skip the previous leader if it has no certificates that are ancestors of current
             // leader. Otherwise we proceed to the next iteration using the previous leader as anchor.
-            if let Some(certified_leader_block) = certified_leader_blocks.pop() {
-                to_commit.push(certified_leader_block.clone());
-                current_leader_block = certified_leader_block;
+            match certified_leader_blocks.pop() {
+                Some(certified_leader_block) => {
+                    to_commit.push(LeaderStatus::Commit(certified_leader_block.clone()));
+                    current_leader_block = certified_leader_block;
+                }
+                None => {
+                    to_commit.push(LeaderStatus::Skip(leader_round));
+                }
             }
         }
         to_commit
@@ -230,7 +260,7 @@ impl Committer {
         &self,
         last_committed_wave: WaveNumber,
         leader_block: Data<StatementBlock>,
-    ) -> Vec<Data<StatementBlock>> {
+    ) -> Vec<LeaderStatus> {
         let sequence: Vec<_> = self
             .order_leaders(last_committed_wave, leader_block)
             .into_iter()
@@ -244,14 +274,12 @@ impl Committer {
 
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed sub-dags.
-    pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<Data<StatementBlock>> {
-        let last_committed_wave = self.wave_number(last_committer_round);
-        assert_eq!(
-            last_committer_round,
-            self.leader_round(last_committed_wave),
-            "Last committed round is always a leader round"
-        );
+    pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+        if last_committer_round < self.offset {
+            return vec![];
+        }
 
+        let last_committed_wave = self.wave_number(last_committer_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
         let leader_round = self.leader_round(highest_wave);
@@ -299,13 +327,15 @@ impl Committer {
     }
 
     /// Update metrics.
-    fn update_metrics(&self, sequence: &[Data<StatementBlock>]) {
-        for (i, block) in sequence.iter().rev().enumerate() {
-            let commit_type = if i == 0 { "direct" } else { "indirect" };
-            self.metrics
-                .committed_leaders_total
-                .with_label_values(&[&block.author().to_string(), commit_type])
-                .inc();
+    fn update_metrics(&self, sequence: &[LeaderStatus]) {
+        for (i, leader) in sequence.iter().rev().enumerate() {
+            if let LeaderStatus::Commit(block) = leader {
+                let commit_type = if i == 0 { "direct" } else { "indirect" };
+                self.metrics
+                    .committed_leaders_total
+                    .with_label_values(&[&block.author().to_string(), commit_type])
+                    .inc();
+            }
         }
     }
 }
@@ -396,7 +426,12 @@ mod test {
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         assert_eq!(sequence.len(), 1);
-        assert_eq!(sequence[0].author(), committee.elect_leader(3))
+        match sequence[0] {
+            LeaderStatus::Commit(ref block) => {
+                assert_eq!(block.author(), committee.elect_leader(3))
+            }
+            _ => panic!("Expected a committed leader"),
+        }
     }
 
     /// Ensure idempotent replies.
@@ -446,7 +481,12 @@ mod test {
         assert_eq!(sequence.len(), n as usize);
         for (i, leader_block) in sequence.iter().enumerate() {
             let leader_round = (i as u64 + 1) * wave_length;
-            assert_eq!(leader_block.author(), committee.elect_leader(leader_round));
+            match leader_block {
+                LeaderStatus::Commit(ref block) => {
+                    assert_eq!(block.author(), committee.elect_leader(leader_round));
+                }
+                _ => panic!("Expected a committed leader"),
+            }
         }
     }
 
@@ -499,7 +539,12 @@ mod test {
             assert_eq!(sequence.len(), 1);
             for leader_block in sequence {
                 let leader_round = n as u64 * wave_length;
-                assert_eq!(leader_block.author(), committee.elect_leader(leader_round));
+                match leader_block {
+                    LeaderStatus::Commit(ref block) => {
+                        assert_eq!(block.author(), committee.elect_leader(leader_round));
+                    }
+                    _ => panic!("Expected a committed leader"),
+                }
                 last_committed_round = leader_round;
             }
         }
@@ -642,13 +687,35 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
-        assert_eq!(sequence.len(), 2);
+        assert_eq!(sequence.len(), 3);
 
+        // Ensure we commit the second leader.
         let round_leader_2 = wave_length;
         let leader_2 = committee.elect_leader(round_leader_2);
-        assert_eq!(sequence[0].author(), leader_2);
+        match sequence[0] {
+            LeaderStatus::Commit(ref block) => {
+                assert_eq!(block.author(), leader_2);
+            }
+            _ => panic!("Expected a committed leader"),
+        }
+
+        // Ensure we skip the third leader.
+        let round_leader_3 = 2 * wave_length;
+        match sequence[1] {
+            LeaderStatus::Skip(round) => {
+                assert_eq!(round, round_leader_3);
+            }
+            _ => panic!("Expected a skipped leader"),
+        }
+
+        // Ensure we commit the fourth leader.
         let round_leader_4 = 3 * wave_length;
         let leader_4 = committee.elect_leader(round_leader_4);
-        assert_eq!(sequence[1].author(), leader_4);
+        match sequence[2] {
+            LeaderStatus::Commit(ref block) => {
+                assert_eq!(block.author(), leader_4);
+            }
+            _ => panic!("Expected a committed leader"),
+        }
     }
 }

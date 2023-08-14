@@ -1,7 +1,3 @@
-use crate::block_store::{
-    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
-    WAL_ENTRY_STATE,
-};
 use crate::commit_interpreter::CommittedSubDag;
 use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
@@ -15,6 +11,13 @@ use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, S
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use crate::{
+    block_store::{
+        BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+        WAL_ENTRY_STATE,
+    },
+    committer::LeaderStatus,
+};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -322,13 +325,19 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
         // todo only create committer once
-        let sequence = Committer::new(
+        let sequence: Vec<_> = Committer::new(
             self.committee.clone(),
             self.block_store.clone(),
             period,
             self.metrics.clone(),
         )
-        .try_commit(self.last_commit_round);
+        .try_commit(self.last_commit_round)
+        .into_iter()
+        .filter_map(|leader| match leader {
+            LeaderStatus::Commit(block) => Some(block),
+            LeaderStatus::Skip(..) => None,
+        })
+        .collect();
 
         self.last_commit_round = max(
             self.last_commit_round,

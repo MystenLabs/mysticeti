@@ -1,4 +1,3 @@
-use crate::committee::Committee;
 use crate::consensus::linearizer::CommittedSubDag;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
@@ -18,6 +17,7 @@ use crate::{
     },
     consensus::committer::LeaderStatus,
 };
+use crate::{committee::Committee, consensus::committer};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -46,6 +46,7 @@ pub struct Core<H: BlockHandler> {
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
+    committer: Committer,
 }
 
 pub struct CoreOptions {
@@ -128,6 +129,13 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
+        let committer = Committer::new(
+            committee.clone(),
+            block_store.clone(),
+            committer::DEFAULT_WAVE_LENGTH,
+            metrics.clone(),
+        );
+
         let mut this = Self {
             block_manager,
             pending,
@@ -145,6 +153,7 @@ impl<H: BlockHandler> Core<H> {
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
             rounds_in_epoch,
+            committer,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -323,21 +332,16 @@ impl<H: BlockHandler> Core<H> {
         self.metrics.proposed_block_vote_count.observe(votes);
     }
 
-    pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
-        // todo only create committer once
-        let sequence: Vec<_> = Committer::new(
-            self.committee.clone(),
-            self.block_store.clone(),
-            period,
-            self.metrics.clone(),
-        )
-        .try_commit(self.last_commit_round)
-        .into_iter()
-        .filter_map(|leader| match leader {
-            LeaderStatus::Commit(block) => Some(block),
-            LeaderStatus::Skip(..) => None,
-        })
-        .collect();
+    pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
+        let sequence: Vec<_> = self
+            .committer
+            .try_commit(self.last_commit_round)
+            .into_iter()
+            .filter_map(|leader| match leader {
+                LeaderStatus::Commit(block) => Some(block),
+                LeaderStatus::Skip(..) => None,
+            })
+            .collect();
 
         self.last_commit_round = max(
             self.last_commit_round,

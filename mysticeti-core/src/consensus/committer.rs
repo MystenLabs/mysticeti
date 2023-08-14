@@ -14,6 +14,8 @@ use crate::{
     types::{AuthorityIndex, BlockReference},
 };
 
+pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
+
 /// The status of every leader output by the [`Committer`]. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.

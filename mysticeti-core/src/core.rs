@@ -8,16 +8,16 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
-use crate::{block_handler::BlockHandler, consensus::committer::Committer};
+use crate::{block_handler::BlockHandler, consensus::base_committer::BaseCommitter};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use crate::{
     block_store::{
         BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
         WAL_ENTRY_STATE,
     },
-    consensus::committer::LeaderStatus,
+    consensus::base_committer::LeaderStatus,
 };
-use crate::{committee::Committee, consensus::committer};
+use crate::{committee::Committee, consensus::base_committer};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -46,7 +46,7 @@ pub struct Core<H: BlockHandler> {
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
-    committer: Committer,
+    committer: BaseCommitter,
 }
 
 pub struct CoreOptions {
@@ -129,10 +129,10 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_store.clone(),
-            committer::DEFAULT_WAVE_LENGTH,
+            base_committer::DEFAULT_WAVE_LENGTH,
             metrics.clone(),
         );
 

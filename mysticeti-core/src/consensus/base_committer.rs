@@ -16,7 +16,7 @@ use crate::{
 
 pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
 
-/// The status of every leader output by the [`Committer`]. While the core only cares about committed
+/// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.
 pub enum LeaderStatus {
@@ -37,13 +37,13 @@ impl LeaderStatus {
 /// voting round, and one decision round.
 type WaveNumber = u64;
 
-/// The [`Committer`] contains all the commit logic. Once instantiated, the method [`try_commit`] can
+/// The [`BaseCommitter`] contains all the commit logic. Once instantiated, the method [`try_commit`] can
 /// be called at any time and any number of times (it is idempotent) to return extension to the commit
 /// sequence. This structure is parametrized with a `wave length`, which must be at least 3 rounds: we
 /// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
 /// certificates for the leader. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
-pub struct Committer {
+pub struct BaseCommitter {
     /// The committee information
     committee: Arc<Committee>,
     /// Keep all block data
@@ -55,8 +55,8 @@ pub struct Committer {
     metrics: Arc<Metrics>,
 }
 
-impl Committer {
-    /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
+impl BaseCommitter {
+    /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
     pub fn new(
         committee: Arc<Committee>,
         block_store: BlockStore,
@@ -418,7 +418,7 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,
@@ -446,7 +446,7 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,
@@ -471,7 +471,7 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,
@@ -504,7 +504,7 @@ mod test {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, r);
 
-            let committer = Committer::new(
+            let committer = BaseCommitter::new(
                 committee.clone(),
                 block_writer.into_block_store(),
                 wave_length,
@@ -530,7 +530,7 @@ mod test {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-            let committer = Committer::new(
+            let committer = BaseCommitter::new(
                 committee.clone(),
                 block_writer.into_block_store(),
                 wave_length,
@@ -597,7 +597,7 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,
@@ -639,7 +639,7 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,
@@ -680,7 +680,7 @@ mod test {
         );
 
         // Ensure we commit the second and fourth leaders.
-        let committer = Committer::new(
+        let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
             wave_length,

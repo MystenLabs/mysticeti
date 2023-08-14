@@ -6,16 +6,16 @@ use std::{collections::HashMap, sync::Arc};
 use crate::metrics::Metrics;
 use crate::{
     block_store::BlockStore,
-    consensus::committer::{Committer, LeaderStatus},
+    consensus::base_committer::{BaseCommitter, LeaderStatus},
 };
 use crate::{committee::Committee, types::RoundNumber};
 
 pub struct PipelinedCommitter {
-    committers: Vec<Committer>,
+    committers: Vec<BaseCommitter>,
 }
 
 impl PipelinedCommitter {
-    /// Create a new [`Committer`] interpreting the dag using the provided committee and wave length.
+    /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
     pub fn new(
         committee: Arc<Committee>,
         block_store: BlockStore,
@@ -26,7 +26,7 @@ impl PipelinedCommitter {
 
         let committers = (0..wave_length)
             .map(|i| {
-                Committer::new(
+                BaseCommitter::new(
                     committee.clone(),
                     block_store.clone(),
                     wave_length,

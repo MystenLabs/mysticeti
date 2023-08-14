@@ -15,6 +15,7 @@ pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
 /// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.
+#[derive(Debug)]
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
     Skip(RoundNumber),

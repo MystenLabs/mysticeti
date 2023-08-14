@@ -288,7 +288,7 @@ impl Committer for BaseCommitter {
         let decision_round = self.decision_round(highest_wave);
 
         tracing::debug!(
-            "Trying to commit ( \
+            "{self} trying to commit ( \
                 highest_round: {highest_round}, \
                 leader_round: {leader_round}, \
                 decision round: {decision_round} \
@@ -366,12 +366,11 @@ mod test {
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         assert_eq!(sequence.len(), 1);
-        match sequence[0] {
-            LeaderStatus::Commit(ref block) => {
-                assert_eq!(block.author(), committee.elect_leader(3))
-            }
-            _ => panic!("Expected a committed leader"),
-        }
+        if let LeaderStatus::Commit(ref block) = sequence[0] {
+            assert_eq!(block.author(), committee.elect_leader(3))
+        } else {
+            panic!("Expected a committed leader")
+        };
     }
 
     /// Ensure idempotent replies.

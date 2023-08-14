@@ -1,3 +1,34 @@
+use crate::{
+    data::Data,
+    types::{RoundNumber, StatementBlock},
+};
+
 pub mod base_committer;
 pub mod linearizer;
 pub mod pipelined_committer;
+
+/// Default wave length for all committers.
+pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
+
+/// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
+/// leaders, providing a richer status allows for easier debugging, testing, and composition with
+/// advanced commit strategies.
+pub enum LeaderStatus {
+    Commit(Data<StatementBlock>),
+    Skip(RoundNumber),
+}
+
+impl LeaderStatus {
+    pub fn round(&self) -> RoundNumber {
+        match self {
+            LeaderStatus::Commit(block) => block.round(),
+            LeaderStatus::Skip(round) => *round,
+        }
+    }
+}
+
+pub trait Committer {
+    /// Try to commit part of the dag. This function is idempotent and returns a list of
+    /// ordered committed leaders.
+    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus>;
+}

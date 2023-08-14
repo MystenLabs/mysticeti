@@ -1,4 +1,4 @@
-use crate::consensus::linearizer::CommittedSubDag;
+use crate::consensus::{linearizer::CommittedSubDag, Committer};
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -15,9 +15,9 @@ use crate::{
         BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
         WAL_ENTRY_STATE,
     },
-    consensus::base_committer::LeaderStatus,
+    consensus,
 };
-use crate::{committee::Committee, consensus::base_committer};
+use crate::{committee::Committee, consensus::LeaderStatus};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -132,7 +132,7 @@ impl<H: BlockHandler> Core<H> {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_store.clone(),
-            base_committer::DEFAULT_WAVE_LENGTH,
+            consensus::DEFAULT_WAVE_LENGTH,
             metrics.clone(),
         );
 

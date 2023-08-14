@@ -4,11 +4,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::metrics::Metrics;
-use crate::{
-    block_store::BlockStore,
-    consensus::base_committer::{BaseCommitter, LeaderStatus},
-};
+use crate::{block_store::BlockStore, consensus::base_committer::BaseCommitter};
 use crate::{committee::Committee, types::RoundNumber};
+
+use super::{Committer, LeaderStatus};
 
 pub struct PipelinedCommitter {
     committers: Vec<BaseCommitter>,
@@ -38,8 +37,10 @@ impl PipelinedCommitter {
 
         Self { committers }
     }
+}
 
-    pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+impl Committer for PipelinedCommitter {
+    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
         let mut pending_queue = HashMap::new();
 
         for committer in &self.committers {

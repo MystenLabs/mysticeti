@@ -14,24 +14,7 @@ use crate::{
     types::{AuthorityIndex, BlockReference},
 };
 
-pub const DEFAULT_WAVE_LENGTH: RoundNumber = 3;
-
-/// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
-/// leaders, providing a richer status allows for easier debugging, testing, and composition with
-/// advanced commit strategies.
-pub enum LeaderStatus {
-    Commit(Data<StatementBlock>),
-    Skip(RoundNumber),
-}
-
-impl LeaderStatus {
-    pub fn round(&self) -> RoundNumber {
-        match self {
-            LeaderStatus::Commit(block) => block.round(),
-            LeaderStatus::Skip(round) => *round,
-        }
-    }
-}
+use super::{Committer, LeaderStatus};
 
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
 /// voting round, and one decision round.
@@ -274,9 +257,22 @@ impl BaseCommitter {
         sequence
     }
 
-    /// Try to commit part of the dag. This function is idempotent and returns a list of
-    /// ordered committed sub-dags.
-    pub fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+    /// Update metrics.
+    fn update_metrics(&self, sequence: &[LeaderStatus]) {
+        for (i, leader) in sequence.iter().rev().enumerate() {
+            if let LeaderStatus::Commit(block) = leader {
+                let commit_type = if i == 0 { "direct" } else { "indirect" };
+                self.metrics
+                    .committed_leaders_total
+                    .with_label_values(&[&block.author().to_string(), commit_type])
+                    .inc();
+            }
+        }
+    }
+}
+
+impl Committer for BaseCommitter {
+    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
         if last_committer_round < self.offset {
             return vec![];
         }
@@ -325,19 +321,6 @@ impl BaseCommitter {
                 self.commit(last_committed_wave, leader_block)
             }
             None => vec![],
-        }
-    }
-
-    /// Update metrics.
-    fn update_metrics(&self, sequence: &[LeaderStatus]) {
-        for (i, leader) in sequence.iter().rev().enumerate() {
-            if let LeaderStatus::Commit(block) = leader {
-                let commit_type = if i == 0 { "direct" } else { "indirect" };
-                self.metrics
-                    .committed_leaders_total
-                    .with_label_values(&[&block.author().to_string(), commit_type])
-                    .inc();
-            }
         }
     }
 }

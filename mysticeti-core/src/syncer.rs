@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_store::BlockStore;
-use crate::commit_interpreter::CommittedSubDag;
+use crate::consensus::commit_interpreter::CommittedSubDag;
 use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;

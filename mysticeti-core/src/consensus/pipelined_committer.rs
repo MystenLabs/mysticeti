@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::metrics::Metrics;
 use crate::{
     block_store::BlockStore,
-    committer::{Committer, LeaderStatus},
+    consensus::committer::{Committer, LeaderStatus},
 };
 use crate::{committee::Committee, types::RoundNumber};
 

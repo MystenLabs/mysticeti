@@ -3,10 +3,9 @@
 
 pub mod block_handler;
 mod block_manager;
-mod commit_interpreter;
 pub mod committee;
-mod committer;
 pub mod config;
+pub mod consensus;
 pub mod core;
 mod data;
 #[cfg(test)]
@@ -36,7 +35,6 @@ mod crypto;
 #[allow(dead_code)] // todo - delete if unused after a while
 mod lock;
 mod log;
-pub mod pipelined_committer;
 mod serde;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;

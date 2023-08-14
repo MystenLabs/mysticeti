@@ -1,5 +1,5 @@
-use crate::commit_interpreter::CommittedSubDag;
 use crate::committee::Committee;
+use crate::consensus::commit_interpreter::CommittedSubDag;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -9,14 +9,14 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
-use crate::{block_handler::BlockHandler, committer::Committer};
+use crate::{block_handler::BlockHandler, consensus::committer::Committer};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use crate::{
     block_store::{
         BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
         WAL_ENTRY_STATE,
     },
-    committer::LeaderStatus,
+    consensus::committer::LeaderStatus,
 };
 use minibytes::Bytes;
 use std::fs::File;

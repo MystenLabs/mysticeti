@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
 use crate::config::StorageDir;
+use crate::consensus::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;

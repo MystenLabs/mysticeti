@@ -16,6 +16,12 @@ use crate::{
 
 use super::{Committer, LeaderStatus};
 
+enum LeaderSupport {
+    DirectCommit,
+    DirectSkip,
+    Undecided,
+}
+
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
 /// voting round, and one decision round.
 type WaveNumber = u64;
@@ -168,7 +174,7 @@ impl BaseCommitter {
         &self,
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
-    ) -> bool {
+    ) -> LeaderSupport {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -177,11 +183,11 @@ impl BaseCommitter {
             if self.is_certificate(decision_block, leader_block) {
                 tracing::debug!("{decision_block:?} is a certificate for leader {leader_block:?}");
                 if certificate_stake_aggregator.add(authority, &self.committee) {
-                    return true;
+                    return LeaderSupport::DirectCommit;
                 }
             }
         }
-        false
+        return LeaderSupport::Undecided;
     }
 
     /// Output an ordered list of leader blocks (that we should commit in order).
@@ -304,7 +310,12 @@ impl Committer for BaseCommitter {
                 .get_blocks_at_authority_round(leader, leader_round);
             let mut leaders_with_enough_support: Vec<_> = leader_blocks
                 .into_iter()
-                .filter(|l| self.enough_leader_support(decision_round, l))
+                .filter(|l| {
+                    matches!(
+                        self.enough_leader_support(decision_round, l),
+                        LeaderSupport::DirectCommit
+                    )
+                })
                 .collect();
 
             // There can be at most one leader with enough support for each round.

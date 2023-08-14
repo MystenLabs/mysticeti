@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::block_store::BlockStore;
+use crate::{block_store::BlockStore, consensus::DEFAULT_WAVE_LENGTH};
 use crate::{
     committee::{Committee, QuorumThreshold, StakeAggregator},
     data::Data,
@@ -33,6 +33,8 @@ pub struct BaseCommitter {
     block_store: BlockStore,
     /// The length of a wave (minimum 3)
     wave_length: u64,
+    /// The offset of the first wave. This is used in the pipelined committer to ensure that each
+    /// [`BaseCommitter`] operates on a different view of the dag.
     offset: u64,
     /// Metrics information
     metrics: Arc<Metrics>,
@@ -40,21 +42,20 @@ pub struct BaseCommitter {
 
 impl BaseCommitter {
     /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
-    pub fn new(
-        committee: Arc<Committee>,
-        block_store: BlockStore,
-        wave_length: u64,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        assert!(wave_length >= 3);
-
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
         Self {
             committee,
             block_store,
-            wave_length,
+            wave_length: DEFAULT_WAVE_LENGTH,
             offset: 0,
             metrics,
         }
+    }
+
+    pub fn with_wave_length(mut self, wave_length: u64) -> Self {
+        assert!(wave_length >= 3);
+        self.wave_length = wave_length;
+        self
     }
 
     pub fn with_offset(mut self, offset: u64) -> Self {
@@ -343,7 +344,6 @@ mod test {
     #[tracing_test::traced_test]
     fn commit_one() {
         let committee = committee(4);
-        let wave_length = 3;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -351,7 +351,6 @@ mod test {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
         );
 
@@ -371,7 +370,6 @@ mod test {
     #[tracing_test::traced_test]
     fn idempotence() {
         let committee = committee(4);
-        let wave_length = 3;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -379,7 +377,6 @@ mod test {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
         );
 
@@ -394,19 +391,15 @@ mod test {
     fn commit_10() {
         let (metrics, _) = Metrics::new(default_registry(), None);
         let committee = committee(4);
-        let wave_length = 3;
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let n = 10;
         let enough_blocks = wave_length * (n + 1) - 1;
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer = BaseCommitter::new(
-            committee.clone(),
-            block_writer.into_block_store(),
-            wave_length,
-            metrics,
-        );
+        let committer =
+            BaseCommitter::new(committee.clone(), block_writer.into_block_store(), metrics);
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -427,7 +420,7 @@ mod test {
     #[tracing_test::traced_test]
     fn commit_none() {
         let committee = committee(4);
-        let wave_length = 3;
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let first_commit_round = 2 * wave_length - 1;
         for r in 0..first_commit_round - 1 {
@@ -437,7 +430,6 @@ mod test {
             let committer = BaseCommitter::new(
                 committee.clone(),
                 block_writer.into_block_store(),
-                wave_length,
                 test_metrics(),
             );
 
@@ -452,7 +444,7 @@ mod test {
     #[tracing_test::traced_test]
     fn commit_incremental() {
         let committee = committee(4);
-        let wave_length = 3;
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut last_committed_round = 0;
         for n in 1..=10 {
@@ -463,7 +455,6 @@ mod test {
             let committer = BaseCommitter::new(
                 committee.clone(),
                 block_writer.into_block_store(),
-                wave_length,
                 test_metrics(),
             );
 
@@ -487,7 +478,7 @@ mod test {
     #[tracing_test::traced_test]
     fn no_leader() {
         let committee = committee(4);
-        let wave_length = 3;
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
@@ -530,7 +521,6 @@ mod test {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
         );
 
@@ -544,7 +534,7 @@ mod test {
     #[tracing_test::traced_test]
     fn not_enough_support() {
         let committee = committee(4);
-        let wave_length = 3;
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
@@ -572,7 +562,6 @@ mod test {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
         );
 
@@ -613,7 +602,6 @@ mod test {
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
         );
 

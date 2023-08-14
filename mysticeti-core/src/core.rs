@@ -1,3 +1,7 @@
+use crate::block_store::{
+    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+    WAL_ENTRY_STATE,
+};
 use crate::consensus::{linearizer::CommittedSubDag, Committer};
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
@@ -10,13 +14,6 @@ use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, S
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
 use crate::{block_handler::BlockHandler, consensus::base_committer::BaseCommitter};
 use crate::{block_manager::BlockManager, metrics::Metrics};
-use crate::{
-    block_store::{
-        BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
-        WAL_ENTRY_STATE,
-    },
-    consensus,
-};
 use crate::{committee::Committee, consensus::LeaderStatus};
 use minibytes::Bytes;
 use std::fs::File;
@@ -129,12 +126,7 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = BaseCommitter::new(
-            committee.clone(),
-            block_store.clone(),
-            consensus::DEFAULT_WAVE_LENGTH,
-            metrics.clone(),
-        );
+        let committer = BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone());
 
         let mut this = Self {
             block_manager,

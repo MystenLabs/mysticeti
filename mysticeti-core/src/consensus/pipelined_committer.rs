@@ -25,13 +25,9 @@ impl PipelinedCommitter {
 
         let committers = (0..wave_length)
             .map(|i| {
-                BaseCommitter::new(
-                    committee.clone(),
-                    block_store.clone(),
-                    wave_length,
-                    metrics.clone(),
-                )
-                .with_offset(i)
+                BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone())
+                    .with_offset(i)
+                    .with_wave_length(wave_length)
             })
             .collect();
 
@@ -67,7 +63,9 @@ impl Committer for PipelinedCommitter {
 #[cfg(test)]
 mod test {
     use crate::{
-        consensus::{base_committer::BaseCommitter, Committer, LeaderStatus},
+        consensus::{
+            pipelined_committer::PipelinedCommitter, Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
+        },
         test_util::{build_dag, committee, test_metrics, TestBlockWriter},
     };
 
@@ -76,15 +74,14 @@ mod test {
     #[tracing_test::traced_test]
     fn commit_one() {
         let committee = committee(4);
-        let wave_length = 3;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = BaseCommitter::new(
+        let committer = PipelinedCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
+            DEFAULT_WAVE_LENGTH,
             test_metrics(),
         );
 
@@ -104,15 +101,14 @@ mod test {
     #[tracing_test::traced_test]
     fn idempotence() {
         let committee = committee(4);
-        let wave_length = 3;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = BaseCommitter::new(
+        let committer = PipelinedCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
+            DEFAULT_WAVE_LENGTH,
             test_metrics(),
         );
 

@@ -32,16 +32,15 @@ impl CommittedSubDag {
 }
 
 /// Expand a committed sequence of leader into a sequence of sub-dags.
-pub struct CommitInterpreter {
+#[derive(Default)]
+pub struct Linearizer {
     /// Keep track of all committed blocks to avoid committing the same block twice.
     pub committed: HashSet<BlockReference>,
 }
 
-impl CommitInterpreter {
+impl Linearizer {
     pub fn new() -> Self {
-        Self {
-            committed: HashSet::new(),
-        }
+        Self::default()
     }
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that

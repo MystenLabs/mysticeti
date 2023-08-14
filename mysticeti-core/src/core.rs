@@ -2,8 +2,7 @@ use crate::block_store::{
     BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
     WAL_ENTRY_STATE,
 };
-use crate::commit_interpreter::CommittedSubDag;
-use crate::committee::Committee;
+use crate::consensus::{linearizer::CommittedSubDag, Committer};
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -13,8 +12,9 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
-use crate::{block_handler::BlockHandler, committer::Committer};
+use crate::{block_handler::BlockHandler, consensus::base_committer::BaseCommitter};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use crate::{committee::Committee, consensus::LeaderStatus};
 use minibytes::Bytes;
 use std::fs::File;
 use std::mem;
@@ -43,6 +43,7 @@ pub struct Core<H: BlockHandler> {
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
+    committer: BaseCommitter,
 }
 
 pub struct CoreOptions {
@@ -125,6 +126,8 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
+        let committer = BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone());
+
         let mut this = Self {
             block_manager,
             pending,
@@ -142,6 +145,7 @@ impl<H: BlockHandler> Core<H> {
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
             rounds_in_epoch,
+            committer,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -320,15 +324,16 @@ impl<H: BlockHandler> Core<H> {
         self.metrics.proposed_block_vote_count.observe(votes);
     }
 
-    pub fn try_commit(&mut self, period: u64) -> Vec<Data<StatementBlock>> {
-        // todo only create committer once
-        let sequence = Committer::new(
-            self.committee.clone(),
-            self.block_store.clone(),
-            period,
-            self.metrics.clone(),
-        )
-        .try_commit(self.last_commit_round);
+    pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
+        let sequence: Vec<_> = self
+            .committer
+            .try_commit(self.last_commit_round)
+            .into_iter()
+            .filter_map(|leader| match leader {
+                LeaderStatus::Commit(block) => Some(block),
+                LeaderStatus::Skip(..) => None,
+            })
+            .collect();
 
         self.last_commit_round = max(
             self.last_commit_round,

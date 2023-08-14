@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_store::BlockStore;
-use crate::commit_interpreter::CommittedSubDag;
+use crate::consensus::linearizer::CommittedSubDag;
 use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
@@ -92,7 +92,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 return;
             }; // No need to commit after epoch is safe to close
 
-            let newly_committed = self.core.try_commit(3);
+            let newly_committed = self.core.try_commit();
             let utc_now = timestamp_utc();
             if !newly_committed.is_empty() {
                 let committed_refs: Vec<_> = newly_committed

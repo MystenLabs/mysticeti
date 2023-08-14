@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::commit_interpreter::{CommitInterpreter, CommittedSubDag};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
 use crate::config::StorageDir;
+use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
@@ -324,7 +324,7 @@ impl TransactionGenerator {
 }
 
 pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
-    commit_interpreter: CommitInterpreter,
+    commit_interpreter: Linearizer,
     transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, H>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
@@ -353,7 +353,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         handler: H,
     ) -> Self {
         Self {
-            commit_interpreter: CommitInterpreter::new(),
+            commit_interpreter: Linearizer::new(),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],

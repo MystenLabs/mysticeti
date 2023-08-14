@@ -3,10 +3,9 @@
 
 pub mod block_handler;
 mod block_manager;
-mod commit_interpreter;
 pub mod committee;
-mod committer;
 pub mod config;
+pub mod consensus;
 pub mod core;
 mod data;
 #[cfg(test)]

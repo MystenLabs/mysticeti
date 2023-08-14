@@ -278,51 +278,53 @@ impl BaseCommitter {
 
 impl Committer for BaseCommitter {
     fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
-        let last_committed_wave = self.wave_number(last_committer_round);
+        let mut last_committed_wave = self.wave_number(last_committer_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
-        let leader_round = self.leader_round(highest_wave);
-        let decision_round = self.decision_round(highest_wave);
 
-        tracing::debug!(
-            "{self} trying to commit ( \
-                highest_round: {highest_round}, \
-                leader_round: {leader_round}, \
-                decision round: {decision_round} \
-            )"
-        );
+        let mut sequence = Vec::new();
+        for wave in (last_committed_wave + 1)..=highest_wave {
+            let leader_round = self.leader_round(wave);
+            let decision_round = self.decision_round(wave);
 
-        // Ensure we commit each leader at most once (and skip genesis).
-        if highest_wave <= last_committed_wave {
-            tracing::debug!("Wave {highest_wave} already committed");
-            return vec![];
-        }
+            tracing::debug!(
+                "{self} trying to commit ( \
+                    wave: {wave}, \
+                    leader_round: {leader_round}, \
+                    decision round: {decision_round} \
+                )"
+            );
 
-        // Check whether the leader(s) has enough support. That is, whether there are 2f+1
-        // certificates over the leader. Note that there could be more than one leader block
-        // (created by Byzantine leaders).
-        let leader = self.committee.elect_leader(leader_round);
-        let leader_blocks = self
-            .block_store
-            .get_blocks_at_authority_round(leader, leader_round);
-        let mut leaders_with_enough_support: Vec<_> = leader_blocks
-            .into_iter()
-            .filter(|l| self.enough_leader_support(decision_round, l))
-            .collect();
+            // Check whether the leader(s) has enough support. That is, whether there are 2f+1
+            // certificates over the leader. Note that there could be more than one leader block
+            // (created by Byzantine leaders).
+            let leader = self.committee.elect_leader(leader_round);
+            let leader_blocks = self
+                .block_store
+                .get_blocks_at_authority_round(leader, leader_round);
+            let mut leaders_with_enough_support: Vec<_> = leader_blocks
+                .into_iter()
+                .filter(|l| self.enough_leader_support(decision_round, l))
+                .collect();
 
-        // There can be at most one leader with enough support for each round.
-        if leaders_with_enough_support.len() > 1 {
-            panic!("More than one certified block at wave {highest_wave} from leader {leader}")
-        }
-
-        // If a leader has enough support, we commit it along with its linked predecessors.
-        match leaders_with_enough_support.pop() {
-            Some(leader_block) => {
-                tracing::debug!("leader {leader_block} has enough support to be committed");
-                self.commit(last_committed_wave, leader_block)
+            // There can be at most one leader with enough support for each round.
+            if leaders_with_enough_support.len() > 1 {
+                panic!("More than one certified block at wave {wave} from leader {leader}")
             }
-            None => vec![],
+
+            // If a leader has enough support, we commit it along with its linked predecessors.
+            let new_commits = match leaders_with_enough_support.pop() {
+                Some(leader_block) => {
+                    tracing::debug!("leader {leader_block} has enough support to be committed");
+                    let commits = self.commit(last_committed_wave, leader_block);
+                    last_committed_wave = wave;
+                    commits
+                }
+                None => vec![],
+            };
+            sequence.extend(new_commits);
         }
+        sequence
     }
 }
 

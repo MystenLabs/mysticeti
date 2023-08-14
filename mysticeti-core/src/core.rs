@@ -1,5 +1,5 @@
 use crate::committee::Committee;
-use crate::consensus::commit_interpreter::CommittedSubDag;
+use crate::consensus::linearizer::CommittedSubDag;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;

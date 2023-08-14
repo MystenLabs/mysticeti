@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::committee::Committee;
-use crate::consensus::commit_interpreter::CommittedSubDag;
+use crate::consensus::linearizer::CommittedSubDag;
 use crate::data::Data;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};

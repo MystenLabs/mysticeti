@@ -63,3 +63,39 @@ impl Committer for PipelinedCommitter {
         sequence
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        consensus::{base_committer::BaseCommitter, Committer, LeaderStatus},
+        test_util::{build_dag, committee, test_metrics, TestBlockWriter},
+    };
+
+    /// Commit one leader.
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_one() {
+        let committee = committee(4);
+        let wave_length = 3;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+        build_dag(&committee, &mut block_writer, None, 5);
+
+        let committer = BaseCommitter::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            wave_length,
+            test_metrics(),
+        );
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        assert_eq!(sequence.len(), 1);
+        match sequence[0] {
+            LeaderStatus::Commit(ref block) => {
+                assert_eq!(block.author(), committee.elect_leader(3))
+            }
+            _ => panic!("Expected a committed leader"),
+        }
+    }
+}

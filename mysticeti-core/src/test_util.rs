@@ -375,3 +375,55 @@ impl BlockWriter for TestBlockWriter {
         (&mut self.wal_writer, &self.block_store).insert_own_block(block)
     }
 }
+
+/// Build a fully interconnected dag up to the specified round. This function starts building the
+/// dag from the specified [`start`] references or from genesis if none are specified.
+pub fn build_dag(
+    committee: &Committee,
+    block_writer: &mut TestBlockWriter,
+    start: Option<Vec<BlockReference>>,
+    stop: RoundNumber,
+) -> Vec<BlockReference> {
+    let mut includes = match start {
+        Some(start) => {
+            assert!(!start.is_empty());
+            assert_eq!(
+                start.iter().map(|x| x.round).max(),
+                start.iter().map(|x| x.round).min()
+            );
+            start
+        }
+        None => {
+            let (references, genesis): (Vec<_>, Vec<_>) = committee
+                .authorities()
+                .map(|index| StatementBlock::new_genesis(index))
+                .map(|block| (*block.reference(), block))
+                .unzip();
+            block_writer.add_blocks(genesis);
+            references
+        }
+    };
+
+    let starting_round = includes.first().unwrap().round + 1;
+    for round in starting_round..=stop {
+        let (references, blocks): (Vec<_>, Vec<_>) = committee
+            .authorities()
+            .map(|authority| {
+                let block = Data::new(StatementBlock::new(
+                    authority,
+                    round,
+                    includes.clone(),
+                    vec![],
+                    0,
+                    false,
+                    Default::default(),
+                ));
+                (*block.reference(), block)
+            })
+            .unzip();
+        block_writer.add_blocks(blocks);
+        includes = references;
+    }
+
+    includes
+}

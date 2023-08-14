@@ -152,4 +152,64 @@ mod test {
             };
         }
     }
+
+    /// Do not commit anything if we are still in the first wave. Remember that the first leader
+    /// has round = wave_length.
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_none() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let first_commit_round = 2 * wave_length - 1;
+        for r in 0..first_commit_round {
+            let mut block_writer = TestBlockWriter::new(&committee);
+            build_dag(&committee, &mut block_writer, None, r);
+
+            let committer = PipelinedCommitter::new(
+                committee.clone(),
+                block_writer.into_block_store(),
+                wave_length,
+                test_metrics(),
+            );
+
+            let last_committed_round = 0;
+            let sequence = committer.try_commit(last_committed_round);
+            assert!(sequence.is_empty());
+        }
+    }
+
+    /// Commit one by one each leader as the dag progresses in ideal conditions.
+    #[test]
+    #[tracing_test::traced_test]
+    fn commit_incremental() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut last_committed_round = 0;
+        for n in 1..=10 {
+            let enough_blocks = (wave_length - 1) + n + (wave_length - 1);
+            let mut block_writer = TestBlockWriter::new(&committee);
+            build_dag(&committee, &mut block_writer, None, enough_blocks);
+
+            let committer = PipelinedCommitter::new(
+                committee.clone(),
+                block_writer.into_block_store(),
+                wave_length,
+                test_metrics(),
+            );
+
+            let sequence = committer.try_commit(last_committed_round);
+
+            assert_eq!(sequence.len(), 1);
+            let leader_round = (wave_length - 1) + n as u64;
+            if let LeaderStatus::Commit(ref block) = sequence[0] {
+                assert_eq!(block.author(), committee.elect_leader(leader_round));
+            } else {
+                panic!("Expected a committed leader")
+            }
+
+            last_committed_round = leader_round;
+        }
+    }
 }

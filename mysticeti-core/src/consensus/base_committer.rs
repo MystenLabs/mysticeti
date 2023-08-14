@@ -427,7 +427,7 @@ mod test {
         let wave_length = DEFAULT_WAVE_LENGTH;
 
         let first_commit_round = 2 * wave_length - 1;
-        for r in 0..first_commit_round - 1 {
+        for r in 0..first_commit_round {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, r);
 
@@ -463,17 +463,16 @@ mod test {
             );
 
             let sequence = committer.try_commit(last_committed_round);
+
             assert_eq!(sequence.len(), 1);
-            for leader_block in sequence {
-                let leader_round = n as u64 * wave_length;
-                match leader_block {
-                    LeaderStatus::Commit(ref block) => {
-                        assert_eq!(block.author(), committee.elect_leader(leader_round));
-                    }
-                    _ => panic!("Expected a committed leader"),
-                }
-                last_committed_round = leader_round;
+            let leader_round = n as u64 * wave_length;
+            if let LeaderStatus::Commit(ref block) = sequence[0] {
+                assert_eq!(block.author(), committee.elect_leader(leader_round));
+            } else {
+                panic!("Expected a committed leader")
             }
+
+            last_committed_round = leader_round;
         }
     }
 

@@ -36,6 +36,7 @@ mod crypto;
 #[allow(dead_code)] // todo - delete if unused after a while
 mod lock;
 mod log;
+pub mod pipelined_committer;
 mod serde;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;

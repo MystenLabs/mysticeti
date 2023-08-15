@@ -401,7 +401,11 @@ impl Committer for BaseCommitter {
 
 impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Committer-{}", self.options.round_offset)
+        write!(
+            f,
+            "BaseCommitter({},{})",
+            self.options.leader_offset, self.options.round_offset
+        )
     }
 }
 

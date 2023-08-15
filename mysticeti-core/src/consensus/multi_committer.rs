@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::HashMap, sync::Arc};
+use std::{cmp::max, collections::HashMap, fmt::Display, sync::Arc};
 
 use crate::{block_store::BlockStore, committee::Committee, metrics::Metrics, types::RoundNumber};
 
@@ -65,6 +65,7 @@ impl MultiCommitterBuilder {
 
         MultiCommitter {
             wave_length: self.wave_length,
+            round_offset: self.round_offset,
             committers,
         }
     }
@@ -72,6 +73,7 @@ impl MultiCommitterBuilder {
 
 pub struct MultiCommitter {
     wave_length: RoundNumber,
+    round_offset: RoundNumber,
     committers: Vec<BaseCommitter>,
 }
 
@@ -112,5 +114,11 @@ impl Committer for MultiCommitter {
             r += 1;
         }
         sequence
+    }
+}
+
+impl Display for MultiCommitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MultiCommitter({})", self.round_offset)
     }
 }

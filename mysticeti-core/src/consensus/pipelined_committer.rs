@@ -7,7 +7,7 @@ use crate::metrics::Metrics;
 use crate::{block_store::BlockStore, consensus::base_committer::BaseCommitter};
 use crate::{committee::Committee, types::RoundNumber};
 
-use super::{Committer, LeaderStatus};
+use super::{base_committer::BaseCommitterOptions, Committer, LeaderStatus};
 
 /// The [`PipelinedCommitter`] uses three [`BaseCommitter`] instances, each shifted by one round,
 /// to commit every dag round (in the ideal case).
@@ -25,9 +25,13 @@ impl PipelinedCommitter {
     ) -> Self {
         let committers = (0..wave_length)
             .map(|i| {
+                let options = BaseCommitterOptions {
+                    round_offset: i as u64,
+                    wave_length,
+                    ..Default::default()
+                };
                 BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone())
-                    .with_wave_length(wave_length)
-                    .with_offset(i)
+                    .with_options(options)
             })
             .collect();
 

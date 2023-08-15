@@ -433,7 +433,8 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
-        println!("sequence: {:?}", sequence);
+        tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
             assert_eq!(block.author(), committee.elect_leader(3))
@@ -459,6 +460,7 @@ mod test {
 
         let last_committed_round = 3;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
     }
 
@@ -484,6 +486,8 @@ mod test {
             let sequence = committer.try_commit(last_committed_round);
 
             assert_eq!(sequence.len(), 1);
+            tracing::info!("Commit sequence: {sequence:?}");
+
             let leader_round = n as u64 * wave_length;
             if let LeaderStatus::Commit(ref block) = sequence[0] {
                 assert_eq!(block.author(), committee.elect_leader(leader_round));
@@ -515,6 +519,8 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), n as usize);
         for (i, leader_block) in sequence.iter().enumerate() {
             let leader_round = (i as u64 + 1) * wave_length;
@@ -546,6 +552,7 @@ mod test {
 
             let last_committed_round = 0;
             let sequence = committer.try_commit(last_committed_round);
+            tracing::info!("Commit sequence: {sequence:?}");
             assert!(sequence.is_empty());
         }
     }
@@ -603,6 +610,7 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Skip(round) = sequence[0] {
             assert_eq!(round, leader_round_1);
@@ -648,6 +656,8 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Skip(round) = sequence[0] {
             assert_eq!(round, leader_round_1);
@@ -706,6 +716,7 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 3);
 
         // Ensure we commit the leader of wave 1.
@@ -784,6 +795,7 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
     }
 }

@@ -16,12 +16,6 @@ use crate::{
 
 use super::{Committer, LeaderStatus};
 
-enum LeaderSupport {
-    DirectCommit(Data<StatementBlock>),
-    DirectSkip(RoundNumber),
-    Undecided(RoundNumber),
-}
-
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round, at least one
 /// voting round, and one decision round.
 type WaveNumber = u64;
@@ -208,12 +202,12 @@ impl BaseCommitter {
         return false;
     }
 
-    fn supported_leader(
+    fn try_direct_commit(
         &self,
         leader: AuthorityIndex,
         leader_round: RoundNumber,
         decision_round: RoundNumber,
-    ) -> LeaderSupport {
+    ) -> Option<LeaderStatus> {
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
@@ -222,13 +216,8 @@ impl BaseCommitter {
             .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
-            .map(|l| {
-                if self.enough_leader_support(decision_round, &l) {
-                    LeaderSupport::DirectCommit(l)
-                } else {
-                    LeaderSupport::Undecided(l.round())
-                }
-            })
+            .filter(|l| self.enough_leader_support(decision_round, &l))
+            .map(|l| LeaderStatus::Commit(l))
             .collect();
 
         // There can be at most one leader with enough support for each round.
@@ -236,10 +225,7 @@ impl BaseCommitter {
             panic!("More than one certified block at round {leader_round} from leader {leader}")
         }
 
-        match leaders_with_enough_support.pop() {
-            Some(x) => x,
-            None => LeaderSupport::Undecided(leader_round),
-        }
+        leaders_with_enough_support.pop()
     }
 
     /// Output an ordered list of leader blocks (that we should commit in order).
@@ -304,7 +290,7 @@ impl BaseCommitter {
 
     /// Commit the specified leader block as well as any eligible past leader (recursively)
     /// that we did not already commit.
-    fn commit(
+    fn try_indirect_commit(
         &self,
         last_committed_wave: WaveNumber,
         leader_block: Data<StatementBlock>,
@@ -355,17 +341,24 @@ impl Committer for BaseCommitter {
 
             // Check whether the leader(s) has enough support.
             let leader = self.elect_leader(leader_round);
-            let supported_leader = self.supported_leader(leader, leader_round, decision_round);
+            let anchor = self.try_direct_commit(leader, leader_round, decision_round);
 
             // If a leader has enough support, we commit it along with its linked predecessors.
-            let new_commits = match supported_leader {
-                LeaderSupport::DirectCommit(leader_block) => {
-                    tracing::debug!("leader {leader_block} has enough support to be committed");
-                    let commits = self.commit(last_committed_wave, leader_block);
+            let new_commits = match anchor {
+                Some(LeaderStatus::Commit(block)) => {
+                    tracing::debug!("Leader {block} is direct-committed");
+                    let commits = self.try_indirect_commit(last_committed_wave, block);
                     last_committed_wave = wave;
                     commits
                 }
-                _ => vec![],
+                Some(LeaderStatus::Skip(round)) => {
+                    tracing::debug!("Leader at round {round} is direct-skipped");
+                    vec![LeaderStatus::Skip(round)]
+                }
+                None => {
+                    tracing::debug!("Leader at round {leader_round} is still undecided");
+                    vec![]
+                }
             };
             sequence.extend(new_commits);
         }

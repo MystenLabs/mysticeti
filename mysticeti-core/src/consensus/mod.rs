@@ -34,5 +34,5 @@ impl LeaderStatus {
 pub trait Committer {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed leaders.
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus>;
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus>;
 }

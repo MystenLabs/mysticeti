@@ -354,8 +354,8 @@ impl BaseCommitter {
 }
 
 impl Committer for BaseCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
-        let mut last_committed_wave = self.wave_number(last_committer_round);
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
+        let mut last_committed_wave = self.wave_number(last_committed_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
 

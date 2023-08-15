@@ -71,12 +71,13 @@ pub struct PipelinedCommitter {
 }
 
 impl Committer for PipelinedCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
         let mut pending_queue = HashMap::new();
 
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committer_round) {
+            // TODO: Fix this: currently should only work with single leader.
+            for leader in committer.try_commit(last_committed_round) {
                 let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
                 pending_queue.insert(round, leader);
@@ -84,7 +85,7 @@ impl Committer for PipelinedCommitter {
         }
 
         // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committer_round + 1);
+        let mut r = max(self.wave_length, last_committed_round + 1);
 
         // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();

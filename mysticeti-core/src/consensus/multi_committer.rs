@@ -78,11 +78,11 @@ pub struct MultiCommitter {
 }
 
 impl Committer for MultiCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
         // Run all committers and collect their output.
         let mut pending_queue = HashMap::new();
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committer_round) {
+            for leader in committer.try_commit(last_committed_round) {
                 let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
                 let key = (round, committer.leader_offset());
@@ -91,11 +91,12 @@ impl Committer for MultiCommitter {
         }
 
         // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committer_round + 1);
+        let mut r = max(self.wave_length, last_committed_round + 1);
 
         // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();
         'main: loop {
+            println!("r: {pending_queue:?}");
             // Ensure we can commit the entire round.
             // TODO: We should be able to commit partial rounds, but then this function would
             // need more granular information about the last committed state.

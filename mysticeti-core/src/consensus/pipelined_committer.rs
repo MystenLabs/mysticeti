@@ -74,7 +74,7 @@ mod test {
             pipelined_committer::PipelinedCommitter, Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
         },
         data::Data,
-        test_util::{build_dag, committee, test_metrics, TestBlockWriter, build_dag_layer},
+        test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
         types::StatementBlock,
     };
 

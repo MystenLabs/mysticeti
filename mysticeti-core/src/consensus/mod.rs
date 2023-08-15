@@ -7,6 +7,7 @@ use self::base_committer::BaseCommitter;
 
 pub mod base_committer;
 pub mod linearizer;
+pub mod multi_committer;
 pub mod pipelined_committer;
 
 /// Default wave length for all committers.

@@ -202,7 +202,7 @@ impl BaseCommitter {
                 }
             }
         }
-        return false;
+        false
     }
 
     /// Check whether the specified leader has enough support (that is, 2f+1 certificates)
@@ -224,7 +224,7 @@ impl BaseCommitter {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn try_direct_commit(
@@ -248,8 +248,8 @@ impl BaseCommitter {
             .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
-            .filter(|l| self.enough_leader_support(decision_round, &l))
-            .map(|l| LeaderStatus::Commit(l))
+            .filter(|l| self.enough_leader_support(decision_round, l))
+            .map(LeaderStatus::Commit)
             .collect();
 
         // There can be at most one leader with enough support for each round.

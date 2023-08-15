@@ -171,7 +171,7 @@ impl BaseCommitter {
                 .expect("We should have the whole sub-dag by now");
 
             if self.is_vote(&potential_vote, leader_block) {
-                tracing::debug!("{potential_vote:?} is a vote for {leader_block:?}");
+                tracing::trace!("{potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -232,11 +232,11 @@ impl BaseCommitter {
     fn order_leaders(
         &self,
         last_committed_wave: WaveNumber,
-        latest_leader_block: Data<StatementBlock>,
+        anchor: Data<StatementBlock>,
     ) -> Vec<LeaderStatus> {
-        let latest_wave = self.wave_number(latest_leader_block.round());
-        let mut to_commit = vec![LeaderStatus::Commit(latest_leader_block.clone())];
-        let mut current_leader_block = latest_leader_block;
+        let mut to_commit = Vec::new();
+        let latest_wave = self.wave_number(anchor.round());
+        let mut current_leader_block = anchor;
 
         let earliest_wave = last_committed_wave + 1;
         for w in (earliest_wave..latest_wave).rev() {
@@ -339,28 +339,29 @@ impl Committer for BaseCommitter {
                 )"
             );
 
-            // Check whether the leader(s) has enough support.
+            // Check whether the leader(s) has enough support to be skipped or committed.
             let leader = self.elect_leader(leader_round);
-            let anchor = self.try_direct_commit(leader, leader_round, decision_round);
-
-            // If a leader has enough support, we commit it along with its linked predecessors.
-            let new_commits = match anchor {
-                Some(LeaderStatus::Commit(block)) => {
-                    tracing::debug!("Leader {block} is direct-committed");
-                    let commits = self.try_indirect_commit(last_committed_wave, block);
-                    last_committed_wave = wave;
-                    commits
-                }
-                Some(LeaderStatus::Skip(round)) => {
-                    tracing::debug!("Leader at round {round} is direct-skipped");
-                    vec![LeaderStatus::Skip(round)]
-                }
+            match self.try_direct_commit(leader, leader_round, decision_round) {
+                Some(anchor) => match anchor {
+                    // We can direct-commit this leader. We first check the indirect commit rule
+                    // to see if we can commit any past leader.
+                    LeaderStatus::Commit(ref block) => {
+                        tracing::debug!("Leader {block} is direct-committed");
+                        let commits = self.try_indirect_commit(last_committed_wave, block.clone());
+                        sequence.extend(commits);
+                        sequence.push(anchor);
+                        last_committed_wave = wave;
+                    }
+                    // We can safely direct-skip this leader.
+                    LeaderStatus::Skip(round) => {
+                        tracing::debug!("Leader at round {round} is direct-skipped");
+                        sequence.push(anchor);
+                    }
+                },
                 None => {
                     tracing::debug!("Leader at round {leader_round} is still undecided");
-                    vec![]
                 }
-            };
-            sequence.extend(new_commits);
+            }
         }
         sequence
     }
@@ -400,6 +401,7 @@ mod test {
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        println!("sequence: {:?}", sequence);
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
             assert_eq!(block.author(), committee.elect_leader(3))

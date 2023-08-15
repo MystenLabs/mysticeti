@@ -1,7 +1,5 @@
 use std::{cmp::max, collections::HashMap, sync::Arc};
 
-use futures::future::pending;
-
 use crate::{block_store::BlockStore, committee::Committee, metrics::Metrics, types::RoundNumber};
 
 use super::{base_committer::BaseCommitter, Committer, LeaderStatus};
@@ -38,8 +36,8 @@ impl MultiCommitter {
 
 impl Committer for MultiCommitter {
     fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+        // Run all committers and collect their output.
         let mut pending_queue = HashMap::new();
-
         for committer in &self.committers {
             for leader in committer.try_commit(last_committer_round) {
                 let round = leader.round();
@@ -55,12 +53,16 @@ impl Committer for MultiCommitter {
         // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();
         'main: loop {
+            // Ensure we can commit the entire round.
+            // TODO: We should be able to commit partial rounds, but then this function would
+            // need more granular information about the last committed state.
             for i in 0..self.number_of_leaders {
                 let key = (r, i);
                 if !pending_queue.contains_key(&key) {
                     break 'main;
                 }
             }
+            // Commit the entire round, in order by leader.
             for i in 0..self.number_of_leaders {
                 let key = (r, i);
                 let leader = pending_queue.remove(&key).unwrap();

@@ -72,6 +72,7 @@ impl BaseCommitter {
     }
 
     pub fn with_options(mut self, options: BaseCommitterOptions) -> Self {
+        assert!(options.wave_length >= Self::MINIMUM_WAVE_LENGTH);
         self.options = options;
         self
     }

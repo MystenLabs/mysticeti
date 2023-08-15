@@ -113,17 +113,6 @@ impl BaseCommitter {
         wave * self.wave_length + self.wave_length - 1 + self.offset
     }
 
-    /// Check whether the specified block (`potential_certificate`) is a vote for
-    /// the specified leader (`leader_block`).
-    fn is_vote(
-        &self,
-        potential_vote: &Data<StatementBlock>,
-        leader_block: &Data<StatementBlock>,
-    ) -> bool {
-        let (author, round) = leader_block.author_round();
-        self.find_support((author, round), potential_vote) == Some(*leader_block.reference())
-    }
-
     /// Find which block is supported at (author, round) by the given block.
     /// Block can indirectly reference multiple blocks at (author, round), but only one block at
     /// (author, round)  will be supported by the given block. If block A supports B at (author, round),
@@ -156,6 +145,17 @@ impl BaseCommitter {
         None
     }
 
+    /// Check whether the specified block (`potential_certificate`) is a vote for
+    /// the specified leader (`leader_block`).
+    fn is_vote(
+        &self,
+        potential_vote: &Data<StatementBlock>,
+        leader_block: &Data<StatementBlock>,
+    ) -> bool {
+        let (author, round) = leader_block.author_round();
+        self.find_support((author, round), potential_vote) == Some(*leader_block.reference())
+    }
+
     /// Check whether the specified block (`potential_certificate`) is a certificate for
     /// the specified leader (`leader_block`).
     fn is_certificate(
@@ -180,8 +180,33 @@ impl BaseCommitter {
         false
     }
 
+    /// Check whether the specified leader has enough blames (that is, 2f+1 non-votes) to be
+    /// directly skipped.
+    fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
+        let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
+
+        let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
+        for voting_block in &voting_blocks {
+            let voter = voting_block.reference().authority;
+            if voting_block
+                .includes()
+                .iter()
+                .all(|include| include.authority != leader)
+            {
+                tracing::trace!(
+                    "{voting_block:?} is a blame for leader {leader:?} of round {}",
+                    voting_round - 1
+                );
+                if blame_stake_aggregator.add(voter, &self.committee) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /// Check whether the specified leader has enough support (that is, 2f+1 certificates)
-    /// at the specified round.
+    /// to be directly committed.
     fn enough_leader_support(
         &self,
         decision_round: RoundNumber,
@@ -193,7 +218,7 @@ impl BaseCommitter {
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
             if self.is_certificate(decision_block, leader_block) {
-                tracing::debug!("{decision_block:?} is a certificate for leader {leader_block:?}");
+                tracing::trace!("{decision_block:?} is a certificate for leader {leader_block:?}");
                 if certificate_stake_aggregator.add(authority, &self.committee) {
                     return true;
                 }
@@ -208,6 +233,13 @@ impl BaseCommitter {
         leader_round: RoundNumber,
         decision_round: RoundNumber,
     ) -> Option<LeaderStatus> {
+        // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
+        // for that leader.
+        let voting_round = leader_round + 1;
+        if self.enough_leader_blame(voting_round, leader) {
+            return Some(LeaderStatus::Skip(leader_round));
+        }
+
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).

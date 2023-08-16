@@ -341,7 +341,7 @@ mod test {
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
-        // Add enough blocks to reach the first leader, as seen by the first pipeline.
+        // Add enough blocks to reach the leader of wave 1, as seen by the first pipeline.
         let leader_round_1 = wave_length;
         let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
@@ -351,7 +351,7 @@ mod test {
             .filter(|x| x.authority != committee.elect_leader(leader_round_1))
             .collect();
 
-        // Add enough blocks to reach the decision round of the first wave, as seen by the
+        // Add enough blocks to reach the decision round of the wave 1, as seen by the
         // first pipeline.
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -361,7 +361,7 @@ mod test {
             decision_round_1,
         );
 
-        // Ensure no blocks are committed.
+        // Ensure the omitted leader is skipped.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),

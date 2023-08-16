@@ -614,6 +614,7 @@ mod test {
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Skip(round) = sequence[0] {
             assert_eq!(round, leader_round_1);
@@ -650,7 +651,7 @@ mod test {
             decision_round_1,
         );
 
-        // Ensure no blocks are committed.
+        // Ensure the leader is skipped.
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),

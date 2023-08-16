@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
 use crate::{block_store::BlockStore, committee::Committee, metrics::Metrics, types::RoundNumber};
 
@@ -64,7 +64,6 @@ impl MultiCommitterBuilder {
             .collect();
 
         MultiCommitter {
-            wave_length: self.wave_length,
             round_offset: self.round_offset,
             committers,
         }
@@ -72,7 +71,6 @@ impl MultiCommitterBuilder {
 }
 
 pub struct MultiCommitter {
-    wave_length: RoundNumber,
     round_offset: RoundNumber,
     committers: Vec<BaseCommitter>,
 }
@@ -80,39 +78,24 @@ pub struct MultiCommitter {
 impl Committer for MultiCommitter {
     fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
         // Run all committers and collect their output.
-        let mut pending_queue = HashMap::new();
+        let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
                 let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
-                let key = (round, committer.leader_offset());
-                pending_queue.insert(key, leader);
+                pending_queue
+                    .entry(round)
+                    .or_insert_with(Vec::new)
+                    .push(leader);
             }
         }
 
-        // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committed_round + 1);
-
-        // Collect all leaders in order, and stop when we find a gap.
+        // Collect all leaders in order, as long as we have all leaders.
         let mut sequence = Vec::new();
-        'main: loop {
-            println!("r: {pending_queue:?}");
-            // Ensure we can commit the entire round.
-            // TODO: We should be able to commit partial rounds, but then this function would
-            // need more granular information about the last committed state.
-            for i in 0..self.committers.len() {
-                let key = (r, i as u64);
-                if !pending_queue.contains_key(&key) {
-                    break 'main;
-                }
+        for leaders in pending_queue.into_values() {
+            if leaders.len() == self.committers.len() {
+                sequence.extend(leaders);
             }
-            // Commit the entire round, in order by leader.
-            for i in 0..self.committers.len() {
-                let key = (r, i as u64);
-                let leader = pending_queue.remove(&key).unwrap();
-                sequence.push(leader);
-            }
-            r += 1;
         }
         sequence
     }

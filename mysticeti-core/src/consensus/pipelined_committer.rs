@@ -51,7 +51,7 @@ impl PipelinedCommitterBuilder {
                 )
                 .with_wave_length(self.wave_length)
                 .with_number_of_leaders(self.number_of_leaders)
-                .with_round_offset(i as u64)
+                .with_round_offset(i)
                 .build()
             })
             .collect();
@@ -83,6 +83,8 @@ impl Committer for PipelinedCommitter {
                 pending_queue.insert(round, leader);
             }
         }
+
+        println!("pending_queue_2: {:?}", pending_queue);
 
         // The very first leader to commit has round = wave_length.
         let mut r = max(self.wave_length, last_committed_round + 1);

@@ -389,6 +389,7 @@ impl Committer for BaseCommitter {
                     LeaderStatus::Skip(round) => {
                         tracing::debug!("Leader at round {round} is direct-skipped");
                         sequence.push(anchor);
+                        last_committed_wave = wave;
                     }
                 },
                 None => {

@@ -413,11 +413,7 @@ mod test {
     use super::*;
 
     use crate::test_util::{build_dag, build_dag_layer, TestBlockWriter};
-    use crate::{
-        data::Data,
-        test_util::{committee, test_metrics},
-        types::StatementBlock,
-    };
+    use crate::test_util::{committee, test_metrics};
 
     /// Commit one leader.
     #[test]
@@ -577,24 +573,11 @@ mod test {
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 
-        let (references, blocks): (Vec<_>, Vec<_>) = committee
+        let connections = committee
             .authorities()
             .filter(|&authority| authority != leader_1)
-            .map(|authority| {
-                let block = Data::new(StatementBlock::new(
-                    authority,
-                    leader_round_1,
-                    references.clone(),
-                    vec![],
-                    0,
-                    false,
-                    Default::default(),
-                ));
-                (*block.reference(), block)
-            })
-            .unzip();
-
-        block_writer.add_blocks(blocks);
+            .map(|authority| (authority, references.clone()));
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
 
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(

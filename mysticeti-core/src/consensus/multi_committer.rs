@@ -81,10 +81,9 @@ impl Committer for MultiCommitter {
         let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
-                let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
                 pending_queue
-                    .entry(round)
+                    .entry(leader.round())
                     .or_insert_with(Vec::new)
                     .push(leader);
             }

@@ -76,15 +76,14 @@ impl Committer for PipelinedCommitter {
 
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
-            // TODO: Fix this: currently should only work with single leader.
             for leader in committer.try_commit(last_committed_round) {
-                let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
-                pending_queue.insert(round, leader);
+                pending_queue
+                    .entry(leader.round())
+                    .or_insert_with(Vec::new)
+                    .push(leader);
             }
         }
-
-        println!("pending_queue_2: {:?}", pending_queue);
 
         // The very first leader to commit has round = wave_length.
         let mut r = max(self.wave_length, last_committed_round + 1);
@@ -93,7 +92,7 @@ impl Committer for PipelinedCommitter {
         let mut sequence = Vec::new();
         loop {
             match pending_queue.remove(&r) {
-                Some(leader) => sequence.push(leader),
+                Some(leaders) => sequence.extend(leaders),
                 None => break,
             }
             r += 1;

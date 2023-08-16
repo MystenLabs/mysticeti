@@ -413,11 +413,7 @@ mod test {
     use super::*;
 
     use crate::test_util::{build_dag, build_dag_layer, TestBlockWriter};
-    use crate::{
-        data::Data,
-        test_util::{committee, test_metrics},
-        types::StatementBlock,
-    };
+    use crate::test_util::{committee, test_metrics};
 
     /// Commit one leader.
     #[test]
@@ -440,7 +436,7 @@ mod test {
 
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(3))
+            assert_eq!(block.author(), committee.elect_leader(DEFAULT_WAVE_LENGTH))
         } else {
             panic!("Expected a committed leader")
         };
@@ -461,7 +457,7 @@ mod test {
             test_metrics(),
         );
 
-        let last_committed_round = 3;
+        let last_committed_round = DEFAULT_WAVE_LENGTH;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
@@ -577,24 +573,11 @@ mod test {
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 
-        let (references, blocks): (Vec<_>, Vec<_>) = committee
+        let connections = committee
             .authorities()
             .filter(|&authority| authority != leader_1)
-            .map(|authority| {
-                let block = Data::new(StatementBlock::new(
-                    authority,
-                    leader_round_1,
-                    references.clone(),
-                    vec![],
-                    0,
-                    false,
-                    Default::default(),
-                ));
-                (*block.reference(), block)
-            })
-            .unzip();
-
-        block_writer.add_blocks(blocks);
+            .map(|authority| (authority, references.clone()));
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
 
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -614,6 +597,7 @@ mod test {
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Skip(round) = sequence[0] {
             assert_eq!(round, leader_round_1);
@@ -650,7 +634,7 @@ mod test {
             decision_round_1,
         );
 
-        // Ensure no blocks are committed.
+        // Ensure the leader is skipped.
         let committer = BaseCommitter::new(
             committee.clone(),
             block_writer.into_block_store(),

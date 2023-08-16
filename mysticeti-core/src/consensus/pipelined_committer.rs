@@ -108,9 +108,7 @@ mod test {
             pipelined_committer::PipelinedCommitterBuilder, Committer, LeaderStatus,
             DEFAULT_WAVE_LENGTH,
         },
-        data::Data,
         test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
-        types::StatementBlock,
     };
 
     /// Commit one leader.
@@ -118,6 +116,7 @@ mod test {
     #[tracing_test::traced_test]
     fn direct_commit() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -127,6 +126,7 @@ mod test {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
         let last_committed_round = 0;
@@ -135,7 +135,7 @@ mod test {
 
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(3))
+            assert_eq!(block.author(), committee.elect_leader(wave_length))
         } else {
             panic!("Expected a committed leader")
         };
@@ -146,6 +146,7 @@ mod test {
     #[tracing_test::traced_test]
     fn idempotence() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -155,9 +156,10 @@ mod test {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
-        let last_committed_round = 3;
+        let last_committed_round = wave_length;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
@@ -280,24 +282,11 @@ mod test {
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 
-        let (references, blocks): (Vec<_>, Vec<_>) = committee
+        let connections = committee
             .authorities()
             .filter(|&authority| authority != leader_1)
-            .map(|authority| {
-                let block = Data::new(StatementBlock::new(
-                    authority,
-                    leader_round_1,
-                    references.clone(),
-                    vec![],
-                    0,
-                    false,
-                    Default::default(),
-                ));
-                (*block.reference(), block)
-            })
-            .unzip();
-
-        block_writer.add_blocks(blocks);
+            .map(|authority| (authority, references.clone()));
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
 
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -337,7 +326,7 @@ mod test {
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
-        // Add enough blocks to reach the first leader, as seen by the first pipeline.
+        // Add enough blocks to reach the leader of wave 1, as seen by the first pipeline.
         let leader_round_1 = wave_length;
         let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
@@ -347,7 +336,7 @@ mod test {
             .filter(|x| x.authority != committee.elect_leader(leader_round_1))
             .collect();
 
-        // Add enough blocks to reach the decision round of the first wave, as seen by the
+        // Add enough blocks to reach the decision round of the wave 1, as seen by the
         // first pipeline.
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -357,7 +346,7 @@ mod test {
             decision_round_1,
         );
 
-        // Ensure no blocks are committed.
+        // Ensure the omitted leader is skipped.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),

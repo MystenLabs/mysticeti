@@ -447,7 +447,7 @@ mod test {
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
-        // Add enough blocks to reach the leader of wave 2.
+        // Add enough blocks to reach the leaders of wave 2.
         let leader_round_2 = 2 * wave_length;
         let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
 
@@ -537,5 +537,62 @@ mod test {
                 panic!("Expected a committed leader")
             }
         }
+    }
+
+    /// If there is no leader with enough support nor blame, we commit nothing.
+    #[test]
+    #[tracing_test::traced_test]
+    fn undecided() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+        let number_of_leaders = committee.quorum_threshold() as usize;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        // Add enough blocks to reach the leaders of wave 1.
+        let leader_round_1 = wave_length;
+        let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+
+        // Filter out the first leader of wave 1.
+        let references_1_without_leader: Vec<_> = references_1
+            .iter()
+            .cloned()
+            .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+            .collect();
+
+        // Create a dag layer where only one authority votes for that leader.
+        let mut authorities = committee.authorities();
+        let leader_connection = vec![(authorities.next().unwrap(), references_1)];
+        let non_leader_connections: Vec<_> = authorities
+            .take((committee.quorum_threshold() - 1) as usize)
+            .map(|authority| (authority, references_1_without_leader.clone()))
+            .collect();
+
+        let connections = leader_connection.into_iter().chain(non_leader_connections);
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
+
+        // Add enough blocks to reach the decision round of wave 1.
+        let decision_round_1 = 2 * wave_length - 1;
+        build_dag(
+            &committee,
+            &mut block_writer,
+            Some(references),
+            decision_round_1,
+        );
+
+        // Ensure no blocks are committed.
+        let committer = MultiCommitterBuilder::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            test_metrics(),
+        )
+        .with_wave_length(wave_length)
+        .with_number_of_leaders(number_of_leaders)
+        .build();
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+        assert!(sequence.is_empty());
     }
 }

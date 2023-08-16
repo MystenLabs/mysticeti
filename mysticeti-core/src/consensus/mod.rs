@@ -13,7 +13,7 @@ pub mod pipelined_committer;
 /// Default wave length for all committers.
 pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
 
-/// The status of every leader output by the [`BaseCommitter`]. While the core only cares about committed
+/// The status of every leader output by the committers. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.
 #[derive(Debug)]
@@ -34,5 +34,5 @@ impl LeaderStatus {
 pub trait Committer {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed leaders.
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus>;
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus>;
 }

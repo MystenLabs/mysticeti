@@ -3,56 +3,91 @@
 
 use std::{cmp::max, collections::HashMap, sync::Arc};
 
+use crate::block_store::BlockStore;
 use crate::metrics::Metrics;
-use crate::{block_store::BlockStore, consensus::base_committer::BaseCommitter};
 use crate::{committee::Committee, types::RoundNumber};
 
-use super::{Committer, LeaderStatus};
+use super::{
+    multi_committer::{MultiCommitter, MultiCommitterBuilder},
+    Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
+};
 
-/// The [`PipelinedCommitter`] uses three [`BaseCommitter`] instances, each shifted by one round,
-/// to commit every dag round (in the ideal case).
-pub struct PipelinedCommitter {
-    committers: Vec<BaseCommitter>,
+pub struct PipelinedCommitterBuilder {
+    committee: Arc<Committee>,
+    block_store: BlockStore,
+    metrics: Arc<Metrics>,
     wave_length: RoundNumber,
+    number_of_leaders: usize,
 }
 
-impl PipelinedCommitter {
-    pub fn new(
-        committee: Arc<Committee>,
-        block_store: BlockStore,
-        wave_length: u64,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        let committers = (0..wave_length)
+impl PipelinedCommitterBuilder {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+        Self {
+            committee,
+            block_store,
+            metrics,
+            wave_length: DEFAULT_WAVE_LENGTH,
+            number_of_leaders: 1,
+        }
+    }
+
+    pub fn with_wave_length(mut self, wave_length: RoundNumber) -> Self {
+        self.wave_length = wave_length;
+        self
+    }
+
+    pub fn with_number_of_leaders(mut self, number_of_leaders: usize) -> Self {
+        self.number_of_leaders = number_of_leaders;
+        self
+    }
+
+    pub fn build(self) -> PipelinedCommitter {
+        let committers = (0..self.wave_length)
             .map(|i| {
-                BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone())
-                    .with_wave_length(wave_length)
-                    .with_offset(i)
+                MultiCommitterBuilder::new(
+                    self.committee.clone(),
+                    self.block_store.clone(),
+                    self.metrics.clone(),
+                )
+                .with_wave_length(self.wave_length)
+                .with_number_of_leaders(self.number_of_leaders)
+                .with_round_offset(i)
+                .build()
             })
             .collect();
 
-        Self {
+        PipelinedCommitter {
+            wave_length: self.wave_length,
             committers,
-            wave_length,
         }
     }
 }
 
+/// The [`PipelinedCommitter`] uses one [`MultiCommitter`] instance per round in a wave length,
+/// each shifted by one round. This allows to commit every dag round (in the ideal case).
+pub struct PipelinedCommitter {
+    wave_length: RoundNumber,
+    committers: Vec<MultiCommitter>,
+}
+
 impl Committer for PipelinedCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
         let mut pending_queue = HashMap::new();
 
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committer_round) {
+            // TODO: Fix this: currently should only work with single leader.
+            for leader in committer.try_commit(last_committed_round) {
                 let round = leader.round();
                 tracing::debug!("{committer} decided {leader:?}");
                 pending_queue.insert(round, leader);
             }
         }
 
+        println!("pending_queue_2: {:?}", pending_queue);
+
         // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committer_round + 1);
+        let mut r = max(self.wave_length, last_committed_round + 1);
 
         // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();
@@ -71,7 +106,8 @@ impl Committer for PipelinedCommitter {
 mod test {
     use crate::{
         consensus::{
-            pipelined_committer::PipelinedCommitter, Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
+            pipelined_committer::PipelinedCommitterBuilder, Committer, LeaderStatus,
+            DEFAULT_WAVE_LENGTH,
         },
         data::Data,
         test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
@@ -87,12 +123,12 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            DEFAULT_WAVE_LENGTH,
             test_metrics(),
-        );
+        )
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -115,12 +151,12 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            DEFAULT_WAVE_LENGTH,
             test_metrics(),
-        );
+        )
+        .build();
 
         let last_committed_round = 3;
         let sequence = committer.try_commit(last_committed_round);
@@ -141,12 +177,13 @@ mod test {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-            let committer = PipelinedCommitter::new(
+            let committer = PipelinedCommitterBuilder::new(
                 committee.clone(),
                 block_writer.into_block_store(),
-                wave_length,
                 test_metrics(),
-            );
+            )
+            .with_wave_length(wave_length)
+            .build();
 
             let sequence = committer.try_commit(last_committed_round);
             tracing::info!("Commit sequence: {sequence:?}");
@@ -175,12 +212,13 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -210,12 +248,13 @@ mod test {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, r);
 
-            let committer = PipelinedCommitter::new(
+            let committer = PipelinedCommitterBuilder::new(
                 committee.clone(),
                 block_writer.into_block_store(),
-                wave_length,
                 test_metrics(),
-            );
+            )
+            .with_wave_length(wave_length)
+            .build();
 
             let last_committed_round = 0;
             let sequence = committer.try_commit(last_committed_round);
@@ -270,12 +309,13 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -319,12 +359,13 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -368,12 +409,13 @@ mod test {
         );
 
         // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -449,12 +491,13 @@ mod test {
         );
 
         // Ensure we commit the leaders of waves 1 and 2, except the leader we skipped.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
@@ -534,12 +577,13 @@ mod test {
         );
 
         // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);

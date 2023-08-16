@@ -20,6 +20,26 @@ use super::{Committer, LeaderStatus};
 /// voting round, and one decision round.
 type WaveNumber = u64;
 
+pub struct BaseCommitterOptions {
+    /// The length of a wave (minimum 3)
+    pub wave_length: u64,
+    ///
+    pub leader_offset: u64,
+    /// The offset of the first wave. This is used in the pipelined committer to ensure that each
+    /// [`BaseCommitter`] operates on a different view of the dag.
+    pub round_offset: u64,
+}
+
+impl Default for BaseCommitterOptions {
+    fn default() -> Self {
+        Self {
+            wave_length: DEFAULT_WAVE_LENGTH,
+            leader_offset: 0,
+            round_offset: 0,
+        }
+    }
+}
+
 /// The [`BaseCommitter`] contains all the commit logic. Once instantiated, the method [`try_commit`] can
 /// be called at any time and any number of times (it is idempotent) to return extension to the commit
 /// sequence. This structure is parametrized with a `wave length`, which must be at least 3 rounds: we
@@ -31,13 +51,8 @@ pub struct BaseCommitter {
     committee: Arc<Committee>,
     /// Keep all block data
     block_store: BlockStore,
-    /// The length of a wave (minimum 3)
-    wave_length: u64,
     ///
-    leader_number: usize,
-    /// The offset of the first wave. This is used in the pipelined committer to ensure that each
-    /// [`BaseCommitter`] operates on a different view of the dag.
-    offset: u64,
+    options: BaseCommitterOptions,
     /// Metrics information
     metrics: Arc<Metrics>,
 }
@@ -51,44 +66,29 @@ impl BaseCommitter {
         Self {
             committee,
             block_store,
-            wave_length: DEFAULT_WAVE_LENGTH,
-            leader_number: 0,
-            offset: 0,
+            options: BaseCommitterOptions::default(),
             metrics,
         }
     }
 
-    pub fn with_wave_length(mut self, wave_length: u64) -> Self {
-        assert!(wave_length >= Self::MINIMUM_WAVE_LENGTH);
-        assert!(wave_length > self.offset);
-        self.wave_length = wave_length;
+    pub fn with_options(mut self, options: BaseCommitterOptions) -> Self {
+        assert!(options.wave_length >= Self::MINIMUM_WAVE_LENGTH);
+        self.options = options;
         self
     }
 
-    pub fn with_leader_number(mut self, leader_number: usize) -> Self {
-        assert!(leader_number < self.committee.len());
-        self.leader_number = leader_number;
-        self
-    }
-
-    pub fn with_offset(mut self, offset: u64) -> Self {
-        assert!(offset < self.wave_length);
-        self.offset = offset;
-        self
-    }
-
-    pub fn leader_number(&self) -> usize {
-        self.leader_number
+    pub fn leader_offset(&self) -> u64 {
+        self.options.leader_offset
     }
 
     fn elect_leader(&self, round: RoundNumber) -> AuthorityIndex {
-        self.committee
-            .elect_leader(round + self.leader_number as RoundNumber)
+        let offset = self.options.leader_offset as RoundNumber;
+        self.committee.elect_leader(round + offset)
     }
 
     /// Return the wave in which the specified round belongs.
     fn wave_number(&self, round: RoundNumber) -> WaveNumber {
-        round.saturating_sub(self.offset) / self.wave_length
+        round.saturating_sub(self.options.round_offset) / self.options.wave_length
     }
 
     /// Return the highest wave number that can be committed given the highest round number.
@@ -104,13 +104,14 @@ impl BaseCommitter {
     /// Return the leader round of the specified wave number. The leader round is always the first
     /// round of the wave.
     fn leader_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave * self.wave_length + self.offset
+        wave * self.options.wave_length + self.options.round_offset
     }
 
     /// Return the decision round of the specified wave. The decision round is always the last
     /// round of the wave.
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
-        wave * self.wave_length + self.wave_length - 1 + self.offset
+        let wave_length = self.options.wave_length;
+        wave * wave_length + wave_length - 1 + self.options.round_offset
     }
 
     /// Find which block is supported at (author, round) by the given block.
@@ -353,8 +354,8 @@ impl BaseCommitter {
 }
 
 impl Committer for BaseCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
-        let mut last_committed_wave = self.wave_number(last_committer_round);
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
+        let mut last_committed_wave = self.wave_number(last_committed_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
 
@@ -373,26 +374,24 @@ impl Committer for BaseCommitter {
 
             // Check whether the leader(s) has enough support to be skipped or committed.
             let leader = self.elect_leader(leader_round);
-            match self.try_direct_commit(leader, leader_round, decision_round) {
-                Some(anchor) => match anchor {
+            if let Some(anchor) = self.try_direct_commit(leader, leader_round, decision_round) {
+                match anchor {
                     // We can direct-commit this leader. We first check the indirect commit rule
                     // to see if we can commit any past leader.
                     LeaderStatus::Commit(ref block) => {
                         tracing::debug!("Leader {block} is direct-committed");
                         let commits = self.try_indirect_commit(last_committed_wave, block.clone());
                         sequence.extend(commits);
-                        sequence.push(anchor);
-                        last_committed_wave = wave;
                     }
                     // We can safely direct-skip this leader.
                     LeaderStatus::Skip(round) => {
                         tracing::debug!("Leader at round {round} is direct-skipped");
-                        sequence.push(anchor);
                     }
-                },
-                None => {
-                    tracing::debug!("Leader at round {leader_round} is still undecided");
                 }
+                sequence.push(anchor);
+                last_committed_wave = wave;
+            } else {
+                tracing::debug!("Leader at round {leader_round} is still undecided");
             }
         }
         sequence
@@ -401,7 +400,11 @@ impl Committer for BaseCommitter {
 
 impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Committer-{}", self.offset)
+        write!(
+            f,
+            "BaseCommitter({},{})",
+            self.options.leader_offset, self.options.round_offset
+        )
     }
 }
 

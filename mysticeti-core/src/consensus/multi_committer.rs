@@ -339,18 +339,19 @@ mod test {
 
         assert_eq!(sequence.len(), number_of_leaders);
         for (i, leader) in sequence.iter().enumerate() {
+            let leader_round = wave_length;
+            let leader_offset = i as u64;
+            let expected_leader = committee.elect_leader(leader_round + leader_offset);
             if i == 0 {
-                if let LeaderStatus::Skip(round) = sequence[i] {
+                if let LeaderStatus::Skip(leader, round) = sequence[i] {
+                    assert_eq!(leader, expected_leader);
                     assert_eq!(round, leader_round_1);
                 } else {
                     panic!("Expected to directly skip the leader");
                 }
             } else {
                 if let LeaderStatus::Commit(block) = leader {
-                    let leader_round = wave_length;
-                    let leader_offset = i as u64;
-                    let expected = committee.elect_leader(leader_round + leader_offset);
-                    assert_eq!(block.author(), expected);
+                    assert_eq!(block.author(), expected_leader);
                 } else {
                     panic!("Expected a committed leader")
                 }
@@ -403,18 +404,19 @@ mod test {
 
         assert_eq!(sequence.len(), number_of_leaders);
         for (i, leader) in sequence.iter().enumerate() {
+            let leader_round = wave_length;
+            let leader_offset = i as u64;
+            let expected_leader = committee.elect_leader(leader_round + leader_offset);
             if i == 0 {
-                if let LeaderStatus::Skip(round) = sequence[i] {
+                if let LeaderStatus::Skip(leader, round) = sequence[i] {
+                    assert_eq!(leader, expected_leader);
                     assert_eq!(round, leader_round_1);
                 } else {
                     panic!("Expected to directly skip the leader");
                 }
             } else {
                 if let LeaderStatus::Commit(block) = leader {
-                    let leader_round = wave_length;
-                    let leader_offset = i as u64;
-                    let expected = committee.elect_leader(leader_round + leader_offset);
-                    assert_eq!(block.author(), expected);
+                    assert_eq!(block.author(), expected_leader);
                 } else {
                     panic!("Expected a committed leader")
                 }
@@ -494,17 +496,18 @@ mod test {
         // Ensure we skip the first leader of wave 2 but commit the others.
         let leader_round_2 = 2 * wave_length;
         for i in number_of_leaders..2 * number_of_leaders {
+            let leader_offset = (i % number_of_leaders) as u64;
+            let expected_leader = committee.elect_leader(leader_round_2 + leader_offset);
             if i == number_of_leaders {
-                if let LeaderStatus::Skip(round) = sequence[number_of_leaders] {
+                if let LeaderStatus::Skip(leader, round) = sequence[number_of_leaders] {
+                    assert_eq!(leader, expected_leader);
                     assert_eq!(round, leader_round_2);
                 } else {
                     panic!("Expected a skipped leader")
                 }
             } else {
                 if let LeaderStatus::Commit(ref block) = sequence[i] {
-                    let leader_offset = (i % number_of_leaders) as u64;
-                    let expected = committee.elect_leader(leader_round_2 + leader_offset);
-                    assert_eq!(block.author(), expected);
+                    assert_eq!(block.author(), expected_leader);
                 } else {
                     panic!("Expected a committed leader")
                 }

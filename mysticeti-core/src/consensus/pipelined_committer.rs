@@ -310,7 +310,8 @@ mod test {
         tracing::info!("Commit sequence: {sequence:?}");
 
         assert_eq!(sequence.len(), 1);
-        if let LeaderStatus::Skip(round) = sequence[0] {
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, leader_1);
             assert_eq!(round, leader_round_1);
         } else {
             panic!("Expected to directly skip the leader");
@@ -360,7 +361,8 @@ mod test {
         tracing::info!("Commit sequence: {sequence:?}");
 
         assert_eq!(sequence.len(), 1);
-        if let LeaderStatus::Skip(round) = sequence[0] {
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, committee.elect_leader(leader_round_1));
             assert_eq!(round, leader_round_1);
         } else {
             panic!("Expected to directly skip the leader");
@@ -422,8 +424,8 @@ mod test {
         }
 
         // Ensure we skip the leader of wave 2 (first pipeline) but commit the others.
-        let leader_round_2 = 2 * wave_length;
-        if let LeaderStatus::Skip(round) = sequence[3] {
+        if let LeaderStatus::Skip(leader, round) = sequence[3] {
+            assert_eq!(leader, committee.elect_leader(leader_round_2));
             assert_eq!(round, leader_round_2);
         } else {
             panic!("Expected a skipped leader")
@@ -505,7 +507,8 @@ mod test {
 
         // Ensure we skip the first leader of wave 2.
         let leader_round_2 = 2 * wave_length;
-        if let LeaderStatus::Skip(round) = sequence[3] {
+        if let LeaderStatus::Skip(leader, round) = sequence[3] {
+            assert_eq!(leader, committee.elect_leader(leader_round_2));
             assert_eq!(round, leader_round_2);
         } else {
             panic!("Expected to skip the leader")

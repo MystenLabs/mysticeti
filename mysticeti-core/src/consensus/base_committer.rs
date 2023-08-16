@@ -240,7 +240,7 @@ impl BaseCommitter {
         // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;
         if self.enough_leader_blame(voting_round, leader) {
-            return Some(LeaderStatus::Skip(leader_round));
+            return Some(LeaderStatus::Skip(leader, leader_round));
         }
 
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
@@ -319,7 +319,7 @@ impl BaseCommitter {
                     current_leader_block = certified_leader_block;
                 }
                 None => {
-                    to_commit.push(LeaderStatus::Skip(leader_round));
+                    to_commit.push(LeaderStatus::Skip(leader, leader_round));
                 }
             }
         }
@@ -345,14 +345,17 @@ impl BaseCommitter {
     }
 
     /// Update metrics.
-    fn update_metrics(&self, sequence: &[LeaderStatus], commit_type: &str) {
+    fn update_metrics(&self, sequence: &[LeaderStatus], direct_or_indirect: &str) {
         for leader in sequence {
-            if let LeaderStatus::Commit(block) = leader {
-                self.metrics
-                    .committed_leaders_total
-                    .with_label_values(&[&block.author().to_string(), commit_type])
-                    .inc();
-            }
+            let status = match leader {
+                LeaderStatus::Commit(_) => format!("{direct_or_indirect}-commit"),
+                LeaderStatus::Skip(_, _) => format!("{direct_or_indirect}-skip"),
+            };
+            let authority = leader.authority().to_string();
+            self.metrics
+                .committed_leaders_total
+                .with_label_values(&[&authority, &status])
+                .inc();
         }
     }
 }
@@ -388,15 +391,15 @@ impl Committer for BaseCommitter {
                         sequence.extend(commits);
                     }
                     // We can safely direct-skip this leader.
-                    LeaderStatus::Skip(round) => {
-                        tracing::debug!("Leader at round {round} is direct-skipped");
+                    LeaderStatus::Skip(leader, round) => {
+                        tracing::debug!("Leader {leader} at round {round} is direct-skipped");
                     }
                 }
-                self.update_metrics(&vec![anchor.clone()], "direct");
+                self.update_metrics(&[anchor.clone()], "direct");
                 sequence.push(anchor);
                 last_committed_wave = wave;
             } else {
-                tracing::debug!("Leader at round {leader_round} is still undecided");
+                tracing::debug!("Leader {leader} at round {leader_round} is still undecided");
             }
         }
         sequence
@@ -604,7 +607,8 @@ mod test {
         tracing::info!("Commit sequence: {sequence:?}");
 
         assert_eq!(sequence.len(), 1);
-        if let LeaderStatus::Skip(round) = sequence[0] {
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, leader_1);
             assert_eq!(round, leader_round_1);
         } else {
             panic!("Expected to directly skip the leader");
@@ -651,7 +655,8 @@ mod test {
         tracing::info!("Commit sequence: {sequence:?}");
 
         assert_eq!(sequence.len(), 1);
-        if let LeaderStatus::Skip(round) = sequence[0] {
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, committee.elect_leader(leader_round_1));
             assert_eq!(round, leader_round_1);
         } else {
             panic!("Expected to directly skip the leader");
@@ -722,7 +727,8 @@ mod test {
 
         // Ensure we skip the leader of wave 2.
         let leader_round_2 = 2 * wave_length;
-        if let LeaderStatus::Skip(round) = sequence[1] {
+        if let LeaderStatus::Skip(leader, round) = sequence[1] {
+            assert_eq!(leader, leader_2);
             assert_eq!(round, leader_round_2);
         } else {
             panic!("Expected a skipped leader")

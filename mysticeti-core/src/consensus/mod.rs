@@ -1,6 +1,6 @@
 use crate::{
     data::Data,
-    types::{RoundNumber, StatementBlock},
+    types::{AuthorityIndex, RoundNumber, StatementBlock},
 };
 
 use self::base_committer::BaseCommitter;
@@ -20,14 +20,21 @@ pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
 #[derive(Debug, Clone)]
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
-    Skip(RoundNumber),
+    Skip(AuthorityIndex, RoundNumber),
 }
 
 impl LeaderStatus {
     pub fn round(&self) -> RoundNumber {
         match self {
             LeaderStatus::Commit(block) => block.round(),
-            LeaderStatus::Skip(round) => *round,
+            LeaderStatus::Skip(_, round) => *round,
+        }
+    }
+
+    pub fn authority(&self) -> AuthorityIndex {
+        match self {
+            LeaderStatus::Commit(block) => block.author(),
+            LeaderStatus::Skip(authority, _) => *authority,
         }
     }
 }

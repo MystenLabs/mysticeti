@@ -440,7 +440,7 @@ mod test {
 
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(3))
+            assert_eq!(block.author(), committee.elect_leader(DEFAULT_WAVE_LENGTH))
         } else {
             panic!("Expected a committed leader")
         };
@@ -461,7 +461,7 @@ mod test {
             test_metrics(),
         );
 
-        let last_committed_round = 3;
+        let last_committed_round = DEFAULT_WAVE_LENGTH;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());

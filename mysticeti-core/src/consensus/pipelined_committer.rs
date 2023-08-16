@@ -118,6 +118,7 @@ mod test {
     #[tracing_test::traced_test]
     fn direct_commit() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -127,6 +128,7 @@ mod test {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
         let last_committed_round = 0;
@@ -135,7 +137,7 @@ mod test {
 
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(3))
+            assert_eq!(block.author(), committee.elect_leader(wave_length))
         } else {
             panic!("Expected a committed leader")
         };
@@ -146,6 +148,7 @@ mod test {
     #[tracing_test::traced_test]
     fn idempotence() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
@@ -155,9 +158,10 @@ mod test {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
-        let last_committed_round = 3;
+        let last_committed_round = wave_length;
         let sequence = committer.try_commit(last_committed_round);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());

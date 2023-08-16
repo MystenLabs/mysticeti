@@ -23,10 +23,11 @@ type WaveNumber = u64;
 pub struct BaseCommitterOptions {
     /// The length of a wave (minimum 3)
     pub wave_length: u64,
-    ///
+    /// The offset used in the leader-election protocol. THis is used by the multi-committer to ensure
+    /// that each [`BaseCommitter`] instance elects a different leader.
     pub leader_offset: u64,
-    /// The offset of the first wave. This is used in the pipelined committer to ensure that each
-    /// [`BaseCommitter`] operates on a different view of the dag.
+    /// The offset of the first wave. This is used by the pipelined committer to ensure that each
+    /// [`BaseCommitter`] instances operates on a different view of the dag.
     pub round_offset: u64,
 }
 
@@ -40,18 +41,15 @@ impl Default for BaseCommitterOptions {
     }
 }
 
-/// The [`BaseCommitter`] contains all the commit logic. Once instantiated, the method [`try_commit`] can
-/// be called at any time and any number of times (it is idempotent) to return extension to the commit
-/// sequence. This structure is parametrized with a `wave length`, which must be at least 3 rounds: we
-/// need one leader round, at least one round to vote for the leader, and one round to collect 2f+1
-/// certificates for the leader. A longer wave_length increases the chance of committing the leader
-/// under asynchrony at the cost of latency in the common case.
+/// The [`BaseCommitter`] contains the bare bone commit logic. Once instantiated, the method `try_commit`
+/// can be called at any time and any number of times (it is idempotent) to return extensions to the commit
+/// sequence.
 pub struct BaseCommitter {
     /// The committee information
     committee: Arc<Committee>,
     /// Keep all block data
     block_store: BlockStore,
-    ///
+    /// The options used by this committer
     options: BaseCommitterOptions,
     /// Metrics information
     metrics: Arc<Metrics>,
@@ -61,7 +59,6 @@ impl BaseCommitter {
     /// We need at least one leader round, one voting round, and one decision round.
     pub const MINIMUM_WAVE_LENGTH: u64 = 3;
 
-    /// Create a new [`BaseCommitter`] interpreting the dag using the provided committee and wave length.
     pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
         Self {
             committee,
@@ -81,6 +78,8 @@ impl BaseCommitter {
         self.options.leader_offset
     }
 
+    /// The leader-elect protocol is offset by `leader_offset` to ensure that different committers
+    /// with different leader offsets elect different leaders for the same round number.
     fn elect_leader(&self, round: RoundNumber) -> AuthorityIndex {
         let offset = self.options.leader_offset as RoundNumber;
         self.committee.elect_leader(round + offset)
@@ -91,7 +90,8 @@ impl BaseCommitter {
         round.saturating_sub(self.options.round_offset) / self.options.wave_length
     }
 
-    /// Return the highest wave number that can be committed given the highest round number.
+    /// Return the highest wave number that can (potentially) be committed given the highest
+    /// known round number.
     fn hightest_committable_wave(&self, highest_round: RoundNumber) -> WaveNumber {
         let wave = self.wave_number(highest_round);
         if highest_round == self.decision_round(wave) {
@@ -115,7 +115,7 @@ impl BaseCommitter {
     }
 
     /// Find which block is supported at (author, round) by the given block.
-    /// Block can indirectly reference multiple blocks at (author, round), but only one block at
+    /// Blocks can indirectly reference multiple other blocks at (author, round), but only one block at
     /// (author, round)  will be supported by the given block. If block A supports B at (author, round),
     /// it is guaranteed that any processed block by the same author that directly or indirectly includes
     /// A will also support B at (author, round).
@@ -228,6 +228,8 @@ impl BaseCommitter {
         false
     }
 
+    /// Apply the direct commit rule to the specified leader to see whether we can direct-commit or
+    /// direct-skip it.
     fn try_direct_commit(
         &self,
         leader: AuthorityIndex,
@@ -235,7 +237,7 @@ impl BaseCommitter {
         decision_round: RoundNumber,
     ) -> Option<LeaderStatus> {
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
-        // for that leader.
+        // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;
         if self.enough_leader_blame(voting_round, leader) {
             return Some(LeaderStatus::Skip(leader_round));
@@ -253,7 +255,8 @@ impl BaseCommitter {
             .map(LeaderStatus::Commit)
             .collect();
 
-        // There can be at most one leader with enough support for each round.
+        // There can be at most one leader with enough support for each round, otherwise it means
+        // the BFT assumption is broken.
         if leaders_with_enough_support.len() > 1 {
             panic!("More than one certified block at round {leader_round} from leader {leader}")
         }
@@ -261,7 +264,8 @@ impl BaseCommitter {
         leaders_with_enough_support.pop()
     }
 
-    /// Output an ordered list of leader blocks (that we should commit in order).
+    /// Output an ordered list of leader blocks (that we should commit in order). This function is
+    /// used by the indirect commit rule to determine which past leader blocks can be committed.
     fn order_leaders(
         &self,
         last_committed_wave: WaveNumber,
@@ -301,7 +305,8 @@ impl BaseCommitter {
                 })
                 .collect();
 
-            // There can be at most one certified leader.
+            // There can be at most one certified leader, otherwise it means the BFT assumption
+            // is broken.
             if certified_leader_blocks.len() > 1 {
                 panic!("More than one certified block at wave {w} from leader {leader}")
             }
@@ -321,7 +326,7 @@ impl BaseCommitter {
         to_commit
     }
 
-    /// Commit the specified leader block as well as any eligible past leader (recursively)
+    /// Apply the indirect commit rule. That is, we try to commit any eligible past leader (recursively)
     /// that we did not already commit.
     fn try_indirect_commit(
         &self,
@@ -334,16 +339,15 @@ impl BaseCommitter {
             .rev()
             .collect();
 
-        self.update_metrics(&sequence);
+        self.update_metrics(&sequence, "indirect");
 
         sequence
     }
 
     /// Update metrics.
-    fn update_metrics(&self, sequence: &[LeaderStatus]) {
-        for (i, leader) in sequence.iter().rev().enumerate() {
+    fn update_metrics(&self, sequence: &[LeaderStatus], commit_type: &str) {
+        for leader in sequence {
             if let LeaderStatus::Commit(block) = leader {
-                let commit_type = if i == 0 { "direct" } else { "indirect" };
                 self.metrics
                     .committed_leaders_total
                     .with_label_values(&[&block.author().to_string(), commit_type])
@@ -388,6 +392,7 @@ impl Committer for BaseCommitter {
                         tracing::debug!("Leader at round {round} is direct-skipped");
                     }
                 }
+                self.update_metrics(&vec![anchor.clone()], "direct");
                 sequence.push(anchor);
                 last_committed_wave = wave;
             } else {
@@ -402,7 +407,7 @@ impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "BaseCommitter({},{})",
+            "BaseCommitter(L{},R{})",
             self.options.leader_offset, self.options.round_offset
         )
     }

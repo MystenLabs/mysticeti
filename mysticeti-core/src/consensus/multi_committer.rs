@@ -102,7 +102,7 @@ impl Committer for MultiCommitter {
 
 impl Display for MultiCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MultiCommitter({})", self.round_offset)
+        write!(f, "MultiCommitter(R{})", self.round_offset)
     }
 }
 

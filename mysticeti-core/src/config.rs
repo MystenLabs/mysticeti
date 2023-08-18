@@ -53,8 +53,8 @@ impl Parameters {
     pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
 
     // needs to be sufficiently long to run benchmarks
-    pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 3_600_000;
-    pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
+    pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 15_000;
+    pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

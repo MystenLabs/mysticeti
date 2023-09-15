@@ -427,3 +427,28 @@ pub fn build_dag(
 
     includes
 }
+
+pub fn build_dag_layer(
+    // A list of (authority, parents) pairs. For each authority, we add a block linking to the
+    // specified parents.
+    connections: Vec<(AuthorityIndex, Vec<BlockReference>)>,
+    block_writer: &mut TestBlockWriter,
+) -> Vec<BlockReference> {
+    let mut references = Vec::new();
+    for (authority, parents) in connections {
+        let round = parents.first().unwrap().round + 1;
+        let block = Data::new(StatementBlock::new(
+            authority,
+            round,
+            parents,
+            vec![],
+            0,
+            false,
+            Default::default(),
+        ));
+
+        references.push(*block.reference());
+        block_writer.add_block(block);
+    }
+    references
+}

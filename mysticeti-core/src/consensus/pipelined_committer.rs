@@ -3,62 +3,96 @@
 
 use std::{cmp::max, collections::HashMap, sync::Arc};
 
+use crate::block_store::BlockStore;
 use crate::metrics::Metrics;
-use crate::{block_store::BlockStore, consensus::base_committer::BaseCommitter};
 use crate::{committee::Committee, types::RoundNumber};
 
-use super::{Committer, LeaderStatus};
+use super::{
+    multi_committer::{MultiCommitter, MultiCommitterBuilder},
+    Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
+};
 
-/// The [`PipelinedCommitter`] uses three [`BaseCommitter`] instances, each shifted by one round,
-/// to commit every dag round (in the ideal case).
-pub struct PipelinedCommitter {
-    committers: Vec<BaseCommitter>,
+pub struct PipelinedCommitterBuilder {
+    committee: Arc<Committee>,
+    block_store: BlockStore,
+    metrics: Arc<Metrics>,
     wave_length: RoundNumber,
+    number_of_leaders: usize,
 }
 
-impl PipelinedCommitter {
-    pub fn new(
-        committee: Arc<Committee>,
-        block_store: BlockStore,
-        wave_length: u64,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        let committers = (0..wave_length)
+impl PipelinedCommitterBuilder {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+        Self {
+            committee,
+            block_store,
+            metrics,
+            wave_length: DEFAULT_WAVE_LENGTH,
+            number_of_leaders: 1,
+        }
+    }
+
+    pub fn with_wave_length(mut self, wave_length: RoundNumber) -> Self {
+        self.wave_length = wave_length;
+        self
+    }
+
+    pub fn with_number_of_leaders(mut self, number_of_leaders: usize) -> Self {
+        self.number_of_leaders = number_of_leaders;
+        self
+    }
+
+    pub fn build(self) -> PipelinedCommitter {
+        let committers = (0..self.wave_length)
             .map(|i| {
-                BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone())
-                    .with_wave_length(wave_length)
-                    .with_offset(i)
+                MultiCommitterBuilder::new(
+                    self.committee.clone(),
+                    self.block_store.clone(),
+                    self.metrics.clone(),
+                )
+                .with_wave_length(self.wave_length)
+                .with_number_of_leaders(self.number_of_leaders)
+                .with_round_offset(i)
+                .build()
             })
             .collect();
 
-        Self {
+        PipelinedCommitter {
+            wave_length: self.wave_length,
             committers,
-            wave_length,
         }
     }
 }
 
+/// The [`PipelinedCommitter`] uses one [`MultiCommitter`] instance per round in a wave length,
+/// each shifted by one round. This allows to commit every dag round (in the ideal case).
+pub struct PipelinedCommitter {
+    wave_length: RoundNumber,
+    committers: Vec<MultiCommitter>,
+}
+
 impl Committer for PipelinedCommitter {
-    fn try_commit(&self, last_committer_round: RoundNumber) -> Vec<LeaderStatus> {
+    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
         let mut pending_queue = HashMap::new();
 
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committer_round) {
-                let round = leader.round();
+            for leader in committer.try_commit(last_committed_round) {
                 tracing::debug!("{committer} decided {leader:?}");
-                pending_queue.insert(round, leader);
+                pending_queue
+                    .entry(leader.round())
+                    .or_insert_with(Vec::new)
+                    .push(leader);
             }
         }
 
         // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committer_round + 1);
+        let mut r = max(self.wave_length, last_committed_round + 1);
 
         // Collect all leaders in order, and stop when we find a gap.
         let mut sequence = Vec::new();
         loop {
             match pending_queue.remove(&r) {
-                Some(leader) => sequence.push(leader),
+                Some(leaders) => sequence.extend(leaders),
                 None => break,
             }
             r += 1;
@@ -71,34 +105,37 @@ impl Committer for PipelinedCommitter {
 mod test {
     use crate::{
         consensus::{
-            pipelined_committer::PipelinedCommitter, Committer, LeaderStatus, DEFAULT_WAVE_LENGTH,
+            pipelined_committer::PipelinedCommitterBuilder, Committer, LeaderStatus,
+            DEFAULT_WAVE_LENGTH,
         },
-        data::Data,
-        test_util::{build_dag, committee, test_metrics, TestBlockWriter},
-        types::StatementBlock,
+        test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
     };
 
     /// Commit one leader.
     #[test]
     #[tracing_test::traced_test]
-    fn commit_one() {
+    fn direct_commit() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            DEFAULT_WAVE_LENGTH,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), 1);
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(3))
+            assert_eq!(block.author(), committee.elect_leader(wave_length))
         } else {
             panic!("Expected a committed leader")
         };
@@ -109,26 +146,65 @@ mod test {
     #[tracing_test::traced_test]
     fn idempotence() {
         let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, 5);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            DEFAULT_WAVE_LENGTH,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
-        let last_committed_round = 3;
+        let last_committed_round = wave_length;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
+    }
+
+    /// Commit one by one each leader as the dag progresses in ideal conditions.
+    #[test]
+    #[tracing_test::traced_test]
+    fn multiple_direct_commit() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut last_committed_round = 0;
+        for n in 1..=10 {
+            let enough_blocks = (wave_length - 1) + n + (wave_length - 1);
+            let mut block_writer = TestBlockWriter::new(&committee);
+            build_dag(&committee, &mut block_writer, None, enough_blocks);
+
+            let committer = PipelinedCommitterBuilder::new(
+                committee.clone(),
+                block_writer.into_block_store(),
+                test_metrics(),
+            )
+            .with_wave_length(wave_length)
+            .build();
+
+            let sequence = committer.try_commit(last_committed_round);
+            tracing::info!("Commit sequence: {sequence:?}");
+
+            assert_eq!(sequence.len(), 1);
+            let leader_round = (wave_length - 1) + n as u64;
+            if let LeaderStatus::Commit(ref block) = sequence[0] {
+                assert_eq!(block.author(), committee.elect_leader(leader_round));
+            } else {
+                panic!("Expected a committed leader")
+            }
+
+            last_committed_round = leader_round;
+        }
     }
 
     /// Commit 10 leaders in a row (9 of them are committed recursively).
     #[test]
     #[tracing_test::traced_test]
-    fn commit_10() {
+    fn indirect_commit() {
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -137,15 +213,18 @@ mod test {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+
         assert_eq!(sequence.len(), n as usize);
         for (i, leader_block) in sequence.iter().enumerate() {
             let leader_round = wave_length + i as u64;
@@ -161,7 +240,7 @@ mod test {
     /// has round = wave_length.
     #[test]
     #[tracing_test::traced_test]
-    fn commit_none() {
+    fn no_genesis_commit() {
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -170,50 +249,18 @@ mod test {
             let mut block_writer = TestBlockWriter::new(&committee);
             build_dag(&committee, &mut block_writer, None, r);
 
-            let committer = PipelinedCommitter::new(
+            let committer = PipelinedCommitterBuilder::new(
                 committee.clone(),
                 block_writer.into_block_store(),
-                wave_length,
                 test_metrics(),
-            );
+            )
+            .with_wave_length(wave_length)
+            .build();
 
             let last_committed_round = 0;
             let sequence = committer.try_commit(last_committed_round);
+            tracing::info!("Commit sequence: {sequence:?}");
             assert!(sequence.is_empty());
-        }
-    }
-
-    /// Commit one by one each leader as the dag progresses in ideal conditions.
-    #[test]
-    #[tracing_test::traced_test]
-    fn commit_incremental() {
-        let committee = committee(4);
-        let wave_length = DEFAULT_WAVE_LENGTH;
-
-        let mut last_committed_round = 0;
-        for n in 1..=10 {
-            let enough_blocks = (wave_length - 1) + n + (wave_length - 1);
-            let mut block_writer = TestBlockWriter::new(&committee);
-            build_dag(&committee, &mut block_writer, None, enough_blocks);
-
-            let committer = PipelinedCommitter::new(
-                committee.clone(),
-                block_writer.into_block_store(),
-                wave_length,
-                test_metrics(),
-            );
-
-            let sequence = committer.try_commit(last_committed_round);
-
-            assert_eq!(sequence.len(), 1);
-            let leader_round = (wave_length - 1) + n as u64;
-            if let LeaderStatus::Commit(ref block) = sequence[0] {
-                assert_eq!(block.author(), committee.elect_leader(leader_round));
-            } else {
-                panic!("Expected a committed leader")
-            }
-
-            last_committed_round = leader_round;
         }
     }
 
@@ -235,24 +282,11 @@ mod test {
         let leader_round_1 = wave_length;
         let leader_1 = committee.elect_leader(leader_round_1);
 
-        let (references, blocks): (Vec<_>, Vec<_>) = committee
+        let connections = committee
             .authorities()
             .filter(|&authority| authority != leader_1)
-            .map(|authority| {
-                let block = Data::new(StatementBlock::new(
-                    authority,
-                    leader_round_1,
-                    references.clone(),
-                    vec![],
-                    0,
-                    false,
-                    Default::default(),
-                ));
-                (*block.reference(), block)
-            })
-            .unzip();
-
-        block_writer.add_blocks(blocks);
+            .map(|authority| (authority, references.clone()));
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
 
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -263,28 +297,37 @@ mod test {
         );
 
         // Ensure no blocks are committed.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
-        assert!(sequence.is_empty());
+        tracing::info!("Commit sequence: {sequence:?}");
+
+        assert_eq!(sequence.len(), 1);
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, leader_1);
+            assert_eq!(round, leader_round_1);
+        } else {
+            panic!("Expected to directly skip the leader");
+        }
     }
 
-    /// If there is no leader with enough support, we commit nothing.
+    /// We directly skip the leader if it has enough blame.
     #[test]
     #[tracing_test::traced_test]
-    fn not_enough_support() {
+    fn direct_skip() {
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
         let mut block_writer = TestBlockWriter::new(&committee);
 
-        // Add enough blocks to reach the first leader, as seen by the first pipeline.
+        // Add enough blocks to reach the leader of wave 1, as seen by the first pipeline.
         let leader_round_1 = wave_length;
         let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
@@ -294,7 +337,7 @@ mod test {
             .filter(|x| x.authority != committee.elect_leader(leader_round_1))
             .collect();
 
-        // Add enough blocks to reach the decision round of the first wave, as seen by the
+        // Add enough blocks to reach the decision round of the wave 1, as seen by the
         // first pipeline.
         let decision_round_1 = 2 * wave_length - 1;
         build_dag(
@@ -304,24 +347,33 @@ mod test {
             decision_round_1,
         );
 
-        // Ensure no blocks are committed.
-        let committer = PipelinedCommitter::new(
+        // Ensure the omitted leader is skipped.
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
-        assert!(sequence.is_empty());
+        tracing::info!("Commit sequence: {sequence:?}");
+
+        assert_eq!(sequence.len(), 1);
+        if let LeaderStatus::Skip(leader, round) = sequence[0] {
+            assert_eq!(leader, committee.elect_leader(leader_round_1));
+            assert_eq!(round, leader_round_1);
+        } else {
+            panic!("Expected to directly skip the leader");
+        }
     }
 
     /// Commit the leaders of wave 1 and 3 while the leader of wave 2 is missing, as seen by the
     /// first pipeline.
     #[test]
     #[tracing_test::traced_test]
-    fn skip_leader() {
+    fn indirect_skip() {
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -347,15 +399,17 @@ mod test {
         );
 
         // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
-        let committer = PipelinedCommitter::new(
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 7);
 
         // Ensure we commit the leaders of wave 1.
@@ -370,8 +424,8 @@ mod test {
         }
 
         // Ensure we skip the leader of wave 2 (first pipeline) but commit the others.
-        let leader_round_2 = 2 * wave_length;
-        if let LeaderStatus::Skip(round) = sequence[3] {
+        if let LeaderStatus::Skip(leader, round) = sequence[3] {
+            assert_eq!(leader, committee.elect_leader(leader_round_2));
             assert_eq!(round, leader_round_2);
         } else {
             panic!("Expected a skipped leader")
@@ -401,7 +455,7 @@ mod test {
     /// ensure the other leaders of wave 2 are not committed.
     #[test]
     #[tracing_test::traced_test]
-    fn blocked_pipeline() {
+    fn unblocked_pipeline_through_direct_skip() {
         let committee = committee(4);
         let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -411,7 +465,7 @@ mod test {
         let leader_round_2 = 2 * wave_length;
         let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
 
-        // Filter out that leader.
+        // Filter out the first leader of wave 2.
         let references_2_without_leader: Vec<_> = references_2
             .into_iter()
             .filter(|x| x.authority != committee.elect_leader(leader_round_2))
@@ -426,16 +480,105 @@ mod test {
             voting_round_3,
         );
 
-        // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
-        let committer = PipelinedCommitter::new(
+        // Ensure we commit the leaders of waves 1 and 2, except the leader we skipped.
+        let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
-            wave_length,
             test_metrics(),
-        );
+        )
+        .with_wave_length(wave_length)
+        .build();
 
         let last_committed_round = 0;
         let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
+        assert_eq!(sequence.len(), 6);
+
+        // Ensure we commit the leaders of wave 1.
+        for i in 0..=2 {
+            let leader_round_1 = wave_length + i;
+            let leader_1 = committee.elect_leader(leader_round_1);
+            if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
+                assert_eq!(block.author(), leader_1);
+            } else {
+                panic!("Expected a committed leader")
+            };
+        }
+
+        // Ensure we skip the first leader of wave 2.
+        let leader_round_2 = 2 * wave_length;
+        if let LeaderStatus::Skip(leader, round) = sequence[3] {
+            assert_eq!(leader, committee.elect_leader(leader_round_2));
+            assert_eq!(round, leader_round_2);
+        } else {
+            panic!("Expected to skip the leader")
+        };
+
+        // Ensure we commit the leaders of wave 2.
+        for i in 4..=5 {
+            let leader_round_2 = wave_length + i;
+            let leader_2 = committee.elect_leader(leader_round_2);
+            if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
+                assert_eq!(block.author(), leader_2);
+            } else {
+                panic!("Expected a committed leader")
+            };
+        }
+    }
+
+    /// Commit all leaders of wave 1; then miss the first leader of wave 2 (first pipeline) and
+    /// ensure the other leaders of wave 2 are not committed.
+    #[test]
+    #[tracing_test::traced_test]
+    fn blocked_pipeline() {
+        let committee = committee(4);
+        let wave_length = DEFAULT_WAVE_LENGTH;
+
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        // Add enough blocks to reach the leader of wave 2, as seen by the first pipeline.
+        let leader_round_2 = 2 * wave_length;
+        let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
+
+        // Filter out the first leader of wave 2.
+        let references_2_without_leader: Vec<_> = references_2
+            .iter()
+            .cloned()
+            .filter(|x| x.authority != committee.elect_leader(leader_round_2))
+            .collect();
+
+        // Create a dag layer where only one authority votes for that leader.
+        let mut authorities = committee.authorities();
+        let leader_connection = vec![(authorities.next().unwrap(), references_2)];
+        let non_leader_connections: Vec<_> = authorities
+            .take((committee.quorum_threshold() - 1) as usize)
+            .map(|authority| (authority, references_2_without_leader.clone()))
+            .collect();
+
+        let connections = leader_connection.into_iter().chain(non_leader_connections);
+        let references = build_dag_layer(connections.collect(), &mut block_writer);
+
+        // Add enough blocks to reach the voting round of wave 3, as seen by the first pipeline.
+        let voting_round_3 = (4 * wave_length - 1) - 1;
+        build_dag(
+            &committee,
+            &mut block_writer,
+            Some(references),
+            voting_round_3,
+        );
+
+        // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
+        let committer = PipelinedCommitterBuilder::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            test_metrics(),
+        )
+        .with_wave_length(wave_length)
+        .build();
+
+        let last_committed_round = 0;
+        let sequence = committer.try_commit(last_committed_round);
+        tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 3);
 
         // Ensure we commit the leaders of wave 1.

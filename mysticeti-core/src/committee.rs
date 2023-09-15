@@ -64,6 +64,10 @@ impl Committee {
             .map(Authority::stake)
     }
 
+    pub fn quorum_threshold(&self) -> Stake {
+        self.quorum_threshold + 1
+    }
+
     pub fn get_public_key(&self, authority: AuthorityIndex) -> Option<&PublicKey> {
         self.authorities
             .get(authority as usize)

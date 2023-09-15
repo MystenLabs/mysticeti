@@ -1,4 +1,7 @@
-use crate::consensus::{linearizer::CommittedSubDag, Committer};
+use crate::block_handler::BlockHandler;
+use crate::consensus::{
+    linearizer::CommittedSubDag, pipelined_committer::PipelinedCommitterBuilder, Committer,
+};
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -8,7 +11,6 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
-use crate::{block_handler::BlockHandler, consensus};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use crate::{
     block_store::{
@@ -129,12 +131,9 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = PipelinedCommitter::new(
-            committee.clone(),
-            block_store.clone(),
-            consensus::DEFAULT_WAVE_LENGTH,
-            metrics.clone(),
-        );
+        let committer =
+            PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+                .build();
 
         let mut this = Self {
             block_manager,

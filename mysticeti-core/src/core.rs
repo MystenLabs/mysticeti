@@ -49,6 +49,7 @@ pub struct Core<H: BlockHandler> {
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: PipelinedCommitter,
+    // committer: crate::consensus::base_committer::BaseCommitter,
 }
 
 pub struct CoreOptions {
@@ -134,6 +135,11 @@ impl<H: BlockHandler> Core<H> {
         let committer =
             PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
                 .build();
+        // let committer = crate::consensus::base_committer::BaseCommitter::new(
+        //     committee.clone(),
+        //     block_store.clone(),
+        //     metrics.clone(),
+        // );
 
         let mut this = Self {
             block_manager,

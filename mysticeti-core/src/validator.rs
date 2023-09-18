@@ -171,7 +171,7 @@ impl Validator {
 }
 
 #[cfg(test)]
-mod test {
+mod smoke_tests {
     use std::{
         collections::VecDeque,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -307,7 +307,7 @@ mod test {
             handles.push(validator.await_completion());
         }
 
-        // Boot the last validator after they others commit.
+        // Boot the last validator after the others commit.
         let addresses = parameters
             .all_metric_addresses()
             .skip(1)

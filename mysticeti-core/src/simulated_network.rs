@@ -24,8 +24,9 @@ impl SimulatedNetwork {
             .authorities()
             .map(|_| {
                 let (connection_sender, connection_receiver) = mpsc::channel(16);
+                let (_client_connection_sender, clients_connection_receiver) = mpsc::channel(16);
                 (
-                    Network::new_from_raw(connection_receiver),
+                    Network::new_from_raw(connection_receiver, clients_connection_receiver),
                     connection_sender,
                 )
             })

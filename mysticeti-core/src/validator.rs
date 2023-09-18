@@ -10,10 +10,11 @@ use std::{
 
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
+use tokio::sync::mpsc;
 
-use crate::block_handler::TransactionGenerator;
-use crate::core::CoreOptions;
 use crate::log::TransactionLog;
+use crate::{block_handler::BatchGenerator, core::CoreOptions};
+use crate::{block_handler::TransactionGenerator, runtime};
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -69,24 +70,43 @@ impl Validator {
             config.storage(),
             metrics.clone(),
         );
-        let tps = env::var("TPS");
-        let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
-        let tps = tps.unwrap_or(10);
-        let transactions_per_100ms = (tps + 9) / 10;
-        let initial_delay = env::var("INITIAL_DELAY");
-        let initial_delay = initial_delay.map(|t| {
-            t.parse::<u64>()
-                .expect("Failed to parse INITIAL_DELAY variable")
-        });
-        let initial_delay = initial_delay.unwrap_or(10);
-        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms, initial delay {initial_delay} sec");
-        let initial_delay = Duration::from_secs(initial_delay);
-        TransactionGenerator::start(
-            block_sender,
-            authority,
-            transactions_per_100ms,
-            initial_delay,
-        );
+
+        // Define how to handle transactions.
+        let (transactions_sender, mut transactions_receiver) = mpsc::channel(1000);
+        if parameters.generate_random_transactions {
+            // Setup the local transaction generator.
+            let tps = env::var("TPS");
+            let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
+            let tps = tps.unwrap_or(10);
+            let transactions_per_100ms = (tps + 9) / 10;
+            let initial_delay = env::var("INITIAL_DELAY");
+            let initial_delay = initial_delay.map(|t| {
+                t.parse::<u64>()
+                    .expect("Failed to parse INITIAL_DELAY variable")
+            });
+            let initial_delay = initial_delay.unwrap_or(10);
+            tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms, initial delay {initial_delay} sec");
+            let initial_delay = Duration::from_secs(initial_delay);
+            TransactionGenerator::start(
+                block_sender,
+                authority,
+                transactions_per_100ms,
+                initial_delay,
+            );
+
+            // Sink the transactions from the network.
+            runtime::Handle::current()
+                .spawn(async move { while transactions_receiver.recv().await.is_some() {} });
+        } else {
+            tracing::info!("Accepting transactions from the network");
+            BatchGenerator::start(
+                transactions_receiver,
+                block_sender,
+                parameters.max_batch_size,
+                parameters.max_batch_delay,
+            );
+        }
+
         let committed_transaction_log =
             TransactionLog::start(config.storage().committed_transactions_log())
                 .expect("Failed to open committed transaction log for write");
@@ -119,6 +139,7 @@ impl Validator {
             core,
             parameters.wave_length(),
             commit_handler,
+            transactions_sender,
             parameters.shutdown_grace_period(),
             metrics,
         );

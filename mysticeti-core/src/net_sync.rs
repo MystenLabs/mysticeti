@@ -1,4 +1,3 @@
-use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
@@ -11,6 +10,7 @@ use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
+use crate::{core::Core, types::Transaction};
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -36,6 +36,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
     committee: Arc<Committee>,
+    transactions_dispatcher: mpsc::Sender<Vec<Transaction>>,
     stop: mpsc::Sender<()>,
     epoch_close_signal: mpsc::Sender<()>,
     pub epoch_closing_time: Arc<AtomicU64>,
@@ -47,6 +48,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut core: Core<H>,
         commit_period: u64,
         mut commit_observer: C,
+        transactions_dispatcher: mpsc::Sender<Vec<Transaction>>,
         shutdown_grace_period: Duration,
         metrics: Arc<Metrics>,
     ) -> Self {
@@ -78,6 +80,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             syncer,
             block_store,
             committee,
+            transactions_dispatcher,
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
             epoch_closing_time,
@@ -161,7 +164,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     handle.spawn(Self::client_connection_task(
                         connection,
                         inner.clone(),
-                        metrics.clone(),
                     ));
                 },
                 else => break,
@@ -249,7 +251,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     async fn client_connection_task(
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
-        metrics: Arc<Metrics>,
     ) -> Option<()> {
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             if let NetworkMessage::Transactions(transactions) = message {
@@ -257,7 +258,19 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 {
                     continue;
                 }
-                todo!();
+
+                // TODO: This task is a good place to throttle transactions from each client and
+                // make preliminary transaction checks. Ending this task will terminate the client
+                // connection.
+
+                if inner
+                    .transactions_dispatcher
+                    .send(transactions)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
             }
         }
         None

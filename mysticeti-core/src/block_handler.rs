@@ -280,37 +280,37 @@ impl BlockHandler for TestBlockHandler {
 pub struct BatchGenerator {
     transactions_receiver: mpsc::Receiver<Vec<Transaction>>,
     batch_sender: mpsc::Sender<Vec<Transaction>>,
-    max_block_size: usize,
-    min_block_delay: Duration,
+    max_batch_size: usize,
+    max_batch_delay: Duration,
 }
 
 impl BatchGenerator {
-    pub async fn start(
+    pub fn start(
         transactions_receiver: mpsc::Receiver<Vec<Transaction>>,
         batch_sender: mpsc::Sender<Vec<Transaction>>,
-        max_block_size: usize,
-        min_block_delay: Duration,
+        max_batch_size: usize,
+        max_batch_delay: Duration,
     ) {
         let this = Self {
             transactions_receiver,
             batch_sender,
-            max_block_size,
-            min_block_delay,
+            max_batch_size,
+            max_batch_delay,
         };
         runtime::Handle::current().spawn(this.run());
     }
 
     async fn run(mut self) {
-        let mut batch = Vec::with_capacity(self.max_block_size);
+        let mut batch = Vec::with_capacity(self.max_batch_size);
         loop {
             let mut ready = false;
             tokio::select! {
-                _ = runtime::sleep(self.min_block_delay) => {
+                _ = runtime::sleep(self.max_batch_delay) => {
                     ready = true;
                 }
                 Some(transactions) = self.transactions_receiver.recv() => {
                     batch.extend(transactions);
-                    if batch.len() >= self.max_block_size {
+                    if batch.len() >= self.max_batch_size {
                         ready = true;
                     }
                 },

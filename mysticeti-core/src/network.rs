@@ -54,9 +54,13 @@ pub struct Connection {
 
 impl Network {
     #[cfg(feature = "simulator")]
-    pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
+    pub(crate) fn new_from_raw(
+        connection_receiver: mpsc::Receiver<Connection>,
+        clients_connection_receiver: mpsc::Receiver<Connection>,
+    ) -> Self {
         Self {
             connection_receiver,
+            clients_connection_receiver,
         }
     }
 
@@ -174,9 +178,13 @@ impl Server {
         loop {
             let (socket, remote_peer) = self.server.accept().await.expect("Accept failed");
             let remote_peer = remote_to_local_port(remote_peer);
+
+            // Handle connections from peers.
             if let Some(sender) = self.worker_senders.get(&remote_peer) {
                 tracing::debug!("Connection from authority peer {remote_peer}");
                 sender.send(socket).ok();
+
+            // Handle connections from clients.
             } else {
                 tracing::debug!("Connection from client peer {remote_peer}");
                 let current_connections = self.current_connections.clone();

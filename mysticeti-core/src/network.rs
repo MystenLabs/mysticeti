@@ -241,13 +241,13 @@ fn bind_addr(mut local_peer: SocketAddr) -> SocketAddr {
     local_peer
 }
 
-struct Worker {
-    peer: SocketAddr,
-    peer_id: usize,
-    connection_sender: mpsc::Sender<Connection>,
-    bind_addr: SocketAddr,
-    active_immediately: bool,
-    latency_sender: Option<HistogramSender<Duration>>,
+pub struct Worker {
+    pub peer: SocketAddr,
+    pub peer_id: usize,
+    pub connection_sender: mpsc::Sender<Connection>,
+    pub bind_addr: SocketAddr,
+    pub active_immediately: bool,
+    pub latency_sender: Option<HistogramSender<Duration>>,
 }
 
 struct WorkerConnection {
@@ -262,7 +262,7 @@ impl Worker {
     const PASSIVE_HANDSHAKE: u64 = 0x0000AEAE;
     const MAX_SIZE: u32 = 16 * 1024 * 1024;
 
-    async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
+    pub async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
         let initial_delay = if self.active_immediately {
             Duration::ZERO
         } else {

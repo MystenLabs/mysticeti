@@ -44,12 +44,12 @@ pub struct Parameters {
     shutdown_grace_period: Duration,
     /// Drop transactions from network clients and instead locally generate random
     /// transactions. This is useful for testing (but should not be used for benchmarks).
-    pub generate_random_transactions: bool,
-    /// Maximum number of transactions in a batch. This parameter is unused if `generate_random_transactions`
+    pub local_transactions_generation: bool,
+    /// Maximum number of transactions in a batch. This parameter is unused if `local_transactions_generation`
     /// is set to `true`.
     pub max_batch_size: usize,
     /// Maximum delay after which a batch is sent out even if it is not full. This parameter is unused if
-    /// `generate_random_transactions` is set to `true`.
+    /// `local_transactions_generation` is set to `true`.
     pub max_batch_delay: Duration,
 }
 
@@ -89,10 +89,15 @@ impl Parameters {
             leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
             rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
             shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
-            generate_random_transactions: false,
+            local_transactions_generation: false,
             max_batch_size: Self::DEFAULT_MAX_BATCH_SIZE,
             max_batch_delay: Self::DEFAULT_MAX_BATCH_DELAY,
         }
+    }
+
+    pub fn with_local_transactions_generation(mut self) -> Self {
+        self.local_transactions_generation = true;
+        self
     }
 
     /// Return all network addresses (including our own) in the order of the authority index.

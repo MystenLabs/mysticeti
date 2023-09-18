@@ -73,7 +73,7 @@ impl Validator {
 
         // Define how to handle transactions.
         let (transactions_sender, mut transactions_receiver) = mpsc::channel(1000);
-        if parameters.generate_random_transactions {
+        if parameters.local_transactions_generation {
             // Setup the local transaction generator.
             let tps = env::var("TPS");
             let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
@@ -191,20 +191,25 @@ mod test {
     use super::Validator;
 
     /// Check whether the validator specified by its metrics address has committed at least once.
-    async fn check_commit(address: &SocketAddr) -> Result<bool, reqwest::Error> {
+    /// The bool parameter indicate whether to check for a non-empty commit.
+    async fn check_commit(address: &SocketAddr, non_empty: bool) -> Result<bool, reqwest::Error> {
         let route = prometheus::METRICS_ROUTE;
         let res = reqwest::get(format! {"http://{address}{route}"}).await?;
         let string = res.text().await?;
-        let commit = string.contains("committed_leaders_total");
+        let commit = if non_empty {
+            string.contains("latency_s_count")
+        } else {
+            string.contains("committed_leaders_total")
+        };
         Ok(commit)
     }
 
     /// Await for all the validators specified by their metrics addresses to commit.
-    async fn await_for_commits(addresses: Vec<SocketAddr>) {
+    async fn await_for_commits(addresses: Vec<SocketAddr>, non_empty: bool) {
         let mut queue = VecDeque::from(addresses);
         while let Some(address) = queue.pop_front() {
             time::sleep(Duration::from_millis(100)).await;
-            match check_commit(&address).await {
+            match check_commit(&address, non_empty).await {
                 Ok(commits) if commits => (),
                 _ => queue.push_back(address),
             }
@@ -213,7 +218,7 @@ mod test {
 
     /// Ensure that a committee of honest validators commits.
     #[tokio::test]
-    async fn validator_smoke_test() {
+    async fn validator_commit() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
 
@@ -239,14 +244,48 @@ mod test {
         let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
 
         tokio::select! {
-            _ = await_for_commits(addresses) => (),
+            _ = await_for_commits(addresses, false) => (),
+            _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
+
+    /// Ensure that a committee of honest validators commits a non-empty block.
+    #[tokio::test]
+    #[ignore = "TODO: fix port binding conflict"]
+    async fn validator_commit_non_empty() {
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips).with_local_transactions_generation();
+
+        let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_smoke_test").unwrap();
+        for i in 0..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(authority, committee.clone(), &parameters, private)
+                .await
+                .unwrap();
+            handles.push(validator.await_completion());
+        }
+
+        let addresses = parameters
+            .all_metric_addresses()
+            .map(|address| address.to_owned())
+            .collect();
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 50;
+
+        tokio::select! {
+            _ = await_for_commits(addresses, true) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }
 
     /// Ensure validators can sync missing blocks
     #[tokio::test]
-    #[ignore = "https://github.com/MystenLabs/project-mysticeti/pull/14"]
+    #[ignore = "TODO: fix port binding conflict"]
     async fn validator_sync() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
@@ -275,9 +314,8 @@ mod test {
             .map(|address| address.to_owned())
             .collect();
         let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
-        println!("addresses: {:?}", addresses);
         tokio::select! {
-            _ = await_for_commits(addresses) => (),
+            _ = await_for_commits(addresses, false) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
 
@@ -297,7 +335,7 @@ mod test {
             .unwrap();
         let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
         tokio::select! {
-            _ = await_for_commits(vec![address]) => (),
+            _ = await_for_commits(vec![address], false) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }

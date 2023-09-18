@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
 pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
+pub const MAXIMUM_TRANSACTIONS_PER_MESSAGE: usize = 100;
 
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
@@ -130,24 +131,41 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             shutdown_grace_period,
         ));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
-        while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
-            let peer_id = connection.peer_id;
-            if let Some(task) = connections.remove(&peer_id) {
-                // wait until previous sync task completes
-                task.await.ok();
+        loop {
+            let (peers_connection_receiver, clients_connection_receiver) =
+                network.connection_receivers();
+
+            tokio::select! {
+                // Handles peers connections.
+                Some(connection) = inner.recv_or_stopped(peers_connection_receiver) => {
+                    let peer_id = connection.peer_id;
+                    if let Some(task) = connections.remove(&peer_id) {
+                        // wait until previous sync task completes
+                        task.await.ok();
+                    }
+
+                    let sender = connection.sender.clone();
+                    let authority = peer_id as AuthorityIndex;
+                    block_fetcher.register_authority(authority, sender).await;
+
+                    let task = handle.spawn(Self::connection_task(
+                        connection,
+                        inner.clone(),
+                        block_fetcher.clone(),
+                        metrics.clone(),
+                    ));
+                    connections.insert(peer_id, task);
+                }
+                // Handle clients connections.
+                Some(connection) = inner.recv_or_stopped(clients_connection_receiver) => {
+                    handle.spawn(Self::client_connection_task(
+                        connection,
+                        inner.clone(),
+                        metrics.clone(),
+                    ));
+                },
+                else => break,
             }
-
-            let sender = connection.sender.clone();
-            let authority = peer_id as AuthorityIndex;
-            block_fetcher.register_authority(authority, sender).await;
-
-            let task = handle.spawn(Self::connection_task(
-                connection,
-                inner.clone(),
-                block_fetcher.clone(),
-                metrics.clone(),
-            ));
-            connections.insert(peer_id, task);
         }
         join_all(
             connections
@@ -216,11 +234,32 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
                 }
+                NetworkMessage::Transactions(_transactions) => {
+                    // We do not accept transactions from peers.
+                    tracing::warn!("Peer {} attempted to submit a raw transaction", peer);
+                }
             }
         }
         disseminator.shutdown().await;
         let id = connection.peer_id as AuthorityIndex;
         block_fetcher.remove_authority(id).await;
+        None
+    }
+
+    async fn client_connection_task(
+        mut connection: Connection,
+        inner: Arc<NetworkSyncerInner<H, C>>,
+        metrics: Arc<Metrics>,
+    ) -> Option<()> {
+        while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
+            if let NetworkMessage::Transactions(transactions) = message {
+                if transactions.is_empty() || transactions.len() > MAXIMUM_TRANSACTIONS_PER_MESSAGE
+                {
+                    continue;
+                }
+                todo!();
+            }
+        }
         None
     }
 

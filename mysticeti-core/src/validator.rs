@@ -184,7 +184,8 @@ mod smoke_tests {
     use crate::{
         committee::Committee,
         config::{Parameters, PrivateConfig},
-        prometheus,
+        load_generator::LoadGenerator,
+        prometheus, runtime,
         types::AuthorityIndex,
     };
 
@@ -218,6 +219,7 @@ mod smoke_tests {
 
     /// Ensure that a committee of honest validators commits.
     #[tokio::test]
+    #[ignore = "TODO: fix port binding conflict"]
     async fn validator_commit() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
@@ -251,13 +253,12 @@ mod smoke_tests {
 
     /// Ensure that a committee of honest validators commits a non-empty block.
     #[tokio::test]
-    #[ignore = "TODO: fix port binding conflict"]
     async fn validator_commit_non_empty() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
 
         let committee = Committee::new_for_benchmarks(committee_size);
-        let parameters = Parameters::new_for_benchmarks(ips).with_local_transactions_generation();
+        let parameters = Parameters::new_for_benchmarks(ips);
 
         let mut handles = Vec::new();
         let tempdir = TempDir::new("validator_smoke_test").unwrap();
@@ -269,6 +270,18 @@ mod smoke_tests {
                 .await
                 .unwrap();
             handles.push(validator.await_completion());
+
+            let generator = LoadGenerator::new(
+                authority,
+                40, // transaction rate
+                10, // transaction size
+                &parameters,
+            )
+            .unwrap();
+            runtime::Handle::current().spawn(async move {
+                generator.wait().await;
+                generator.run().await.unwrap();
+            });
         }
 
         let addresses = parameters

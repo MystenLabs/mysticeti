@@ -266,11 +266,13 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
+            // Boot the validator node.
             let validator = Validator::start(authority, committee.clone(), &parameters, private)
                 .await
                 .unwrap();
             handles.push(validator.await_completion());
 
+            // Boot a load generator targeting the validator.
             let generator = LoadGenerator::new(
                 authority,
                 40, // transaction rate

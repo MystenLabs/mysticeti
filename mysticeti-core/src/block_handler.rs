@@ -277,6 +277,8 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
+/// This structure is in charge of receiving client transactions (from the network), batching them,
+/// and sending them to the block handler for inclusion in blocks.
 pub struct BatchGenerator {
     transactions_receiver: mpsc::Receiver<Vec<Transaction>>,
     batch_sender: mpsc::Sender<Vec<Transaction>>,

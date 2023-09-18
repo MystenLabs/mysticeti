@@ -3,7 +3,7 @@
 
 pub type AuthorityIndex = u64;
 
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Default, Debug)]
 pub struct Transaction {
     data: Vec<u8>,
 }

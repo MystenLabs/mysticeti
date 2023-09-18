@@ -1,4 +1,3 @@
-use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
@@ -11,6 +10,7 @@ use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
+use crate::{core::Core, types::Transaction};
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
 pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
+pub const MAXIMUM_TRANSACTIONS_PER_MESSAGE: usize = 100;
 
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
@@ -35,6 +36,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
     committee: Arc<Committee>,
+    transactions_dispatcher: mpsc::Sender<Vec<Transaction>>,
     stop: mpsc::Sender<()>,
     epoch_close_signal: mpsc::Sender<()>,
     pub epoch_closing_time: Arc<AtomicU64>,
@@ -46,6 +48,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut core: Core<H>,
         commit_period: u64,
         mut commit_observer: C,
+        transactions_dispatcher: mpsc::Sender<Vec<Transaction>>,
         shutdown_grace_period: Duration,
         metrics: Arc<Metrics>,
     ) -> Self {
@@ -77,6 +80,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             syncer,
             block_store,
             committee,
+            transactions_dispatcher,
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
             epoch_closing_time,
@@ -130,24 +134,40 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             shutdown_grace_period,
         ));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
-        while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
-            let peer_id = connection.peer_id;
-            if let Some(task) = connections.remove(&peer_id) {
-                // wait until previous sync task completes
-                task.await.ok();
+        loop {
+            let (peers_connection_receiver, clients_connection_receiver) =
+                network.connection_receivers();
+
+            tokio::select! {
+                // Handles peers connections.
+                Some(connection) = inner.recv_or_stopped(peers_connection_receiver) => {
+                    let peer_id = connection.peer_id;
+                    if let Some(task) = connections.remove(&peer_id) {
+                        // wait until previous sync task completes
+                        task.await.ok();
+                    }
+
+                    let sender = connection.sender.clone();
+                    let authority = peer_id as AuthorityIndex;
+                    block_fetcher.register_authority(authority, sender).await;
+
+                    let task = handle.spawn(Self::connection_task(
+                        connection,
+                        inner.clone(),
+                        block_fetcher.clone(),
+                        metrics.clone(),
+                    ));
+                    connections.insert(peer_id, task);
+                }
+                // Handle clients connections.
+                Some(connection) = inner.recv_or_stopped(clients_connection_receiver) => {
+                    handle.spawn(Self::client_connection_task(
+                        connection,
+                        inner.clone(),
+                    ));
+                },
+                else => break,
             }
-
-            let sender = connection.sender.clone();
-            let authority = peer_id as AuthorityIndex;
-            block_fetcher.register_authority(authority, sender).await;
-
-            let task = handle.spawn(Self::connection_task(
-                connection,
-                inner.clone(),
-                block_fetcher.clone(),
-                metrics.clone(),
-            ));
-            connections.insert(peer_id, task);
         }
         join_all(
             connections
@@ -216,11 +236,43 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
                 }
+                NetworkMessage::Transactions(_transactions) => {
+                    // We do not accept transactions from peers.
+                    tracing::warn!("Peer {} attempted to submit a raw transaction", peer);
+                }
             }
         }
         disseminator.shutdown().await;
         let id = connection.peer_id as AuthorityIndex;
         block_fetcher.remove_authority(id).await;
+        None
+    }
+
+    async fn client_connection_task(
+        mut connection: Connection,
+        inner: Arc<NetworkSyncerInner<H, C>>,
+    ) -> Option<()> {
+        while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
+            if let NetworkMessage::Transactions(transactions) = message {
+                if transactions.is_empty() || transactions.len() > MAXIMUM_TRANSACTIONS_PER_MESSAGE
+                {
+                    continue;
+                }
+
+                // TODO: This task is a good place to throttle transactions from each client and
+                // make preliminary transaction checks. Ending this task will terminate the client
+                // connection.
+
+                if inner
+                    .transactions_dispatcher
+                    .send(transactions)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
         None
     }
 

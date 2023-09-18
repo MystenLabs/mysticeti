@@ -1,24 +1,24 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::stat::HistogramSender;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
 use crate::{
     metrics::{print_network_address_table, Metrics},
     types::BlockReference,
 };
+use crate::{stat::HistogramSender, types::Transaction};
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use rand::prelude::ThreadRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io;
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{collections::HashMap, sync::atomic::AtomicUsize};
+use std::{io, sync::atomic::Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -37,10 +37,13 @@ pub enum NetworkMessage {
     RequestBlocks(Vec<BlockReference>),
     /// Indicate that a requested block is not found.
     BlockNotFound(Vec<BlockReference>),
+    /// Client transactions.
+    Transactions(Vec<Transaction>),
 }
 
 pub struct Network {
     connection_receiver: mpsc::Receiver<Connection>,
+    clients_connection_receiver: mpsc::Receiver<Connection>,
 }
 
 pub struct Connection {
@@ -51,9 +54,13 @@ pub struct Connection {
 
 impl Network {
     #[cfg(feature = "simulator")]
-    pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
+    pub(crate) fn new_from_raw(
+        connection_receiver: mpsc::Receiver<Connection>,
+        clients_connection_receiver: mpsc::Receiver<Connection>,
+    ) -> Self {
         Self {
             connection_receiver,
+            clients_connection_receiver,
         }
     }
 
@@ -68,8 +75,16 @@ impl Network {
         Self::from_socket_addresses(&addresses, our_id as usize, local_addr, metrics).await
     }
 
-    pub fn connection_receiver(&mut self) -> &mut mpsc::Receiver<Connection> {
-        &mut self.connection_receiver
+    pub fn connection_receivers(
+        &mut self,
+    ) -> (
+        &mut mpsc::Receiver<Connection>,
+        &mut mpsc::Receiver<Connection>,
+    ) {
+        (
+            &mut self.connection_receiver,
+            &mut self.clients_connection_receiver,
+        )
     }
 
     pub async fn from_socket_addresses(
@@ -108,38 +123,94 @@ impl Network {
                     connection_sender: connection_sender.clone(),
                     bind_addr: bind_addr(local_addr),
                     active_immediately: id < our_id,
-                    latency_sender: metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone()
+                    latency_sender: Some(metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone())
                 }
                 .run(receiver),
             );
         }
+        let (clients_connection_sender, clients_connection_receiver) = mpsc::channel(16);
         handle.spawn(
-            Server {
+            Server::new(
                 server,
+                local_addr,
                 worker_senders,
-            }
+                clients_connection_sender,
+            )
             .run(),
         );
         Self {
             connection_receiver,
+            clients_connection_receiver,
         }
     }
 }
 
 struct Server {
     server: TcpListener,
+    local_addr: SocketAddr,
     worker_senders: HashMap<SocketAddr, mpsc::UnboundedSender<TcpStream>>,
+    clients_connection_sender: mpsc::Sender<Connection>,
+    max_connections: usize,
+    current_connections: Arc<AtomicUsize>,
 }
 
 impl Server {
+    pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
+
+    pub fn new(
+        server: TcpListener,
+        local_addr: SocketAddr,
+        worker_senders: HashMap<SocketAddr, mpsc::UnboundedSender<TcpStream>>,
+        clients_connection_sender: mpsc::Sender<Connection>,
+    ) -> Self {
+        let committee_size = worker_senders.len();
+        Self {
+            server,
+            local_addr,
+            worker_senders,
+            clients_connection_sender,
+            max_connections: Self::DEFAULT_MAX_CONNECTIONS,
+            current_connections: Arc::new(AtomicUsize::new(committee_size)),
+        }
+    }
+
     async fn run(self) {
         loop {
             let (socket, remote_peer) = self.server.accept().await.expect("Accept failed");
             let remote_peer = remote_to_local_port(remote_peer);
+
+            // Handle connections from peers.
             if let Some(sender) = self.worker_senders.get(&remote_peer) {
+                tracing::debug!("Connection from authority peer {remote_peer}");
                 sender.send(socket).ok();
+
+            // Handle connections from clients.
             } else {
-                tracing::warn!("Dropping connection from unknown peer {remote_peer}");
+                tracing::debug!("Connection from client peer {remote_peer}");
+                let current_connections = self.current_connections.clone();
+                let peer_id = current_connections.load(Ordering::Relaxed);
+                if peer_id >= self.max_connections {
+                    tracing::warn!("Too many clients, dropping connection from {remote_peer}");
+                    continue;
+                }
+                self.current_connections.fetch_add(1, Ordering::Relaxed);
+
+                let connection_sender = self.clients_connection_sender.clone();
+                let bind_addr = bind_addr(self.local_addr);
+                let handle = Handle::current();
+                handle.spawn(async move {
+                    let _ = Worker {
+                        peer: remote_peer,
+                        peer_id,
+                        connection_sender,
+                        bind_addr,
+                        active_immediately: true,
+                        latency_sender: None,
+                    }
+                    .handle_passive_stream(socket)
+                    .await;
+                    current_connections.fetch_sub(1, Ordering::Relaxed);
+                });
             }
         }
     }
@@ -170,20 +241,20 @@ fn bind_addr(mut local_peer: SocketAddr) -> SocketAddr {
     local_peer
 }
 
-struct Worker {
-    peer: SocketAddr,
-    peer_id: usize,
-    connection_sender: mpsc::Sender<Connection>,
-    bind_addr: SocketAddr,
-    active_immediately: bool,
-    latency_sender: HistogramSender<Duration>,
+pub struct Worker {
+    pub peer: SocketAddr,
+    pub peer_id: usize,
+    pub connection_sender: mpsc::Sender<Connection>,
+    pub bind_addr: SocketAddr,
+    pub active_immediately: bool,
+    pub latency_sender: Option<HistogramSender<Duration>>,
 }
 
 struct WorkerConnection {
     sender: mpsc::Sender<NetworkMessage>,
     receiver: mpsc::Receiver<NetworkMessage>,
     peer_id: usize,
-    latency_sender: HistogramSender<Duration>,
+    latency_sender: Option<HistogramSender<Duration>>,
 }
 
 impl Worker {
@@ -191,7 +262,7 @@ impl Worker {
     const PASSIVE_HANDSHAKE: u64 = 0x0000AEAE;
     const MAX_SIZE: u32 = 16 * 1024 * 1024;
 
-    async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
+    pub async fn run(self, mut receiver: mpsc::UnboundedReceiver<TcpStream>) -> Option<()> {
         let initial_delay = if self.active_immediately {
             Duration::ZERO
         } else {
@@ -286,7 +357,7 @@ impl Worker {
         mut writer: OwnedWriteHalf,
         mut receiver: mpsc::Receiver<NetworkMessage>,
         mut pong_receiver: mpsc::Receiver<i64>,
-        latency_sender: HistogramSender<Duration>,
+        latency_sender: Option<HistogramSender<Duration>>,
     ) -> io::Result<()> {
         let start = Instant::now();
         let mut ping_deadline = start + PING_INTERVAL;
@@ -330,7 +401,9 @@ impl Worker {
                                 let time = start.elapsed().as_micros() as u64;
                                 match time.checked_sub(our_ping) {
                                     Some(delay) => {
-                                        latency_sender.observe(Duration::from_micros(delay));
+                                        if let Some(latency_sender) = latency_sender.as_ref() {
+                                            latency_sender.observe(Duration::from_micros(delay));
+                                        }
                                     },
                                     None => {
                                         tracing::warn!("Invalid ping: {ping}, greater then current time {time}");

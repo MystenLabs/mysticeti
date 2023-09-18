@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
-use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
 use crate::committee::Committee;
 use crate::config::Parameters;
 use crate::core::{Core, CoreOptions};
@@ -20,6 +19,10 @@ use crate::types::{
 };
 use crate::wal::{open_file_for_wal, walf, WalPosition, WalWriter};
 use crate::{block_handler::TestCommitHandler, metrics::Metrics};
+use crate::{
+    block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK},
+    runtime,
+};
 use futures::future::join_all;
 use prometheus::Registry;
 use rand::rngs::StdRng;
@@ -27,6 +30,7 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 pub fn test_metrics() -> Arc<Metrics> {
     Metrics::new(&Registry::new(), None).0
@@ -185,17 +189,23 @@ pub fn simulated_network_syncers_with_epoch_duration(
             core.block_handler().transaction_time.clone(),
             core.metrics.clone(),
         );
+        let (transactions_sender, mut transactions_receiver) = mpsc::channel(1000);
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
             commit_handler,
+            transactions_sender,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             test_metrics(),
         );
         drop(node_context);
         network_syncers.push(network_syncer);
+
+        // Sync network transactions (there shouldn't be any).
+        runtime::Handle::current()
+            .spawn(async move { while transactions_receiver.recv().await.is_some() {} });
     }
     (simulated_network, network_syncers, reporters)
 }
@@ -218,15 +228,21 @@ pub async fn network_syncers_with_epoch_duration(
             core.block_handler().transaction_time.clone(),
             test_metrics(),
         );
+        let (transactions_sender, mut transactions_receiver) = mpsc::channel(1000);
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
             commit_handler,
+            transactions_sender,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             test_metrics(),
         );
         network_syncers.push(network_syncer);
+
+        // Sync network transactions (there shouldn't be any).
+        runtime::Handle::current()
+            .spawn(async move { while transactions_receiver.recv().await.is_some() {} });
     }
     network_syncers
 }

@@ -277,6 +277,58 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
+/// This structure is in charge of receiving client transactions (from the network), batching them,
+/// and sending them to the block handler for inclusion in blocks.
+pub struct BatchGenerator {
+    transactions_receiver: mpsc::Receiver<Vec<Transaction>>,
+    batch_sender: mpsc::Sender<Vec<Transaction>>,
+    max_batch_size: usize,
+    max_batch_delay: Duration,
+}
+
+impl BatchGenerator {
+    pub fn start(
+        transactions_receiver: mpsc::Receiver<Vec<Transaction>>,
+        batch_sender: mpsc::Sender<Vec<Transaction>>,
+        max_batch_size: usize,
+        max_batch_delay: Duration,
+    ) {
+        let this = Self {
+            transactions_receiver,
+            batch_sender,
+            max_batch_size,
+            max_batch_delay,
+        };
+        runtime::Handle::current().spawn(this.run());
+    }
+
+    async fn run(mut self) {
+        let mut batch = Vec::with_capacity(self.max_batch_size);
+        loop {
+            let mut ready = false;
+            tokio::select! {
+                _ = runtime::sleep(self.max_batch_delay) => {
+                    ready = true;
+                }
+                Some(transactions) = self.transactions_receiver.recv() => {
+                    batch.extend(transactions);
+                    if batch.len() >= self.max_batch_size {
+                        ready = true;
+                    }
+                },
+                else => break
+            }
+
+            if ready {
+                if self.batch_sender.send(batch.clone()).await.is_err() {
+                    break;
+                }
+                batch.clear();
+            }
+        }
+    }
+}
+
 pub struct TransactionGenerator {
     sender: mpsc::Sender<Vec<Transaction>>,
     rng: StdRng,

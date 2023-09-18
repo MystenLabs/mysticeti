@@ -43,4 +43,5 @@ mod state;
 
 mod epoch_close;
 mod finalization_interpreter;
+pub mod load_generator;
 mod synchronizer;

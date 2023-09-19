@@ -3,7 +3,12 @@
 
 use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
-use crate::{block_store::BlockStore, committee::Committee, metrics::Metrics, types::RoundNumber};
+use crate::{
+    block_store::BlockStore,
+    committee::Committee,
+    metrics::Metrics,
+    types::{AuthorityIndex, RoundNumber},
+};
 
 use super::{
     base_committer::{BaseCommitter, BaseCommitterOptions},
@@ -12,6 +17,7 @@ use super::{
 
 pub struct MultiCommitterBuilder {
     committee: Arc<Committee>,
+    authority: AuthorityIndex,
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     wave_length: RoundNumber,
@@ -20,9 +26,15 @@ pub struct MultiCommitterBuilder {
 }
 
 impl MultiCommitterBuilder {
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        authority: AuthorityIndex,
+        block_store: BlockStore,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             committee,
+            authority,
             block_store,
             metrics,
             wave_length: DEFAULT_WAVE_LENGTH,
@@ -56,6 +68,7 @@ impl MultiCommitterBuilder {
                 };
                 BaseCommitter::new(
                     self.committee.clone(),
+                    self.authority,
                     self.block_store.clone(),
                     self.metrics.clone(),
                 )
@@ -64,6 +77,7 @@ impl MultiCommitterBuilder {
             .collect();
 
         MultiCommitter {
+            authority: self.authority,
             round_offset: self.round_offset,
             committers,
         }
@@ -71,6 +85,7 @@ impl MultiCommitterBuilder {
 }
 
 pub struct MultiCommitter {
+    authority: AuthorityIndex,
     round_offset: RoundNumber,
     committers: Vec<BaseCommitter>,
 }
@@ -81,7 +96,7 @@ impl Committer for MultiCommitter {
         let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
-                tracing::debug!("{committer} decided {leader:?}");
+                tracing::debug!("[{self}] {committer} decided {leader:?}");
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -102,7 +117,11 @@ impl Committer for MultiCommitter {
 
 impl Display for MultiCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MultiCommitter(R{})", self.round_offset)
+        write!(
+            f,
+            "MultiCommitter(v{}, R{})",
+            self.authority, self.round_offset
+        )
     }
 }
 
@@ -127,6 +146,7 @@ mod test {
 
             let committer = MultiCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -164,6 +184,7 @@ mod test {
 
             let committer = MultiCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -194,6 +215,7 @@ mod test {
 
             let committer = MultiCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -236,6 +258,7 @@ mod test {
 
         let committer = MultiCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -277,6 +300,7 @@ mod test {
 
             let committer = MultiCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -326,6 +350,7 @@ mod test {
         // Ensure the omitted leader is skipped and the others are committed.
         let committer = MultiCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -391,6 +416,7 @@ mod test {
         // Ensure that the first leader of wave 1 is skipped.
         let committer = MultiCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -469,6 +495,7 @@ mod test {
         // Ensure we commit the leaders of wave 1 and 3
         let committer = MultiCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -571,6 +598,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = MultiCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )

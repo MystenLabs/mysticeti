@@ -193,11 +193,24 @@ async fn testbed(committee_size: usize) -> Result<()> {
     let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
     let parameters = Parameters::new_for_benchmarks(ips);
 
+    let dir = PathBuf::from("local-testbed");
+    match fs::remove_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to remove directory '{}'", dir.display()))
+        }
+    }
+    match fs::create_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to create directory '{}'", dir.display()))
+        }
+    }
+
     let mut handles = Vec::new();
     for i in 0..committee_size {
         let authority = i as AuthorityIndex;
-        // todo - i am not sure if "" (current dir) is the best path here?
-        let dir = PathBuf::new();
         let private = PrivateConfig::new_for_benchmarks(&dir, authority);
 
         let validator =

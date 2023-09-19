@@ -132,11 +132,15 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer =
-            PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
-                .build();
+        let committer = PipelinedCommitterBuilder::new(
+            committee.clone(),
+            authority,
+            block_store.clone(),
+            metrics.clone(),
+        )
+        .build();
         // let committer = crate::consensus::base_committer::BaseCommitter::new(
-        //     committee.clone(),
+        //     committee.clone(),authority,
         //     block_store.clone(),
         //     metrics.clone(),
         // );

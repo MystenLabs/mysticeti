@@ -47,6 +47,8 @@ impl Default for BaseCommitterOptions {
 pub struct BaseCommitter {
     /// The committee information
     committee: Arc<Committee>,
+    /// The identify of the authority running this committer (useful for debugging)
+    authority: AuthorityIndex,
     /// Keep all block data
     block_store: BlockStore,
     /// The options used by this committer
@@ -59,9 +61,15 @@ impl BaseCommitter {
     /// We need at least one leader round, one voting round, and one decision round.
     pub const MINIMUM_WAVE_LENGTH: u64 = 3;
 
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        authority: AuthorityIndex,
+        block_store: BlockStore,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             committee,
+            authority,
             block_store,
             options: BaseCommitterOptions::default(),
             metrics,
@@ -172,7 +180,7 @@ impl BaseCommitter {
                 .expect("We should have the whole sub-dag by now");
 
             if self.is_vote(&potential_vote, leader_block) {
-                tracing::trace!("{potential_vote:?} is a vote for {leader_block:?}");
+                tracing::trace!("[{self}] {potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -195,7 +203,7 @@ impl BaseCommitter {
                 .all(|include| include.authority != leader)
             {
                 tracing::trace!(
-                    "{voting_block:?} is a blame for leader {leader:?} of round {}",
+                    "[{self}] {voting_block:?} is a blame for leader v{leader:?} of round {}",
                     voting_round - 1
                 );
                 if blame_stake_aggregator.add(voter, &self.committee) {
@@ -219,7 +227,9 @@ impl BaseCommitter {
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
             if self.is_certificate(decision_block, leader_block) {
-                tracing::trace!("{decision_block:?} is a certificate for leader {leader_block:?}");
+                tracing::trace!(
+                    "[{self}] {decision_block:?} is a certificate for leader {leader_block:?}"
+                );
                 if certificate_stake_aggregator.add(authority, &self.committee) {
                     return true;
                 }
@@ -372,10 +382,10 @@ impl Committer for BaseCommitter {
             let decision_round = self.decision_round(wave);
 
             tracing::debug!(
-                "{self} trying to commit ( \
+                "[{self}] Trying to commit ( \
                     wave: {wave}, \
                     leader_round: {leader_round}, \
-                    decision round: {decision_round} \
+                    last committed round: {last_committed_round} \
                 )"
             );
 
@@ -386,20 +396,24 @@ impl Committer for BaseCommitter {
                     // We can direct-commit this leader. We first check the indirect commit rule
                     // to see if we can commit any past leader.
                     LeaderStatus::Commit(ref block) => {
-                        tracing::debug!("Leader {block} is direct-committed");
+                        tracing::debug!("[{self}] Leader {block} is direct-committed");
                         let commits = self.try_indirect_commit(last_committed_wave, block.clone());
                         sequence.extend(commits);
                     }
                     // We can safely direct-skip this leader.
                     LeaderStatus::Skip(leader, round) => {
-                        tracing::debug!("Leader {leader} at round {round} is direct-skipped");
+                        tracing::debug!(
+                            "[{self}] Leader v{leader} at round {round} is direct-skipped"
+                        );
                     }
                 }
                 self.update_metrics(&[anchor.clone()], "direct");
                 sequence.push(anchor);
                 last_committed_wave = wave;
             } else {
-                tracing::debug!("Leader {leader} at round {leader_round} is still undecided");
+                tracing::debug!(
+                    "[{self}] Leader v{leader} at round {leader_round} is still undecided"
+                );
             }
         }
         sequence
@@ -410,8 +424,8 @@ impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "BaseCommitter(L{},R{})",
-            self.options.leader_offset, self.options.round_offset
+            "BaseCommitter(v{}, L{},R{})",
+            self.authority, self.options.leader_offset, self.options.round_offset
         )
     }
 }
@@ -434,6 +448,7 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -461,6 +476,7 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -486,6 +502,7 @@ mod test {
 
             let committer = BaseCommitter::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             );
@@ -520,6 +537,7 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -553,6 +571,7 @@ mod test {
 
             let committer = BaseCommitter::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             );
@@ -598,6 +617,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -646,6 +666,7 @@ mod test {
         // Ensure the leader is skipped.
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -707,6 +728,7 @@ mod test {
         // Ensure we commit the leaders of wave 1 and 3
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -787,6 +809,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = BaseCommitter::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );

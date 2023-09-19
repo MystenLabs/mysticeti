@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::HashMap, sync::Arc};
+use std::{cmp::max, collections::HashMap, fmt::Display, sync::Arc};
 
-use crate::block_store::BlockStore;
 use crate::metrics::Metrics;
+use crate::{block_store::BlockStore, types::AuthorityIndex};
 use crate::{committee::Committee, types::RoundNumber};
 
 use super::{
@@ -14,6 +14,7 @@ use super::{
 
 pub struct PipelinedCommitterBuilder {
     committee: Arc<Committee>,
+    authority: AuthorityIndex,
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     wave_length: RoundNumber,
@@ -21,9 +22,15 @@ pub struct PipelinedCommitterBuilder {
 }
 
 impl PipelinedCommitterBuilder {
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+    pub fn new(
+        committee: Arc<Committee>,
+        authority: AuthorityIndex,
+        block_store: BlockStore,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             committee,
+            authority,
             block_store,
             metrics,
             wave_length: DEFAULT_WAVE_LENGTH,
@@ -46,6 +53,7 @@ impl PipelinedCommitterBuilder {
             .map(|i| {
                 MultiCommitterBuilder::new(
                     self.committee.clone(),
+                    self.authority,
                     self.block_store.clone(),
                     self.metrics.clone(),
                 )
@@ -57,6 +65,7 @@ impl PipelinedCommitterBuilder {
             .collect();
 
         PipelinedCommitter {
+            authority: self.authority,
             wave_length: self.wave_length,
             committers,
         }
@@ -66,6 +75,7 @@ impl PipelinedCommitterBuilder {
 /// The [`PipelinedCommitter`] uses one [`MultiCommitter`] instance per round in a wave length,
 /// each shifted by one round. This allows to commit every dag round (in the ideal case).
 pub struct PipelinedCommitter {
+    authority: AuthorityIndex,
     wave_length: RoundNumber,
     committers: Vec<MultiCommitter>,
 }
@@ -77,7 +87,7 @@ impl Committer for PipelinedCommitter {
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
-                tracing::debug!("{committer} decided {leader:?}");
+                tracing::debug!("[{self}] {committer} decided {leader:?}");
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -98,6 +108,12 @@ impl Committer for PipelinedCommitter {
             r += 1;
         }
         sequence
+    }
+}
+
+impl Display for PipelinedCommitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PipelinedCommitter(v{})", self.authority)
     }
 }
 
@@ -123,6 +139,7 @@ mod test {
 
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -153,6 +170,7 @@ mod test {
 
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -180,6 +198,7 @@ mod test {
 
             let committer = PipelinedCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -215,6 +234,7 @@ mod test {
 
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -251,6 +271,7 @@ mod test {
 
             let committer = PipelinedCommitterBuilder::new(
                 committee.clone(),
+                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             )
@@ -299,6 +320,7 @@ mod test {
         // Ensure no blocks are committed.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -350,6 +372,7 @@ mod test {
         // Ensure the omitted leader is skipped.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -401,6 +424,7 @@ mod test {
         // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -483,6 +507,7 @@ mod test {
         // Ensure we commit the leaders of waves 1 and 2, except the leader we skipped.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )
@@ -570,6 +595,7 @@ mod test {
         // Ensure we commit the leaders of wave 1 and 3, as seen by the first pipeline.
         let committer = PipelinedCommitterBuilder::new(
             committee.clone(),
+            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         )

@@ -418,6 +418,15 @@ impl Committer for BaseCommitter {
         }
         sequence
     }
+
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        let wave = self.wave_number(round);
+        let leader_round = self.leader_round(wave);
+        if round != leader_round {
+            return vec![];
+        }
+        vec![self.elect_leader(round)]
+    }
 }
 
 impl Display for BaseCommitter {

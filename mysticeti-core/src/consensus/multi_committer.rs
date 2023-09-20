@@ -113,6 +113,15 @@ impl Committer for MultiCommitter {
         }
         sequence
     }
+
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        let mut leaders = vec![];
+        // todo - this can be slightly optimized as all base committers here either return one value or zero depending on whether current round is a leader round for the wave
+        for committer in &self.committers {
+            leaders.append(&mut committer.leaders(round));
+        }
+        leaders
+    }
 }
 
 impl Display for MultiCommitter {

@@ -109,6 +109,15 @@ impl Committer for PipelinedCommitter {
         }
         sequence
     }
+
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        let mut leaders = vec![];
+        // todo - this can be optimized as in fact we just need select single committer for the wave
+        for committer in &self.committers {
+            leaders.append(&mut committer.leaders(round));
+        }
+        leaders
+    }
 }
 
 impl Display for PipelinedCommitter {

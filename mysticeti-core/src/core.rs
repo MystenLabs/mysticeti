@@ -382,19 +382,15 @@ impl<H: BlockHandler> Core<H> {
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, period: u64) -> bool {
         let quorum_round = self.threshold_clock.get_round();
-        if quorum_round % period != 1 {
-            // Non leader round we are ready to emit block asap
-            true
+
+        // Leader round we check if we have a leader block
+        if quorum_round > self.last_commit_round.max(period - 1) {
+            let leader_round = quorum_round - 1;
+            let leaders = self.committer.leaders(leader_round);
+            self.block_store
+                .all_blocks_exists_at_authority_round(&leaders, leader_round)
         } else {
-            // Leader round we check if we have a leader block
-            if quorum_round > self.last_commit_round.max(period - 1) {
-                let leader_round = quorum_round - 1;
-                let leader = self.leader_at_round(leader_round, period);
-                self.block_store
-                    .block_exists_at_authority_round(leader, leader_round)
-            } else {
-                false
-            }
+            false
         }
     }
 
@@ -474,12 +470,6 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn committee(&self) -> &Arc<Committee> {
         &self.committee
-    }
-
-    fn leader_at_round(&self, round: RoundNumber, period: u64) -> AuthorityIndex {
-        assert!(round == 0 || round % period == 0);
-
-        self.committee.elect_leader(round / period)
     }
 
     pub fn epoch_closed(&self) -> bool {

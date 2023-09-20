@@ -154,6 +154,20 @@ impl BlockStore {
             .any(|(block_authority, _)| *block_authority == authority)
     }
 
+    pub fn all_blocks_exists_at_authority_round(
+        &self,
+        authorities: &[AuthorityIndex],
+        round: RoundNumber,
+    ) -> bool {
+        let inner = self.inner.read();
+        let Some(blocks) = inner.index.get(&round) else { return false; };
+        authorities.iter().all(|authority| {
+            blocks
+                .keys()
+                .any(|(block_authority, _)| block_authority == authority)
+        })
+    }
+
     pub fn block_exists(&self, reference: BlockReference) -> bool {
         self.inner.read().block_exists(reference)
     }

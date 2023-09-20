@@ -148,7 +148,9 @@ impl BlockStore {
         round: RoundNumber,
     ) -> bool {
         let inner = self.inner.read();
-        let Some(blocks) = inner.index.get(&round) else { return false; };
+        let Some(blocks) = inner.index.get(&round) else {
+            return false;
+        };
         blocks
             .keys()
             .any(|(block_authority, _)| *block_authority == authority)
@@ -267,7 +269,9 @@ impl BlockStore {
 
 impl BlockStoreInner {
     pub fn block_exists(&self, reference: BlockReference) -> bool {
-        let Some(blocks) = self.index.get(&reference.round) else { return false; };
+        let Some(blocks) = self.index.get(&reference.round) else {
+            return false;
+        };
         blocks.contains_key(&(reference.authority, reference.digest))
     }
 
@@ -276,7 +280,9 @@ impl BlockStoreInner {
         authority: AuthorityIndex,
         round: RoundNumber,
     ) -> Vec<IndexEntry> {
-        let Some(blocks) = self.index.get(&round) else { return vec![]; };
+        let Some(blocks) = self.index.get(&round) else {
+            return vec![];
+        };
         blocks
             .iter()
             .filter_map(|((a, _), entry)| {
@@ -290,7 +296,9 @@ impl BlockStoreInner {
     }
 
     pub fn get_blocks_by_round(&self, round: RoundNumber) -> Vec<IndexEntry> {
-        let Some(blocks) = self.index.get(&round) else { return vec![]; };
+        let Some(blocks) = self.index.get(&round) else {
+            return vec![];
+        };
         blocks.values().cloned().collect()
     }
 

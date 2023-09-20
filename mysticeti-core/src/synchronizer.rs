@@ -310,7 +310,9 @@ where
         }
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
-            let Some((peer, permit)) = self.sample_peer(&[self.id]) else { break };
+            let Some((peer, permit)) = self.sample_peer(&[self.id]) else {
+                break;
+            };
             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
             permit.send(message);
 

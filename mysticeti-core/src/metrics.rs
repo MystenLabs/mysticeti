@@ -380,7 +380,9 @@ impl<T: Ord + AddAssign + DivUsize + Copy + Default + AsPrometheusMetric> VecHis
 
     pub fn report(&mut self) {
         for (histogram, label) in self.histograms.iter_mut() {
-            let Some([p50, p90, p99]) = histogram.pcts([500, 900, 990]) else {continue;};
+            let Some([p50, p90, p99]) = histogram.pcts([500, 900, 990]) else {
+                continue;
+            };
             self.gauge
                 .with_label_values(&[label, "p50"])
                 .set(p50.as_prometheus_metric());

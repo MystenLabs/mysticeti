@@ -232,7 +232,7 @@ impl BlockHandler for TestBlockHandler {
         }
         let transaction_time = self.transaction_time.lock();
         for block in blocks {
-            println!("Processing {block:?}");
+            tracing::debug!("Processing {block:?}");
             let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
                 Some(&mut response)
             } else {

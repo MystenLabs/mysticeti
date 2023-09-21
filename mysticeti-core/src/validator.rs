@@ -150,7 +150,7 @@ impl Validator {
 }
 
 #[cfg(test)]
-mod test {
+mod smoke_tests {
     use std::{
         collections::VecDeque,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -192,15 +192,15 @@ mod test {
 
     /// Ensure that a committee of honest validators commits.
     #[tokio::test]
-    async fn validator_smoke_test() {
+    async fn validator_commit() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
 
         let committee = Committee::new_for_benchmarks(committee_size);
-        let parameters = Parameters::new_for_benchmarks(ips);
+        let parameters = Parameters::new_for_benchmarks(ips).with_port_offset(0);
 
         let mut handles = Vec::new();
-        let tempdir = TempDir::new("validator_smoke_test").unwrap();
+        let tempdir = TempDir::new("validator_commit").unwrap();
         for i in 0..committee_size {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
@@ -225,13 +225,12 @@ mod test {
 
     /// Ensure validators can sync missing blocks
     #[tokio::test]
-    #[ignore = "https://github.com/MystenLabs/project-mysticeti/pull/14"]
     async fn validator_sync() {
         let committee_size = 4;
         let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
 
         let committee = Committee::new_for_benchmarks(committee_size);
-        let parameters = Parameters::new_for_benchmarks(ips);
+        let parameters = Parameters::new_for_benchmarks(ips).with_port_offset(100);
 
         let mut handles = Vec::new();
         let tempdir = TempDir::new("validator_sync").unwrap();
@@ -254,7 +253,6 @@ mod test {
             .map(|address| address.to_owned())
             .collect();
         let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
-        println!("addresses: {:?}", addresses);
         tokio::select! {
             _ = await_for_commits(addresses) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
@@ -277,6 +275,40 @@ mod test {
         let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 5;
         tokio::select! {
             _ = await_for_commits(vec![address]) => (),
+            _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
+
+    // Ensure that honest validators commit despite the presence of a crash fault.
+    #[tokio::test]
+    async fn validator_crash_faults() {
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips).with_port_offset(200);
+
+        let mut handles = Vec::new();
+        let tempdir = TempDir::new("validator_crash_faults").unwrap();
+        for i in 1..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(authority, committee.clone(), &parameters, private)
+                .await
+                .unwrap();
+            handles.push(validator.await_completion());
+        }
+
+        let addresses = parameters
+            .all_metric_addresses()
+            .skip(1)
+            .map(|address| address.to_owned())
+            .collect();
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 15;
+
+        tokio::select! {
+            _ = await_for_commits(addresses) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }

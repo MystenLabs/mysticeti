@@ -162,7 +162,9 @@ impl BlockStore {
         round: RoundNumber,
     ) -> bool {
         let inner = self.inner.read();
-        let Some(blocks) = inner.index.get(&round) else { return false; };
+        let Some(blocks) = inner.index.get(&round) else {
+            return false;
+        };
         authorities.iter().all(|authority| {
             blocks
                 .keys()

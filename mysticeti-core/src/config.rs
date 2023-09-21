@@ -80,6 +80,16 @@ impl Parameters {
         }
     }
 
+    pub fn with_port_offset(mut self, port_offset: u16) -> Self {
+        for id in self.identifiers.iter_mut() {
+            id.network_address
+                .set_port(id.network_address.port() + port_offset);
+            id.metrics_address
+                .set_port(id.metrics_address.port() + port_offset);
+        }
+        self
+    }
+
     /// Return all network addresses (including our own) in the order of the authority index.
     pub fn all_network_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
         self.identifiers.iter().map(|id| id.network_address)

@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::HashMap, sync::Arc};
+use std::{cmp::max, collections::HashMap, fmt::Display, sync::Arc};
 
-use crate::block_store::BlockStore;
 use crate::metrics::Metrics;
+use crate::{block_store::BlockStore, types::AuthorityIndex};
 use crate::{committee::Committee, types::RoundNumber};
 
 use super::{
@@ -77,7 +77,7 @@ impl Committer for PipelinedCommitter {
         // Try to commit the leaders of a all pipelines.
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
-                tracing::debug!("{committer} decided {leader:?}");
+                tracing::debug!("[{self}] {committer} decided {leader:?}");
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -98,6 +98,21 @@ impl Committer for PipelinedCommitter {
             r += 1;
         }
         sequence
+    }
+
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        let mut leaders = vec![];
+        // todo - this can be optimized as in fact we just need select single committer for the wave
+        for committer in &self.committers {
+            leaders.append(&mut committer.leaders(round));
+        }
+        leaders
+    }
+}
+
+impl Display for PipelinedCommitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PipelinedCommitter")
     }
 }
 

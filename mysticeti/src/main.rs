@@ -36,7 +36,6 @@ enum Operation {
         /// The list of ip addresses of the all validators.
         #[clap(long, value_name = "ADDR", value_delimiter = ' ', num_args(4..))]
         ips: Vec<IpAddr>,
-
         /// The working directory where the files will be generated.
         #[clap(long, value_name = "FILE", default_value = "genesis")]
         working_directory: PathBuf,
@@ -46,18 +45,24 @@ enum Operation {
         /// The authority index of this node.
         #[clap(long, value_name = "INT")]
         authority: AuthorityIndex,
-
         /// Path to the file holding the public committee information.
         #[clap(long, value_name = "FILE")]
         committee_path: String,
-
         /// Path to the file holding the public validator parameters (such as network addresses).
         #[clap(long, value_name = "FILE")]
         parameters_path: String,
-
         /// Path to the file holding the private validator configurations (including keys).
         #[clap(long, value_name = "FILE")]
         private_config_path: String,
+    },
+    /// Deploy a local validator for test. Dryrun mode uses default keys and committee configurations.
+    DryRun {
+        /// The authority index of this node.
+        #[clap(long, value_name = "INT")]
+        authority: AuthorityIndex,
+        /// The number of authorities in the committee.
+        #[clap(long, value_name = "INT")]
+        committee_size: usize,
     },
     /// Deploy a local testbed.
     Testbed {
@@ -97,6 +102,10 @@ async fn main() -> Result<()> {
             .await?
         }
         Operation::Testbed { committee_size } => testbed(committee_size).await?,
+        Operation::DryRun {
+            authority,
+            committee_size,
+        } => dryrun(authority, committee_size).await?,
     }
 
     Ok(())
@@ -193,11 +202,24 @@ async fn testbed(committee_size: usize) -> Result<()> {
     let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
     let parameters = Parameters::new_for_benchmarks(ips);
 
+    let dir = PathBuf::from("local-testbed");
+    match fs::remove_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to remove directory '{}'", dir.display()))
+        }
+    }
+    match fs::create_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to create directory '{}'", dir.display()))
+        }
+    }
+
     let mut handles = Vec::new();
     for i in 0..committee_size {
         let authority = i as AuthorityIndex;
-        // todo - i am not sure if "" (current dir) is the best path here?
-        let dir = PathBuf::new();
         let private = PrivateConfig::new_for_benchmarks(&dir, authority);
 
         let validator =
@@ -206,5 +228,40 @@ async fn testbed(committee_size: usize) -> Result<()> {
     }
 
     future::join_all(handles).await;
+    Ok(())
+}
+
+async fn dryrun(authority: AuthorityIndex, committee_size: usize) -> Result<()> {
+    tracing::warn!(
+        "Starting validator {authority} in dryrun mode (committee size: {committee_size})"
+    );
+
+    let committee = Committee::new_for_benchmarks(committee_size);
+    let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+    let parameters = Parameters::new_for_benchmarks(ips);
+
+    let dir = PathBuf::from(format!("dryrun-validator-{authority}"));
+    match fs::remove_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to remove directory '{}'", dir.display()))
+        }
+    }
+    match fs::create_dir_all(&dir) {
+        Ok(_) => {}
+        Err(e) => {
+            return Err(e).wrap_err(format!("Failed to create directory '{}'", dir.display()))
+        }
+    }
+
+    let private = PrivateConfig::new_for_benchmarks(&dir, authority);
+    Validator::start(authority, committee.clone(), &parameters, private)
+        .await?
+        .await_completion()
+        .await
+        .0
+        .expect("Validator failed");
+
     Ok(())
 }

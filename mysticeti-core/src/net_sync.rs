@@ -480,15 +480,16 @@ mod sim_tests {
     async fn test_exact_commits_in_epoch_async() {
         let n = 4;
         let rounds_in_epoch = 3000;
-        let (simulated_network, network_syncers, _) =
+        let (simulated_network, network_syncers, mut reporters) =
             simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
         let canonical_commit_seq = syncers[0].commit_observer().committed_leaders().clone();
-        for syncer in syncers {
+        for syncer in &syncers {
             let commit_seq = syncer.commit_observer().committed_leaders().clone();
             assert_eq!(canonical_commit_seq, commit_seq);
         }
+        print_stats(&syncers, &mut reporters);
     }
 
     #[test]
@@ -500,11 +501,11 @@ mod sim_tests {
         // todo - no cleanup of block store
         let n = 4;
         let rounds_in_epoch = 10;
-        let (simulated_network, network_syncers, _) =
+        let (simulated_network, network_syncers, mut reporters) =
             simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
-        for syncer in syncers.iter() {
+        for syncer in &syncers {
             let block_store = syncer.core().block_store();
             let committee = syncer.core().committee().clone();
             let latest_committed_leader =
@@ -534,6 +535,7 @@ mod sim_tests {
                 assert!(committed);
             }
         }
+        print_stats(&syncers, &mut reporters);
     }
 
     #[test]

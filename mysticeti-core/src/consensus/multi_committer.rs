@@ -3,7 +3,12 @@
 
 use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
-use crate::{block_store::BlockStore, committee::Committee, metrics::Metrics, types::RoundNumber};
+use crate::{
+    block_store::BlockStore,
+    committee::Committee,
+    metrics::Metrics,
+    types::{AuthorityIndex, RoundNumber},
+};
 
 use super::{
     base_committer::{BaseCommitter, BaseCommitterOptions},
@@ -81,7 +86,7 @@ impl Committer for MultiCommitter {
         let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {
             for leader in committer.try_commit(last_committed_round) {
-                tracing::debug!("{committer} decided {leader:?}");
+                tracing::debug!("[{self}] {committer} decided {leader:?}");
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -97,6 +102,15 @@ impl Committer for MultiCommitter {
             }
         }
         sequence
+    }
+
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        let mut leaders = vec![];
+        // todo - this can be slightly optimized as all base committers here either return one value or zero depending on whether current round is a leader round for the wave
+        for committer in &self.committers {
+            leaders.append(&mut committer.leaders(round));
+        }
+        leaders
     }
 }
 

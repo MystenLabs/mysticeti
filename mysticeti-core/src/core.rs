@@ -1,8 +1,7 @@
-use crate::block_store::{
-    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
-    WAL_ENTRY_STATE,
+use crate::block_handler::BlockHandler;
+use crate::consensus::{
+    linearizer::CommittedSubDag, pipelined_committer::PipelinedCommitterBuilder, Committer,
 };
-use crate::consensus::{linearizer::CommittedSubDag, Committer};
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -12,8 +11,14 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
-use crate::{block_handler::BlockHandler, consensus::base_committer::BaseCommitter};
 use crate::{block_manager::BlockManager, metrics::Metrics};
+use crate::{
+    block_store::{
+        BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+        WAL_ENTRY_STATE,
+    },
+    consensus::pipelined_committer::PipelinedCommitter,
+};
 use crate::{committee::Committee, consensus::LeaderStatus};
 use minibytes::Bytes;
 use std::fs::File;
@@ -43,7 +48,7 @@ pub struct Core<H: BlockHandler> {
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
-    committer: BaseCommitter,
+    committer: PipelinedCommitter,
 }
 
 pub struct CoreOptions {
@@ -126,7 +131,9 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = BaseCommitter::new(committee.clone(), block_store.clone(), metrics.clone());
+        let committer =
+            PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+                .build();
 
         let mut this = Self {
             block_manager,
@@ -296,6 +303,7 @@ impl<H: BlockHandler> Core<H> {
             self.wal_writer.sync().expect("Wal sync failed");
         }
 
+        tracing::debug!("Created block {block:?}");
         Some(block)
     }
 
@@ -329,6 +337,7 @@ impl<H: BlockHandler> Core<H> {
             .committer
             .try_commit(self.last_commit_round)
             .into_iter()
+            .inspect(|leader| tracing::debug!("Decided {leader:?}"))
             .filter_map(|leader| match leader {
                 LeaderStatus::Commit(block) => Some(block),
                 LeaderStatus::Skip(..) => None,
@@ -365,19 +374,15 @@ impl<H: BlockHandler> Core<H> {
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, period: u64) -> bool {
         let quorum_round = self.threshold_clock.get_round();
-        if quorum_round % period != 1 {
-            // Non leader round we are ready to emit block asap
-            true
+
+        // Leader round we check if we have a leader block
+        if quorum_round > self.last_commit_round.max(period - 1) {
+            let leader_round = quorum_round - 1;
+            let leaders = self.committer.leaders(leader_round);
+            self.block_store
+                .all_blocks_exists_at_authority_round(&leaders, leader_round)
         } else {
-            // Leader round we check if we have a leader block
-            if quorum_round > self.last_commit_round.max(period - 1) {
-                let leader_round = quorum_round - 1;
-                let leader = self.leader_at_round(leader_round, period);
-                self.block_store
-                    .block_exists_at_authority_round(leader, leader_round)
-            } else {
-                false
-            }
+            false
         }
     }
 
@@ -457,12 +462,6 @@ impl<H: BlockHandler> Core<H> {
 
     pub fn committee(&self) -> &Arc<Committee> {
         &self.committee
-    }
-
-    fn leader_at_round(&self, round: RoundNumber, period: u64) -> AuthorityIndex {
-        assert!(round == 0 || round % period == 0);
-
-        self.committee.elect_leader(round / period)
     }
 
     pub fn epoch_closed(&self) -> bool {

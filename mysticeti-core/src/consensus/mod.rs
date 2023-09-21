@@ -43,4 +43,8 @@ pub trait Committer {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed leaders.
     fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus>;
+
+    /// Return list of leaders for the round. Syncer will give those leaders some extra time.
+    /// Can return empty vec if round does not have a designated leader.
+    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex>;
 }

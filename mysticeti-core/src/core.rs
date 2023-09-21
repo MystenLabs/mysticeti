@@ -313,6 +313,7 @@ impl<H: BlockHandler> Core<H> {
             self.wal_writer.sync().expect("Wal sync failed");
         }
 
+        tracing::debug!("Created block {block:?}");
         Some(block)
     }
 
@@ -346,6 +347,7 @@ impl<H: BlockHandler> Core<H> {
             .committer
             .try_commit(self.last_commit_round)
             .into_iter()
+            .inspect(|leader| tracing::debug!("[v{}] Committing {leader:?}", self.authority))
             .filter_map(|leader| match leader {
                 LeaderStatus::Commit(block) => Some(block),
                 LeaderStatus::Skip(..) => None,

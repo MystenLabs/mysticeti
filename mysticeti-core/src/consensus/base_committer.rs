@@ -192,6 +192,7 @@ impl BaseCommitter {
     /// Check whether the specified leader has enough blames (that is, 2f+1 non-votes) to be
     /// directly skipped.
     fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
+        return false;
         let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
         let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -433,7 +434,7 @@ impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "BaseCommitter(v{}, L{},R{})",
+            "BaseCommitter(v{},L{},R{})",
             self.authority, self.options.leader_offset, self.options.round_offset
         )
     }

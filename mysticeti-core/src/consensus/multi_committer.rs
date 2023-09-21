@@ -128,7 +128,7 @@ impl Display for MultiCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "MultiCommitter(v{}, R{})",
+            "MultiCommitter(v{},R{})",
             self.authority, self.round_offset
         )
     }

@@ -47,8 +47,6 @@ impl Default for BaseCommitterOptions {
 pub struct BaseCommitter {
     /// The committee information
     committee: Arc<Committee>,
-    /// The identify of the authority running this committer (useful for debugging)
-    authority: AuthorityIndex,
     /// Keep all block data
     block_store: BlockStore,
     /// The options used by this committer
@@ -61,15 +59,9 @@ impl BaseCommitter {
     /// We need at least one leader round, one voting round, and one decision round.
     pub const MINIMUM_WAVE_LENGTH: u64 = 3;
 
-    pub fn new(
-        committee: Arc<Committee>,
-        authority: AuthorityIndex,
-        block_store: BlockStore,
-        metrics: Arc<Metrics>,
-    ) -> Self {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
         Self {
             committee,
-            authority,
             block_store,
             options: BaseCommitterOptions::default(),
             metrics,
@@ -434,8 +426,8 @@ impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "BaseCommitter(v{},L{},R{})",
-            self.authority, self.options.leader_offset, self.options.round_offset
+            "BaseCommitter(L{},R{})",
+            self.options.leader_offset, self.options.round_offset
         )
     }
 }
@@ -458,7 +450,6 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -486,7 +477,6 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -512,7 +502,6 @@ mod test {
 
             let committer = BaseCommitter::new(
                 committee.clone(),
-                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             );
@@ -547,7 +536,6 @@ mod test {
 
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -581,7 +569,6 @@ mod test {
 
             let committer = BaseCommitter::new(
                 committee.clone(),
-                0, // authority
                 block_writer.into_block_store(),
                 test_metrics(),
             );
@@ -627,7 +614,6 @@ mod test {
         // Ensure no blocks are committed.
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -676,7 +662,6 @@ mod test {
         // Ensure the leader is skipped.
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -738,7 +723,6 @@ mod test {
         // Ensure we commit the leaders of wave 1 and 3
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );
@@ -819,7 +803,6 @@ mod test {
         // Ensure no blocks are committed.
         let committer = BaseCommitter::new(
             committee.clone(),
-            0, // authority
             block_writer.into_block_store(),
             test_metrics(),
         );

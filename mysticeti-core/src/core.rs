@@ -131,13 +131,9 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = PipelinedCommitterBuilder::new(
-            committee.clone(),
-            authority,
-            block_store.clone(),
-            metrics.clone(),
-        )
-        .build();
+        let committer =
+            PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+                .build();
 
         let mut this = Self {
             block_manager,

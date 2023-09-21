@@ -253,7 +253,9 @@ impl SimulatorState for SimulatedExecutorState {
     fn handle_event(&mut self, event: Self::Event) {
         match event {
             ExecutorStateEvent::Wake(task_id) => {
-                let Entry::Occupied(mut oc) = self.tasks.entry(task_id) else { return; };
+                let Entry::Occupied(mut oc) = self.tasks.entry(task_id) else {
+                    return;
+                };
                 let waker = Arc::new(Waker(task_id));
                 let waker = waker.into();
                 let mut context = Context::from_waker(&waker);

@@ -370,6 +370,7 @@ impl Drop for WalReader {
     fn drop(&mut self) {
         unsafe {
             if libc::close(self.fd) != 0 {
+                #[allow(clippy::unnecessary_literal_unwrap)]
                 Err::<(), _>(io::Error::last_os_error()).expect("Failed to close wal fd");
             }
         }

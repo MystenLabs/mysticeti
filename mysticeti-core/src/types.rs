@@ -244,7 +244,9 @@ impl StatementBlock {
             self.digest()
         );
         let pub_key = committee.get_public_key(self.author());
-        let Some(pub_key) = pub_key else { bail!("Unknown block author {}", self.author()) };
+        let Some(pub_key) = pub_key else {
+            bail!("Unknown block author {}", self.author())
+        };
         if round == GENESIS_ROUND {
             bail!("Genesis block should not go through verification");
         }

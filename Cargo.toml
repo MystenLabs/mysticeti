@@ -5,6 +5,7 @@ members = [
     "third-party/minibytes",
     "orchestrator"
 ]
+resolver = "2"
 
 [workspace.dependencies]
 tokio = { version = "1.28.1", features = ["full"] }

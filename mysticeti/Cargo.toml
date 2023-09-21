@@ -12,7 +12,7 @@ eyre = { workspace = true }
 color-eyre = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 mysticeti-core = { path = "../mysticeti-core" }
 

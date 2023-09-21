@@ -337,7 +337,7 @@ impl<H: BlockHandler> Core<H> {
             .committer
             .try_commit(self.last_commit_round)
             .into_iter()
-            .inspect(|leader| tracing::debug!("[v{}] Committing {leader:?}", self.authority))
+            .inspect(|leader| tracing::debug!("Decided {leader:?}"))
             .filter_map(|leader| match leader {
                 LeaderStatus::Commit(block) => Some(block),
                 LeaderStatus::Skip(..) => None,

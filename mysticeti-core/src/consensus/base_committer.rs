@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fmt::Display, sync::Arc};
+use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
 use crate::{block_store::BlockStore, consensus::DEFAULT_WAVE_LENGTH};
 use crate::{
@@ -237,12 +237,12 @@ impl BaseCommitter {
         leader: AuthorityIndex,
         leader_round: RoundNumber,
         decision_round: RoundNumber,
-    ) -> Option<LeaderStatus> {
+    ) -> LeaderStatus {
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;
         if self.enough_leader_blame(voting_round, leader) {
-            return Some(LeaderStatus::Skip(leader, leader_round));
+            return LeaderStatus::Skip(leader, leader_round);
         }
 
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
@@ -263,12 +263,14 @@ impl BaseCommitter {
             panic!("More than one certified block at round {leader_round} from leader {leader}")
         }
 
-        leaders_with_enough_support.pop()
+        leaders_with_enough_support
+            .pop()
+            .unwrap_or_else(|| LeaderStatus::Undecided(leader, leader_round))
     }
 
     /// Output an ordered list of leader blocks (that we should commit in order). This function is
     /// used by the indirect commit rule to determine which past leader blocks can be committed.
-    fn order_leaders(
+    pub fn decide_past_leaders(
         &self,
         last_committed_wave: WaveNumber,
         anchor: Data<StatementBlock>,
@@ -336,7 +338,7 @@ impl BaseCommitter {
         leader_block: Data<StatementBlock>,
     ) -> Vec<LeaderStatus> {
         let sequence: Vec<_> = self
-            .order_leaders(last_committed_wave, leader_block)
+            .decide_past_leaders(last_committed_wave, leader_block)
             .into_iter()
             .rev()
             .collect();
@@ -352,6 +354,7 @@ impl BaseCommitter {
             let status = match leader {
                 LeaderStatus::Commit(_) => format!("{direct_or_indirect}-commit"),
                 LeaderStatus::Skip(_, _) => format!("{direct_or_indirect}-skip"),
+                LeaderStatus::Undecided(_, _) => continue,
             };
             let authority = leader.authority().to_string();
             self.metrics
@@ -363,12 +366,18 @@ impl BaseCommitter {
 }
 
 impl Committer for BaseCommitter {
-    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
+    type LastCommitted = RoundNumber;
+
+    fn try_commit(
+        &self,
+        last_committed_round: Self::LastCommitted,
+    ) -> (Vec<LeaderStatus>, Self::LastCommitted) {
         let mut last_committed_wave = self.wave_number(last_committed_round);
         let highest_round = self.block_store.highest_round();
         let highest_wave = self.hightest_committable_wave(highest_round);
 
-        let mut sequence = Vec::new();
+        // Undecided leaders may be overwritten by decided leaders in the next wave.
+        let mut sequence = BTreeMap::new();
         for wave in (last_committed_wave + 1)..=highest_wave {
             let leader_round = self.leader_round(wave);
             let decision_round = self.decision_round(wave);
@@ -377,38 +386,42 @@ impl Committer for BaseCommitter {
                 "[{self}] Trying to commit ( \
                     wave: {wave}, \
                     leader_round: {leader_round}, \
-                    last committed round: {last_committed_round} \
+                    last committed wave: {last_committed_wave} \
                 )"
             );
 
             // Check whether the leader(s) has enough support to be skipped or committed.
             let leader = self.elect_leader(leader_round);
-            if let Some(anchor) = self.try_direct_commit(leader, leader_round, decision_round) {
-                match anchor {
-                    // We can direct-commit this leader. We first check the indirect commit rule
-                    // to see if we can commit any past leader.
-                    LeaderStatus::Commit(ref block) => {
-                        tracing::debug!("[{self}] Leader {block} is direct-committed");
-                        let commits = self.try_indirect_commit(last_committed_wave, block.clone());
-                        sequence.extend(commits);
-                    }
-                    // We can safely direct-skip this leader.
-                    LeaderStatus::Skip(leader, round) => {
-                        tracing::debug!(
-                            "[{self}] Leader v{leader} at round {round} is direct-skipped"
-                        );
-                    }
+            let anchor = self.try_direct_commit(leader, leader_round, decision_round);
+            match anchor {
+                // We can direct-commit this leader. We first check the indirect commit rule
+                // to see if we can commit any past leader.
+                LeaderStatus::Commit(ref block) => {
+                    tracing::debug!("[{self}] Leader {block} is direct-committed");
+                    let commits = self.try_indirect_commit(last_committed_wave, block.clone());
+                    sequence.extend(commits.into_iter().map(|x| (x.round(), x)));
                 }
-                self.update_metrics(&[anchor.clone()], "direct");
-                sequence.push(anchor);
-                last_committed_wave = wave;
-            } else {
-                tracing::debug!(
-                    "[{self}] Leader v{leader} at round {leader_round} is still undecided"
-                );
+                // We can safely direct-skip this leader.
+                LeaderStatus::Skip(leader, round) => {
+                    tracing::debug!("[{self}] Leader v{leader} at round {round} is direct-skipped");
+                }
+                // We cannot commit this leader yet. We will try again in the next round.
+                LeaderStatus::Undecided(leader, round) => {
+                    tracing::debug!("[{self}] Leader v{leader} at round {round} is undecided");
+                }
             }
+
+            if anchor.decided() {
+                self.update_metrics(&[anchor.clone()], "direct");
+                last_committed_wave = wave;
+            }
+            sequence.insert(anchor.round(), anchor);
         }
-        sequence
+
+        (
+            sequence.into_values().collect(),
+            self.leader_round(last_committed_wave),
+        )
     }
 
     fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {

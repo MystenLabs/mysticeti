@@ -6,8 +6,9 @@ use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 use crate::{
     block_store::BlockStore,
     committee::Committee,
+    data::Data,
     metrics::Metrics,
-    types::{AuthorityIndex, RoundNumber},
+    types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
 };
 
 use super::{
@@ -80,13 +81,36 @@ pub struct MultiCommitter {
     committers: Vec<BaseCommitter>,
 }
 
+impl MultiCommitter {
+    /// The anchor is the last committed leader of the first committer. We use it to decide
+    /// the leaders of the other committers with lower round numbers.
+    fn find_anchor(
+        &self,
+        pending_queue: &BTreeMap<RoundNumber, Vec<LeaderStatus>>,
+    ) -> Option<Data<StatementBlock>> {
+        for status in pending_queue.values().rev() {
+            if let LeaderStatus::Commit(anchor) = status.first().unwrap() {
+                return Some(anchor.clone());
+            }
+        }
+        None
+    }
+}
+
 impl Committer for MultiCommitter {
-    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
+    type LastCommitted = BlockReference;
+
+    fn try_commit(
+        &self,
+        last_committed: Self::LastCommitted,
+    ) -> (Vec<LeaderStatus>, Self::LastCommitted) {
+        let last_committed_round = last_committed.round().saturating_sub(1);
+
         // Run all committers and collect their output.
         let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committed_round) {
-                tracing::debug!("[{self}] {committer} decided {leader:?}");
+            let (leaders, _) = committer.try_commit(last_committed_round);
+            for leader in leaders {
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -94,14 +118,54 @@ impl Committer for MultiCommitter {
             }
         }
 
-        // Collect all leaders in order, as long as we have all leaders.
-        let mut sequence = Vec::new();
-        for leaders in pending_queue.into_values() {
-            if leaders.len() == self.committers.len() {
-                sequence.extend(leaders);
+        // Ensure all committers have the same number of leaders.
+        for leaders in pending_queue.values() {
+            debug_assert_eq!(leaders.len(), self.committers.len());
+        }
+
+        // Skip already committed leaders.
+        if let Some(mut entry) = pending_queue.first_entry() {
+            entry
+                .get_mut()
+                .retain(|leader| leader.authority() > last_committed.authority);
+        }
+
+        // Try to decide as many past leaders as possible: each leader of round r committed by the
+        // *first* committer decides the leaders of round r-k for *all* committers.
+        if let Some(anchor) = self.find_anchor(&pending_queue) {
+            for (i, committer) in self.committers.iter().enumerate() {
+                let leaders = committer.decide_past_leaders(last_committed_round, anchor.clone());
+                for leader in leaders {
+                    let t = pending_queue.get_mut(&leader.round()).unwrap();
+                    t[i] = leader;
+                }
             }
         }
-        sequence
+
+        // Linearize the sequence of leaders, stopping upon encountering an undecided leader.
+        let mut sequence = Vec::new();
+        let mut last_committed_leader = last_committed;
+        let mut found_undecided = false;
+        for (round, leaders) in pending_queue {
+            for leader in leaders {
+                tracing::debug!("[{self}] decided {leader:?}");
+                if found_undecided {
+                    sequence.push(LeaderStatus::Undecided(leader.authority(), leader.round()));
+                } else {
+                    match leader {
+                        LeaderStatus::Commit(ref block) => {
+                            last_committed_leader = *block.reference();
+                        }
+                        LeaderStatus::Skip(_, _) => {}
+                        LeaderStatus::Undecided(_, _) => {
+                            found_undecided = true;
+                        }
+                    }
+                    sequence.push(leader);
+                }
+            }
+        }
+        (sequence, last_committed_leader)
     }
 
     fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {

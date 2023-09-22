@@ -21,6 +21,7 @@ pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
     Skip(AuthorityIndex, RoundNumber),
+    Undecided(AuthorityIndex, RoundNumber),
 }
 
 impl LeaderStatus {
@@ -28,6 +29,7 @@ impl LeaderStatus {
         match self {
             LeaderStatus::Commit(block) => block.round(),
             LeaderStatus::Skip(_, round) => *round,
+            LeaderStatus::Undecided(_, round) => *round,
         }
     }
 
@@ -35,14 +37,28 @@ impl LeaderStatus {
         match self {
             LeaderStatus::Commit(block) => block.author(),
             LeaderStatus::Skip(authority, _) => *authority,
+            LeaderStatus::Undecided(authority, _) => *authority,
+        }
+    }
+
+    pub fn decided(&self) -> bool {
+        match self {
+            LeaderStatus::Commit(_) => true,
+            LeaderStatus::Skip(_, _) => true,
+            LeaderStatus::Undecided(_, _) => false,
         }
     }
 }
 
 pub trait Committer {
+    type LastCommitted;
+
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered committed leaders.
-    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus>;
+    fn try_commit(
+        &self,
+        last_committed: Self::LastCommitted,
+    ) -> (Vec<LeaderStatus>, Self::LastCommitted);
 
     /// Return list of leaders for the round. Syncer will give those leaders some extra time.
     /// Can return empty vec if round does not have a designated leader.

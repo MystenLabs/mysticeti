@@ -1,11 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::HashMap, fmt::Display, sync::Arc};
+use std::{
+    cmp::{max, min},
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    sync::Arc,
+};
 
-use crate::metrics::Metrics;
 use crate::{block_store::BlockStore, types::AuthorityIndex};
 use crate::{committee::Committee, types::RoundNumber};
+use crate::{metrics::Metrics, types::BlockReference};
 
 use super::{
     multi_committer::{MultiCommitter, MultiCommitterBuilder},
@@ -71,13 +76,21 @@ pub struct PipelinedCommitter {
 }
 
 impl Committer for PipelinedCommitter {
-    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus> {
-        let mut pending_queue = HashMap::new();
+    type LastCommitted = BlockReference;
+
+    fn try_commit(
+        &self,
+        last_committed: Self::LastCommitted,
+    ) -> (Vec<LeaderStatus>, Self::LastCommitted) {
+        let mut pending_queue = BTreeMap::new();
 
         // Try to commit the leaders of a all pipelines.
+        let mut earliest_committed_round = 0;
         for committer in &self.committers {
-            for leader in committer.try_commit(last_committed_round) {
+            let (leaders, _) = committer.try_commit(last_committed);
+            for leader in leaders {
                 tracing::debug!("[{self}] {committer} decided {leader:?}");
+                earliest_committed_round = min(earliest_committed_round, leader.round());
                 pending_queue
                     .entry(leader.round())
                     .or_insert_with(Vec::new)
@@ -85,19 +98,38 @@ impl Committer for PipelinedCommitter {
             }
         }
 
-        // The very first leader to commit has round = wave_length.
-        let mut r = max(self.wave_length, last_committed_round + 1);
+        // Every pipeline should have committed at least one leader.
+        pending_queue
+            .keys()
+            .zip(pending_queue.keys().skip(1))
+            .map(|(a, b)| {
+                debug_assert_eq!(a + 1, *b);
+            });
 
-        // Collect all leaders in order, and stop when we find a gap.
+        // Linearize the sequence of leaders, stopping upon encountering an undecided leader.
         let mut sequence = Vec::new();
-        loop {
-            match pending_queue.remove(&r) {
-                Some(leaders) => sequence.extend(leaders),
-                None => break,
+        let mut last_committed_leader = last_committed;
+        let mut found_undecided = false;
+        for (round, leaders) in pending_queue {
+            for leader in leaders {
+                tracing::debug!("[{self}] decided {leader:?}");
+                if found_undecided {
+                    sequence.push(LeaderStatus::Undecided(leader.authority(), leader.round()));
+                } else {
+                    match leader {
+                        LeaderStatus::Commit(ref block) => {
+                            last_committed_leader = *block.reference();
+                        }
+                        LeaderStatus::Skip(..) => {}
+                        LeaderStatus::Undecided(..) => {
+                            found_undecided = true;
+                        }
+                    }
+                    sequence.push(leader);
+                }
             }
-            r += 1;
         }
-        sequence
+        (sequence, last_committed_leader)
     }
 
     fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {

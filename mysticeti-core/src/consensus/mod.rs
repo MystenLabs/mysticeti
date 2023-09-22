@@ -50,6 +50,26 @@ impl LeaderStatus {
     }
 }
 
+impl PartialEq for LeaderStatus {
+    fn eq(&self, other: &Self) -> bool {
+        (self.round(), self.authority()) == (other.round(), other.authority())
+    }
+}
+
+impl Eq for LeaderStatus {}
+
+impl PartialOrd for LeaderStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LeaderStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.round(), self.authority()).cmp(&(other.round(), other.authority()))
+    }
+}
+
 pub trait Committer {
     type LastCommitted;
 

@@ -106,6 +106,33 @@ impl Committer for MultiCommitter {
     ) -> (Vec<LeaderStatus>, Self::LastCommitted) {
         let last_committed_round = last_committed.round().saturating_sub(1);
 
+        // let mut pending_queue = Vec::new();
+        // for committer in &self.committers {
+        //     let (leaders, _) = committer.try_commit(last_committed_round);
+        //     pending_queue.extend(leaders);
+        // }
+        // pending_queue.sort();
+
+        // //
+        // let mut anchor = None;
+        // for leader in pending_queue.iter().filter(|l| !l.decided()) {
+        //     for l in pending_queue
+        //         .iter()
+        //         .filter(|l| l.round() >= leader.round() + self.wave_length)
+        //     {
+        //         match l {
+        //             LeaderStatus::Commit(block) => {
+        //                 anchor = Some(block.clone());
+        //                 break;
+        //             }
+        //             LeaderStatus::Skip(..) => {}
+        //             LeaderStatus::Undecided(..) => break,
+        //         }
+        //     }
+        // }
+
+        // todo!()
+
         // Run all committers and collect their output.
         let mut pending_queue = BTreeMap::new();
         for committer in &self.committers {

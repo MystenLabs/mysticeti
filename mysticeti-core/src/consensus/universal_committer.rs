@@ -1,27 +1,27 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use crate::{
     block_store::BlockStore,
+    committee::Committee,
+    consensus::base_committer::BaseCommitterOptions,
+    metrics::Metrics,
     types::{AuthorityIndex, BlockReference, RoundNumber},
 };
 
-use super::{base_committer::BaseCommitter, LeaderStatus};
+use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
 
+/// A universal committer uses a collection of committers to commit a sequence of leaders.
+/// It can be configured to use a combination of different commit strategies, including
+/// multi-leaders, backup leaders, and pipelines.
 pub struct UniversalCommitter {
-    committers: Vec<BaseCommitter>,
     block_store: BlockStore,
+    committers: Vec<BaseCommitter>,
 }
 
 impl UniversalCommitter {
-    pub fn new(committers: Vec<BaseCommitter>, block_store: BlockStore) -> Self {
-        assert!(!committers.is_empty());
-        Self {
-            committers,
-            block_store,
-        }
-    }
-
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
@@ -75,5 +75,68 @@ impl UniversalCommitter {
 
         leaders.sort();
         leaders
+    }
+}
+
+pub struct UniversalCommitterBuilder {
+    committee: Arc<Committee>,
+    block_store: BlockStore,
+    metrics: Arc<Metrics>,
+    wave_length: RoundNumber,
+    number_of_leaders: usize,
+    pipeline: bool,
+}
+
+impl UniversalCommitterBuilder {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+        Self {
+            committee,
+            block_store,
+            metrics,
+            wave_length: DEFAULT_WAVE_LENGTH,
+            number_of_leaders: 1,
+            pipeline: false,
+        }
+    }
+
+    pub fn with_wave_length(mut self, wave_length: RoundNumber) -> Self {
+        self.wave_length = wave_length;
+        self
+    }
+
+    pub fn with_number_of_leaders(mut self, number_of_leaders: usize) -> Self {
+        self.number_of_leaders = number_of_leaders;
+        self
+    }
+
+    pub fn with_pipeline(mut self, pipeline: bool) -> Self {
+        self.pipeline = pipeline;
+        self
+    }
+
+    pub fn build(self) -> UniversalCommitter {
+        let mut committers = Vec::new();
+        let pipeline_stages = if self.pipeline { self.wave_length } else { 1 };
+        for round_offset in 0..pipeline_stages {
+            for leader_offset in 0..self.number_of_leaders {
+                let options = BaseCommitterOptions {
+                    wave_length: self.wave_length,
+                    round_offset,
+                    leader_offset: leader_offset as RoundNumber,
+                };
+                let committer = BaseCommitter::new(
+                    self.committee.clone(),
+                    self.block_store.clone(),
+                    self.metrics.clone(),
+                )
+                .with_options(options);
+                committers.push(committer);
+            }
+        }
+
+        UniversalCommitter {
+            block_store: self.block_store,
+            committers,
+        }
     }
 }

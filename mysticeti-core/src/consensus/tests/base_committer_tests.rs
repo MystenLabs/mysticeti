@@ -92,10 +92,12 @@ fn multiple_direct_commit() {
         let leader_round = n as u64 * wave_length;
         if let LeaderStatus::Commit(ref block) = sequence[0] {
             assert_eq!(block.author(), committee.elect_leader(leader_round));
-            last_committed = BlockReference::new_test(block.author(), leader_round);
         } else {
             panic!("Expected a committed leader")
         }
+
+        let max = sequence.iter().max().unwrap();
+        last_committed = BlockReference::new_test(max.authority(), max.round());
     }
 }
 

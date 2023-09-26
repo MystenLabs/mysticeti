@@ -19,6 +19,7 @@ use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
 pub struct UniversalCommitter {
     block_store: BlockStore,
     committers: Vec<BaseCommitter>,
+    metrics: Arc<Metrics>,
 }
 
 impl UniversalCommitter {
@@ -40,10 +41,12 @@ impl UniversalCommitter {
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
+                self.update_metrics(&status, true);
 
                 // If we can't directly decide the leader, try to indirectly decide it.
                 if !status.is_decided() {
                     status = committer.try_indirect_decide(leader, round, &mut leaders);
+                    self.update_metrics(&status, false);
                 }
 
                 // Only one committer can try to decide each leader.
@@ -75,6 +78,21 @@ impl UniversalCommitter {
 
         leaders.sort();
         leaders
+    }
+
+    /// Update metrics.
+    fn update_metrics(&self, leader: &LeaderStatus, direct_decide: bool) {
+        let authority = leader.authority().to_string();
+        let direct_or_indirect = if direct_decide { "direct" } else { "indirect" };
+        let status = match leader {
+            LeaderStatus::Commit(..) => format!("{direct_or_indirect}-commit"),
+            LeaderStatus::Skip(..) => format!("{direct_or_indirect}-skip"),
+            LeaderStatus::Undecided(..) => return,
+        };
+        self.metrics
+            .committed_leaders_total
+            .with_label_values(&[&authority, &status])
+            .inc();
     }
 }
 
@@ -124,12 +142,9 @@ impl UniversalCommitterBuilder {
                     round_offset,
                     leader_offset: leader_offset as RoundNumber,
                 };
-                let committer = BaseCommitter::new(
-                    self.committee.clone(),
-                    self.block_store.clone(),
-                    self.metrics.clone(),
-                )
-                .with_options(options);
+                let committer =
+                    BaseCommitter::new(self.committee.clone(), self.block_store.clone())
+                        .with_options(options);
                 committers.push(committer);
             }
         }
@@ -137,6 +152,7 @@ impl UniversalCommitterBuilder {
         UniversalCommitter {
             block_store: self.block_store,
             committers,
+            metrics: self.metrics,
         }
     }
 }

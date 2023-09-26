@@ -8,7 +8,6 @@ use crate::{
     committee::{Committee, QuorumThreshold, StakeAggregator},
     consensus::MINIMUM_WAVE_LENGTH,
     data::Data,
-    metrics::Metrics,
     types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
 };
 
@@ -49,17 +48,14 @@ pub struct BaseCommitter {
     block_store: BlockStore,
     /// The options used by this committer
     options: BaseCommitterOptions,
-    /// Metrics information
-    metrics: Arc<Metrics>,
 }
 
 impl BaseCommitter {
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore) -> Self {
         Self {
             committee,
             block_store,
             options: BaseCommitterOptions::default(),
-            metrics,
         }
     }
 

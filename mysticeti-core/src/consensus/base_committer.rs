@@ -281,7 +281,7 @@ impl BaseCommitter {
             );
             match anchor {
                 LeaderStatus::Commit(anchor) => {
-                    return self.decide_leader_from_anchor(&anchor, leader, leader_round);
+                    return self.decide_leader_from_anchor(anchor, leader, leader_round);
                 }
                 LeaderStatus::Skip(..) => (),
                 LeaderStatus::Undecided(..) => break,

@@ -241,7 +241,7 @@ fn direct_skip() {
     let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_1_without_leader: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_1
         .into_iter()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
         .collect();
@@ -251,7 +251,7 @@ fn direct_skip() {
     build_dag(
         &committee,
         &mut block_writer,
-        Some(references_1_without_leader),
+        Some(references_without_leader_1),
         decision_round_1,
     );
 
@@ -292,7 +292,7 @@ fn indirect_commit() {
     let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_1_without_leader: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_1
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
@@ -304,15 +304,15 @@ fn indirect_commit() {
         .take(committee.quorum_threshold() as usize)
         .map(|authority| (authority, references_1.clone()))
         .collect();
-    let references_2_with_votes_for_leader_1 =
+    let references_with_votes_for_leader_1 =
         build_dag_layer(connections_with_leader_1, &mut block_writer);
 
     let connections_without_leader_1 = committee
         .authorities()
         .skip(committee.quorum_threshold() as usize)
-        .map(|authority| (authority, references_1_without_leader.clone()))
+        .map(|authority| (authority, references_without_leader_1.clone()))
         .collect();
-    let references_2_without_votes_for_leader_1 =
+    let references_without_votes_for_leader_1 =
         build_dag_layer(connections_without_leader_1, &mut block_writer);
 
     // Only f+1 validators certify the 1st leader.
@@ -321,16 +321,16 @@ fn indirect_commit() {
     let connections_with_votes_for_leader_1 = committee
         .authorities()
         .take(committee.validity_threshold() as usize)
-        .map(|authority| (authority, references_2_with_votes_for_leader_1.clone()))
+        .map(|authority| (authority, references_with_votes_for_leader_1.clone()))
         .collect();
     references_3.extend(build_dag_layer(
         connections_with_votes_for_leader_1,
         &mut block_writer,
     ));
 
-    let references: Vec<_> = references_2_without_votes_for_leader_1
+    let references: Vec<_> = references_without_votes_for_leader_1
         .into_iter()
-        .chain(references_2_with_votes_for_leader_1.into_iter())
+        .chain(references_with_votes_for_leader_1.into_iter())
         .take(committee.quorum_threshold() as usize)
         .collect();
     let connections_without_votes_for_leader_1 = committee
@@ -377,7 +377,6 @@ fn indirect_commit() {
     } else {
         panic!("Expected a committed leader")
     };
-    assert!(false);
 }
 
 /// Commit the first 3 leaders, skip the 4th, and commit the next 3 leaders.
@@ -394,7 +393,7 @@ fn indirect_skip() {
     let references_4 = build_dag(&committee, &mut block_writer, None, leader_round_4);
 
     // Filter out that leader.
-    let references_4_without_leader: Vec<_> = references_4
+    let references_without_leader_4: Vec<_> = references_4
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_4))
@@ -416,7 +415,7 @@ fn indirect_skip() {
     let connections_without_leader_4 = committee
         .authorities()
         .skip(committee.validity_threshold() as usize)
-        .map(|authority| (authority, references_4_without_leader.clone()))
+        .map(|authority| (authority, references_without_leader_4.clone()))
         .collect();
     references_5.extend(build_dag_layer(
         connections_without_leader_4,

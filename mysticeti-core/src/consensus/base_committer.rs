@@ -264,22 +264,24 @@ impl BaseCommitter {
     /// Apply the indirect decision rule to the specified leader to see whether we can indirect-commit
     /// or indirect-skip it.
     #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader, leader_round)))]
-    pub fn try_indirect_decide(
+    pub fn try_indirect_decide<'a>(
         &self,
         leader: AuthorityIndex,
         leader_round: RoundNumber,
-        leaders: &[LeaderStatus],
+        leaders: impl Iterator<Item = &'a LeaderStatus>,
     ) -> LeaderStatus {
         // The anchor is the first committed leader with round higher than the decision round of the
         // target leader. We must stop the iteration upon encountering an undecided leader.
-        let anchors = leaders
-            .iter()
-            .filter(|x| leader_round + self.options.wave_length <= x.round());
+        let anchors = leaders.filter(|x| leader_round + self.options.wave_length <= x.round());
 
         for anchor in anchors {
+            tracing::trace!(
+                "[{self}] Trying to indirect decide {} using anchor {anchor}",
+                format_authority_round(leader, leader_round),
+            );
             match anchor {
                 LeaderStatus::Commit(anchor) => {
-                    return self.decide_leader_from_anchor(anchor, leader, leader_round);
+                    return self.decide_leader_from_anchor(&anchor, leader, leader_round);
                 }
                 LeaderStatus::Skip(..) => (),
                 LeaderStatus::Undecided(..) => break,

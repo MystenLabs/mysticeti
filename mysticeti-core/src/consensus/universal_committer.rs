@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, sync::Arc};
+use std::{cmp::max, collections::VecDeque, sync::Arc};
 
 use crate::{
     block_store::BlockStore,
@@ -32,7 +32,7 @@ impl UniversalCommitter {
         let last_decided_round_authority = (last_decided_round, last_decided.authority);
 
         // Try to decide as many leaders as possible, starting with the highest round.
-        let mut leaders = Vec::new();
+        let mut leaders = VecDeque::new();
         for round in (last_decided_round..=highest_known_round).rev() {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
@@ -51,19 +51,18 @@ impl UniversalCommitter {
 
                 // If we can't directly decide the leader, try to indirectly decide it.
                 if !status.is_decided() {
-                    status = committer.try_indirect_decide(leader, round, &leaders);
+                    status = committer.try_indirect_decide(leader, round, leaders.iter());
                     self.update_metrics(&status, false);
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
-                leaders.push(status);
+                leaders.push_front(status);
             }
         }
 
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
-            .rev()
             .filter(|x| (x.round(), x.authority()) > last_decided_round_authority)
             .take_while(|x| x.is_decided())
             .collect()

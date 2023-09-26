@@ -343,8 +343,9 @@ fn indirect_commit() {
         &mut block_writer,
     ));
 
-    // Add enough blocks to decide the 5th leader (the second leader may be skipped
-    // so we add enough blocks to recursively decide it).
+    // Add enough blocks to decide the 5th leader. The second leader may be skipped
+    // (if it was the vote for the first leader that we removed) so we add enough blocks
+    // to recursively decide it.
     let decision_round_3 = 2 * wave_length + 1;
     build_dag(
         &committee,
@@ -376,6 +377,7 @@ fn indirect_commit() {
     } else {
         panic!("Expected a committed leader")
     };
+    assert!(false);
 }
 
 /// Commit the first 3 leaders, skip the 4th, and commit the next 3 leaders.

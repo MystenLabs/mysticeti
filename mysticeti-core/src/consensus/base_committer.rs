@@ -276,7 +276,7 @@ impl BaseCommitter {
 
         for anchor in anchors {
             tracing::trace!(
-                "[{self}] Trying to indirect decide {} using anchor {anchor}",
+                "[{self}] Trying to indirect-decide {} using anchor {anchor}",
                 format_authority_round(leader, leader_round),
             );
             match anchor {

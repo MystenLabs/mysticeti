@@ -29,7 +29,7 @@ impl UniversalCommitter {
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
         let last_decided_round = last_decided.round();
-        let last_decided_round_authority = (last_decided.authority, last_decided_round);
+        let last_decided_round_authority = (last_decided_round, last_decided.authority);
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = Vec::new();

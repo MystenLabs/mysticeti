@@ -1,14 +1,19 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Display;
+
 use crate::{
     data::Data,
-    types::{AuthorityIndex, RoundNumber, StatementBlock},
+    types::{format_authority_round, AuthorityIndex, RoundNumber, StatementBlock},
 };
 
 pub mod base_committer;
 pub mod linearizer;
 pub mod universal_committer;
+
+#[cfg(test)]
+mod tests;
 
 /// Default wave length for all committers. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
@@ -30,25 +35,25 @@ pub enum LeaderStatus {
 impl LeaderStatus {
     pub fn round(&self) -> RoundNumber {
         match self {
-            LeaderStatus::Commit(block) => block.round(),
-            LeaderStatus::Skip(_, round) => *round,
-            LeaderStatus::Undecided(_, round) => *round,
+            Self::Commit(block) => block.round(),
+            Self::Skip(_, round) => *round,
+            Self::Undecided(_, round) => *round,
         }
     }
 
     pub fn authority(&self) -> AuthorityIndex {
         match self {
-            LeaderStatus::Commit(block) => block.author(),
-            LeaderStatus::Skip(authority, _) => *authority,
-            LeaderStatus::Undecided(authority, _) => *authority,
+            Self::Commit(block) => block.author(),
+            Self::Skip(authority, _) => *authority,
+            Self::Undecided(authority, _) => *authority,
         }
     }
 
     pub fn is_decided(&self) -> bool {
         match self {
-            LeaderStatus::Commit(_) => true,
-            LeaderStatus::Skip(_, _) => true,
-            LeaderStatus::Undecided(_, _) => false,
+            Self::Commit(_) => true,
+            Self::Skip(_, _) => true,
+            Self::Undecided(_, _) => false,
         }
     }
 }
@@ -62,5 +67,15 @@ impl PartialOrd for LeaderStatus {
 impl Ord for LeaderStatus {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (self.round(), self.authority()).cmp(&(other.round(), other.authority()))
+    }
+}
+
+impl Display for LeaderStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Commit(block) => write!(f, "Commit({})", block.reference()),
+            Self::Skip(a, r) => write!(f, "Skip({})", format_authority_round(*a, *r)),
+            Self::Undecided(a, r) => write!(f, "Undecided({})", format_authority_round(*a, *r)),
+        }
     }
 }

@@ -8,7 +8,7 @@ use crate::{
     committee::Committee,
     consensus::base_committer::BaseCommitterOptions,
     metrics::Metrics,
-    types::{AuthorityIndex, BlockReference, RoundNumber},
+    types::{format_authority_round, AuthorityIndex, BlockReference, RoundNumber},
 };
 
 use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
@@ -25,6 +25,7 @@ pub struct UniversalCommitter {
 impl UniversalCommitter {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
+    #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
         let last_decided_round = last_decided.round();
@@ -38,15 +39,21 @@ impl UniversalCommitter {
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;
                 };
+                tracing::debug!(
+                    "Trying to decide {} with {committer}",
+                    format_authority_round(leader, round)
+                );
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
                 self.update_metrics(&status, true);
+                tracing::debug!("Outcome of direct rule: {status}");
 
                 // If we can't directly decide the leader, try to indirectly decide it.
                 if !status.is_decided() {
                     status = committer.try_indirect_decide(leader, round, &mut leaders);
                     self.update_metrics(&status, false);
+                    tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
                 // Only one committer can try to decide each leader.
@@ -96,6 +103,8 @@ impl UniversalCommitter {
     }
 }
 
+/// A builder for a universal committer. By default, the builder creates a single base committer,
+/// that is, a single leader and no pipeline.
 pub struct UniversalCommitterBuilder {
     committee: Arc<Committee>,
     block_store: BlockStore,

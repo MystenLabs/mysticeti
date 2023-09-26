@@ -8,7 +8,7 @@ use crate::{
     committee::{Committee, QuorumThreshold, StakeAggregator},
     consensus::MINIMUM_WAVE_LENGTH,
     data::Data,
-    types::{AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
+    types::{format_authority_round, AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
 };
 
 use super::{LeaderStatus, DEFAULT_WAVE_LENGTH};
@@ -226,8 +226,8 @@ impl BaseCommitter {
                 .all(|include| include.authority != leader)
             {
                 tracing::trace!(
-                    "[{self}] {voting_block:?} is a blame for leader v{leader:?} of round {}",
-                    voting_round - 1
+                    "[{self}] {voting_block:?} is a blame for leader {}",
+                    format_authority_round(leader, voting_round - 1)
                 );
                 if blame_stake_aggregator.add(voter, &self.committee) {
                     return true;
@@ -263,6 +263,7 @@ impl BaseCommitter {
 
     /// Apply the indirect decision rule to the specified leader to see whether we can indirect-commit
     /// or indirect-skip it.
+    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader, leader_round)))]
     pub fn try_indirect_decide(
         &self,
         leader: AuthorityIndex,
@@ -285,18 +286,17 @@ impl BaseCommitter {
             }
         }
 
-        return LeaderStatus::Undecided(leader, leader_round);
+        LeaderStatus::Undecided(leader, leader_round)
     }
 
     /// Apply the direct decision rule to the specified leader to see whether we can direct-commit or
     /// direct-skip it.
+    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader, leader_round)))]
     pub fn try_direct_decide(
         &self,
         leader: AuthorityIndex,
         leader_round: RoundNumber,
     ) -> LeaderStatus {
-        let wave = self.wave_number(leader_round);
-
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;
@@ -307,6 +307,7 @@ impl BaseCommitter {
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
+        let wave = self.wave_number(leader_round);
         let decision_round = self.decision_round(wave);
         let leader_blocks = self
             .block_store
@@ -320,7 +321,10 @@ impl BaseCommitter {
         // There can be at most one leader with enough support for each round, otherwise it means
         // the BFT assumption is broken.
         if leaders_with_enough_support.len() > 1 {
-            panic!("More than one certified block at round {leader_round} from leader {leader}")
+            panic!(
+                "[{self}] More than one certified block for {}",
+                format_authority_round(leader, leader_round)
+            )
         }
 
         leaders_with_enough_support
@@ -333,7 +337,7 @@ impl Display for BaseCommitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "BaseCommitter(L{},R{})",
+            "Committer-L{}-R{}",
             self.options.leader_offset, self.options.round_offset
         )
     }

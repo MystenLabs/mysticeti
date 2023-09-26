@@ -440,6 +440,10 @@ pub fn format_authority_index(i: AuthorityIndex) -> char {
     ('A' as u64 + i) as u8 as char
 }
 
+pub fn format_authority_round(i: AuthorityIndex, r: RoundNumber) -> String {
+    format!("{}{}", format_authority_index(i), r)
+}
+
 impl fmt::Debug for StatementBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)

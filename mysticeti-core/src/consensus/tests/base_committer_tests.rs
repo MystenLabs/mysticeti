@@ -5,7 +5,7 @@ use crate::{
     consensus::{
         universal_committer::UniversalCommitterBuilder, LeaderStatus, DEFAULT_WAVE_LENGTH,
     },
-    test_util::{build_dag, committee, test_metrics, TestBlockWriter},
+    test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
     types::BlockReference,
 };
 
@@ -96,4 +96,301 @@ fn multiple_direct_commit() {
             panic!("Expected a committed leader")
         }
     }
+}
+
+/// Commit 10 leaders in a row (9 of them are committed recursively).
+#[test]
+#[tracing_test::traced_test]
+fn indirect_commit() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let n = 10;
+    let enough_blocks = wave_length * (n + 1) - 1;
+    let mut block_writer = TestBlockWriter::new(&committee);
+    build_dag(&committee, &mut block_writer, None, enough_blocks);
+
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+
+    assert_eq!(sequence.len(), n as usize);
+    for (i, leader_block) in sequence.iter().enumerate() {
+        let leader_round = (i as u64 + 1) * wave_length;
+        if let LeaderStatus::Commit(ref block) = leader_block {
+            assert_eq!(block.author(), committee.elect_leader(leader_round));
+        } else {
+            panic!("Expected a committed leader")
+        };
+    }
+}
+
+/// Do not commit anything if we are still in the first wave.
+#[test]
+#[tracing_test::traced_test]
+fn no_genesis_commit() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let first_commit_round = 2 * wave_length - 1;
+    for r in 0..first_commit_round {
+        let mut block_writer = TestBlockWriter::new(&committee);
+        build_dag(&committee, &mut block_writer, None, r);
+
+        let committer = UniversalCommitterBuilder::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            test_metrics(),
+        )
+        .build();
+
+        let last_committed = BlockReference::new_test(0, 0);
+        let sequence = committer.try_commit(last_committed);
+        tracing::info!("Commit sequence: {sequence:?}");
+        assert!(sequence.is_empty());
+    }
+}
+
+/// We directly skip the leader if it is missing.
+#[test]
+#[tracing_test::traced_test]
+fn no_leader() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks to finish wave 0.
+    let decision_round_0 = wave_length - 1;
+    let references = build_dag(&committee, &mut block_writer, None, decision_round_0);
+
+    // Add enough blocks to reach the decision round of wave 1 (but without its leader).
+    let leader_round_1 = wave_length;
+    let leader_1 = committee.elect_leader(leader_round_1);
+
+    let connections = committee
+        .authorities()
+        .filter(|&authority| authority != leader_1)
+        .map(|authority| (authority, references.clone()));
+    let references = build_dag_layer(connections.collect(), &mut block_writer);
+
+    let decision_round_1 = 2 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(references),
+        decision_round_1,
+    );
+
+    // Ensure no blocks are committed.
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+
+    assert_eq!(sequence.len(), 1);
+    if let LeaderStatus::Skip(leader, round) = sequence[0] {
+        assert_eq!(leader, leader_1);
+        assert_eq!(round, leader_round_1);
+    } else {
+        panic!("Expected to directly skip the leader");
+    }
+}
+
+/// We directly skip the leader if it has enough blame.
+#[test]
+#[tracing_test::traced_test]
+fn direct_skip() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks to reach the leader of wave 1.
+    let leader_round_1 = wave_length;
+    let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+
+    // Filter out that leader.
+    let references_1_without_leader: Vec<_> = references_1
+        .into_iter()
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .collect();
+
+    // Add enough blocks to reach the decision round of wave 1.
+    let decision_round_1 = 2 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(references_1_without_leader),
+        decision_round_1,
+    );
+
+    // Ensure the leader is skipped.
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+
+    assert_eq!(sequence.len(), 1);
+    if let LeaderStatus::Skip(leader, round) = sequence[0] {
+        assert_eq!(leader, committee.elect_leader(leader_round_1));
+        assert_eq!(round, leader_round_1);
+    } else {
+        panic!("Expected to directly skip the leader");
+    }
+}
+
+/// Commit the leaders of wave 1 and 3 while the leader of wave 2 is missing.
+#[test]
+#[tracing_test::traced_test]
+fn indirect_skip() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks to reach the leader of wave 2.
+    let leader_round_2 = 2 * wave_length;
+    let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
+
+    // Filter out that leader.
+    let leader_2 = committee.elect_leader(leader_round_2);
+    let references_2_without_leader: Vec<_> = references_2
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != leader_2)
+        .collect();
+
+    // Create a dag layer where only one authority votes for the leader of wave 2.
+    let mut authorities = committee.authorities();
+    let leader_connection = vec![(authorities.next().unwrap(), references_2)];
+    let non_leader_connections: Vec<_> = authorities
+        .take((committee.quorum_threshold() - 1) as usize)
+        .map(|authority| (authority, references_2_without_leader.clone()))
+        .collect();
+
+    let connections = leader_connection.into_iter().chain(non_leader_connections);
+    let references = build_dag_layer(connections.collect(), &mut block_writer);
+
+    // Add enough blocks to reach the decision round of wave 3.
+    let decision_round_3 = 4 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(references),
+        decision_round_3,
+    );
+
+    // Ensure we commit the leaders of wave 1 and 3
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+    assert_eq!(sequence.len(), 3);
+
+    // Ensure we commit the leader of wave 1.
+    let leader_round_1 = wave_length;
+    let leader_1 = committee.elect_leader(leader_round_1);
+    if let LeaderStatus::Commit(ref block) = sequence[0] {
+        assert_eq!(block.author(), leader_1);
+    } else {
+        panic!("Expected a committed leader")
+    };
+
+    // Ensure we skip the leader of wave 2.
+    let leader_round_2 = 2 * wave_length;
+    if let LeaderStatus::Skip(leader, round) = sequence[1] {
+        assert_eq!(leader, leader_2);
+        assert_eq!(round, leader_round_2);
+    } else {
+        panic!("Expected a skipped leader")
+    }
+
+    // Ensure we commit the leader of wave 3.
+    let leader_round_3 = 3 * wave_length;
+    let leader_3 = committee.elect_leader(leader_round_3);
+    if let LeaderStatus::Commit(ref block) = sequence[2] {
+        assert_eq!(block.author(), leader_3);
+    } else {
+        panic!("Expected a committed leader")
+    }
+}
+
+/// If there is no leader with enough support nor blame, we commit nothing.
+#[test]
+#[tracing_test::traced_test]
+fn undecided() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks to reach the leader of wave 1.
+    let leader_round_1 = wave_length;
+    let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+
+    // Filter out that leader.
+    let references_1_without_leader: Vec<_> = references_1
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .collect();
+
+    // Create a dag layer where only one authority votes for the leader of wave 1.
+    let mut authorities = committee.authorities();
+    let leader_connection = vec![(authorities.next().unwrap(), references_1)];
+    let non_leader_connections: Vec<_> = authorities
+        .take((committee.quorum_threshold() - 1) as usize)
+        .map(|authority| (authority, references_1_without_leader.clone()))
+        .collect();
+
+    let connections = leader_connection.into_iter().chain(non_leader_connections);
+    let references = build_dag_layer(connections.collect(), &mut block_writer);
+
+    // Add enough blocks to reach the decision round of wave 1.
+    let decision_round_1 = 2 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(references),
+        decision_round_1,
+    );
+
+    // Ensure no blocks are committed.
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+    assert!(sequence.is_empty());
 }

@@ -45,3 +45,35 @@ fn direct_commit() {
         }
     }
 }
+
+/// Ensure idempotent replies.
+#[test]
+#[tracing_test::traced_test]
+fn idempotence() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+    for number_of_leaders in 1..committee.len() {
+        let mut block_writer = TestBlockWriter::new(&committee);
+        build_dag(&committee, &mut block_writer, None, 5);
+
+        let committer = UniversalCommitterBuilder::new(
+            committee.clone(),
+            block_writer.into_block_store(),
+            test_metrics(),
+        )
+        .with_wave_length(wave_length)
+        .with_number_of_leaders(number_of_leaders)
+        .build();
+
+        // Commit one block.
+        let last_committed = BlockReference::new_test(0, 0);
+        let committed = committer.try_commit(last_committed);
+
+        // Ensure we don't commit it again.
+        let max = committed.into_iter().max().unwrap();
+        let last_committed = BlockReference::new_test(max.authority(), max.round());
+        let sequence = committer.try_commit(last_committed);
+        tracing::info!("Commit sequence: {sequence:?}");
+        assert!(sequence.is_empty());
+    }
+}

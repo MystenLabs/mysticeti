@@ -55,10 +55,11 @@ fn idempotence() {
 
     // Commit one block.
     let last_committed = BlockReference::new_test(0, 0);
-    let committed = committer.try_commit(last_committed).pop().unwrap();
+    let committed = committer.try_commit(last_committed);
 
     // Ensure we don't commit it again.
-    let last_committed = BlockReference::new_test(committed.authority(), committed.round());
+    let max = committed.into_iter().max().unwrap();
+    let last_committed = BlockReference::new_test(max.authority(), max.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());

@@ -21,14 +21,11 @@ use crate::{
 };
 use crate::{committee::Committee, consensus::LeaderStatus};
 use minibytes::Bytes;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::{
-    cmp::max,
-    collections::{HashSet, VecDeque},
-};
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -341,15 +338,13 @@ impl<H: BlockHandler> Core<H> {
             })
             .collect();
 
-        self.last_commit_leader = max(
-            self.last_commit_leader,
-            sequence
-                .iter()
-                .last()
-                .map(|x| x.reference())
-                .cloned()
-                .unwrap_or_default(),
-        );
+        self.last_commit_leader = sequence
+            .iter()
+            .map(|x| x.reference())
+            .chain(std::iter::once(&self.last_commit_leader))
+            .max()
+            .cloned()
+            .unwrap_or_default();
 
         // todo: should ideally come from execution result of epoch smart contract
         if self.last_commit_leader.round() > self.rounds_in_epoch {

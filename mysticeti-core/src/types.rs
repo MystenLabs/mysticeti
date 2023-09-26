@@ -45,7 +45,7 @@ pub enum InternalEpochStatus {
     SafeToClose,
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
     pub round: RoundNumber,
@@ -91,6 +91,18 @@ pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
 
 const GENESIS_ROUND: RoundNumber = 0;
+
+impl PartialOrd for BlockReference {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BlockReference {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.round, self.authority).cmp(&(other.round, other.authority))
+    }
+}
 
 impl StatementBlock {
     pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
@@ -484,6 +496,14 @@ impl fmt::Display for TransactionLocator {
 impl PartialEq for StatementBlock {
     fn eq(&self, other: &Self) -> bool {
         self.reference == other.reference
+    }
+}
+
+impl Eq for StatementBlock {}
+
+impl std::hash::Hash for StatementBlock {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.reference.hash(state);
     }
 }
 

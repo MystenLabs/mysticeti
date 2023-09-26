@@ -1,23 +1,26 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::{
     data::Data,
     types::{AuthorityIndex, RoundNumber, StatementBlock},
 };
 
-use self::base_committer::BaseCommitter;
-
 pub mod base_committer;
 pub mod linearizer;
-pub mod multi_committer;
-pub mod pipelined_committer;
+pub mod universal_committer;
 
 /// Default wave length for all committers. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
-pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
+pub const DEFAULT_WAVE_LENGTH: RoundNumber = MINIMUM_WAVE_LENGTH;
+
+/// We need at least one leader round, one voting round, and one decision round.
+pub const MINIMUM_WAVE_LENGTH: RoundNumber = 3;
 
 /// The status of every leader output by the committers. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
     Skip(AuthorityIndex, RoundNumber),
@@ -41,7 +44,7 @@ impl LeaderStatus {
         }
     }
 
-    pub fn decided(&self) -> bool {
+    pub fn is_decided(&self) -> bool {
         match self {
             LeaderStatus::Commit(_) => true,
             LeaderStatus::Skip(_, _) => true,
@@ -49,14 +52,6 @@ impl LeaderStatus {
         }
     }
 }
-
-impl PartialEq for LeaderStatus {
-    fn eq(&self, other: &Self) -> bool {
-        (self.round(), self.authority()) == (other.round(), other.authority())
-    }
-}
-
-impl Eq for LeaderStatus {}
 
 impl PartialOrd for LeaderStatus {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -68,19 +63,4 @@ impl Ord for LeaderStatus {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (self.round(), self.authority()).cmp(&(other.round(), other.authority()))
     }
-}
-
-pub trait Committer {
-    type LastCommitted;
-
-    /// Try to commit part of the dag. This function is idempotent and returns a list of
-    /// ordered committed leaders.
-    fn try_commit(
-        &self,
-        last_committed: Self::LastCommitted,
-    ) -> (Vec<LeaderStatus>, Self::LastCommitted);
-
-    /// Return list of leaders for the round. Syncer will give those leaders some extra time.
-    /// Can return empty vec if round does not have a designated leader.
-    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex>;
 }

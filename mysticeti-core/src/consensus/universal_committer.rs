@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::{cmp::max, sync::Arc};
 
 use crate::{
     block_store::BlockStore,
@@ -28,13 +28,13 @@ impl UniversalCommitter {
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
-        let last_decided_round = last_decided.round();
+        let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round_authority = (last_decided_round, last_decided.authority);
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = Vec::new();
         for round in (last_decided_round..=highest_known_round).rev() {
-            for committer in &self.committers {
+            for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;
@@ -56,18 +56,14 @@ impl UniversalCommitter {
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
-                // Only one committer can try to decide each leader.
                 leaders.push(status);
-                break;
             }
         }
-
-        // Sort the leaders by round and authority.
-        leaders.sort();
 
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
+            .rev()
             .filter(|x| (x.round(), x.authority()) > last_decided_round_authority)
             .take_while(|x| x.is_decided())
             .collect()

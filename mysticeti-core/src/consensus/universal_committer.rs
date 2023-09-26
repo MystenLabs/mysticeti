@@ -51,7 +51,7 @@ impl UniversalCommitter {
 
                 // If we can't directly decide the leader, try to indirectly decide it.
                 if !status.is_decided() {
-                    status = committer.try_indirect_decide(leader, round, &mut leaders);
+                    status = committer.try_indirect_decide(leader, round, &leaders);
                     self.update_metrics(&status, false);
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }

@@ -184,7 +184,7 @@ impl BaseCommitter {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
         let potential_certificates: Vec<_> = decision_blocks
             .iter()
-            .filter(|block| self.block_store.linked(&anchor, block))
+            .filter(|block| self.block_store.linked(anchor, block))
             .collect();
 
         // Use those potential certificates to determine which (if any) of the target leader

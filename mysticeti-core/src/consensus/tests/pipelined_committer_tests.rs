@@ -109,10 +109,10 @@ fn multiple_direct_commit() {
     }
 }
 
-/// Commit 10 leaders in a row (9 of them are committed recursively).
+/// Commit 10 leaders in a row (calling the committer after adding them).
 #[test]
 #[tracing_test::traced_test]
-fn indirect_commit() {
+fn indirect_commit_late_call() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -143,6 +143,106 @@ fn indirect_commit() {
             panic!("Expected a committed leader")
         };
     }
+}
+
+/// Commit the first 3 leaders, skip the 4th, and commit the next 3 leaders.
+#[test]
+#[tracing_test::traced_test]
+fn indirect_commit() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks to reach the 1st leader.
+    let leader_round_1 = 1;
+    let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+
+    // Filter out that leader.
+    let references_1_without_leader: Vec<_> = references_1
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .collect();
+
+    // Only 2f+1 validators vote for the 1st leader.
+    let connections_with_leader_1 = committee
+        .authorities()
+        .take(committee.quorum_threshold() as usize)
+        .map(|authority| (authority, references_1.clone()))
+        .collect();
+    let references_2_with_votes_for_leader_1 =
+        build_dag_layer(connections_with_leader_1, &mut block_writer);
+
+    let connections_without_leader_1 = committee
+        .authorities()
+        .skip(committee.quorum_threshold() as usize)
+        .map(|authority| (authority, references_1_without_leader.clone()))
+        .collect();
+    let references_2_without_votes_for_leader_1 =
+        build_dag_layer(connections_without_leader_1, &mut block_writer);
+
+    // Only f+1 validators certify the 1st leader.
+    let mut references_3 = Vec::new();
+
+    let connections_with_votes_for_leader_1 = committee
+        .authorities()
+        .take(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references_2_with_votes_for_leader_1.clone()))
+        .collect();
+    references_3.extend(build_dag_layer(
+        connections_with_votes_for_leader_1,
+        &mut block_writer,
+    ));
+
+    let references: Vec<_> = references_2_without_votes_for_leader_1
+        .into_iter()
+        .chain(references_2_with_votes_for_leader_1.into_iter())
+        .take(committee.quorum_threshold() as usize)
+        .collect();
+    let connections_without_votes_for_leader_1 = committee
+        .authorities()
+        .skip(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references.clone()))
+        .collect();
+    references_3.extend(build_dag_layer(
+        connections_without_votes_for_leader_1,
+        &mut block_writer,
+    ));
+
+    // Add enough blocks to decide the 5th leader (the second leader may be skipped
+    // so we add enough blocks to recursively decide it).
+    let decision_round_3 = 2 * wave_length + 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(references_3),
+        decision_round_3,
+    );
+
+    // Ensure we commit the first 2 leaders.
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .with_wave_length(wave_length)
+    .with_pipeline(true)
+    .build();
+
+    let last_committed = BlockReference::new_test(0, 0);
+    let sequence = committer.try_commit(last_committed);
+    tracing::info!("Commit sequence: {sequence:?}");
+    assert_eq!(sequence.len(), 5);
+
+    // Ensure we commit the first 3 leaders.
+    let leader_round = 1;
+    let leader = committee.elect_leader(leader_round);
+    if let LeaderStatus::Commit(ref block) = sequence[0] {
+        assert_eq!(block.author(), leader);
+    } else {
+        panic!("Expected a committed leader")
+    };
 }
 
 /// Do not commit anything if we are still in the first wave.

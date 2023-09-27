@@ -102,7 +102,7 @@ impl Validator {
             block_handler,
             authority,
             committee.clone(),
-            parameters.rounds_in_epoch(),
+            parameters,
             metrics.clone(),
             wal_file,
             CoreOptions::test(),

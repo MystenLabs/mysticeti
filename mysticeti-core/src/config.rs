@@ -37,11 +37,27 @@ pub struct Identifier {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Parameters {
-    identifiers: Vec<Identifier>,
-    wave_length: RoundNumber,
-    leader_timeout: Duration,
-    rounds_in_epoch: RoundNumber,
-    shutdown_grace_period: Duration,
+    pub identifiers: Vec<Identifier>,
+    pub wave_length: RoundNumber,
+    pub leader_timeout: Duration,
+    pub rounds_in_epoch: RoundNumber,
+    pub shutdown_grace_period: Duration,
+    pub number_of_leaders: usize,
+    pub enable_pipelining: bool,
+}
+
+impl Default for Parameters {
+    fn default() -> Self {
+        Self {
+            identifiers: Vec::new(),
+            wave_length: Self::DEFAULT_WAVE_LENGTH,
+            leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
+            rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
+            shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            number_of_leaders: Self::DEFAULT_NUMBER_OF_LEADERS,
+            enable_pipelining: true,
+        }
+    }
 }
 
 impl Parameters {
@@ -55,6 +71,8 @@ impl Parameters {
     // needs to be sufficiently long to run benchmarks
     pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 3_600_000;
     pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
+
+    pub const DEFAULT_NUMBER_OF_LEADERS: usize = 3;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;
@@ -73,10 +91,7 @@ impl Parameters {
         }
         Self {
             identifiers,
-            wave_length: Self::DEFAULT_WAVE_LENGTH,
-            leader_timeout: Self::DEFAULT_LEADER_TIMEOUT,
-            rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
-            shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            ..Default::default()
         }
     }
 
@@ -87,6 +102,16 @@ impl Parameters {
             id.metrics_address
                 .set_port(id.metrics_address.port() + port_offset);
         }
+        self
+    }
+
+    pub fn with_number_of_leaders(mut self, number_of_leaders: usize) -> Self {
+        self.number_of_leaders = number_of_leaders;
+        self
+    }
+
+    pub fn with_pipeline(mut self, enable_pipelining: bool) -> Self {
+        self.enable_pipelining = enable_pipelining;
         self
     }
 

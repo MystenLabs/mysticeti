@@ -1,4 +1,3 @@
-use crate::consensus::linearizer::CommittedSubDag;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -20,6 +19,7 @@ use crate::{
     consensus::universal_committer::UniversalCommitter,
 };
 use crate::{committee::Committee, consensus::LeaderStatus};
+use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
 use std::collections::{HashSet, VecDeque};
 use std::fs::File;
@@ -63,7 +63,7 @@ impl<H: BlockHandler> Core<H> {
         mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
-        rounds_in_epoch: RoundNumber,
+        parameters: &Parameters,
         metrics: Arc<Metrics>,
         wal_file: File,
         options: CoreOptions,
@@ -126,6 +126,8 @@ impl<H: BlockHandler> Core<H> {
 
         let committer =
             UniversalCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+                .with_number_of_leaders(parameters.number_of_leaders)
+                .with_pipeline(parameters.enable_pipelining)
                 .build();
 
         let mut this = Self {
@@ -144,7 +146,7 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
-            rounds_in_epoch,
+            rounds_in_epoch: parameters.rounds_in_epoch(),
             committer,
         };
 

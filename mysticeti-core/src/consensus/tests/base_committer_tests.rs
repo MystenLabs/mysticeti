@@ -83,6 +83,7 @@ fn multiple_direct_commit() {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
         let sequence = committer.try_commit(last_committed);
@@ -101,10 +102,10 @@ fn multiple_direct_commit() {
     }
 }
 
-/// Commit 10 leaders in a row (9 of them are committed recursively).
+/// Commit 10 leaders in a row (calling the committer after adding them).
 #[test]
 #[tracing_test::traced_test]
-fn indirect_commit() {
+fn direct_commit_late_call() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
@@ -118,6 +119,7 @@ fn indirect_commit() {
         block_writer.into_block_store(),
         test_metrics(),
     )
+    .with_wave_length(wave_length)
     .build();
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -152,6 +154,7 @@ fn no_genesis_commit() {
             block_writer.into_block_store(),
             test_metrics(),
         )
+        .with_wave_length(wave_length)
         .build();
 
         let last_committed = BlockReference::new_test(0, 0);
@@ -174,7 +177,7 @@ fn no_leader() {
     let decision_round_0 = wave_length - 1;
     let references = build_dag(&committee, &mut block_writer, None, decision_round_0);
 
-    // Add enough blocks to reach the decision round of wave 1 (but without its leader).
+    // Add enough blocks to reach the decision round of the first leader (but without the leader).
     let leader_round_1 = wave_length;
     let leader_1 = committee.elect_leader(leader_round_1);
 
@@ -198,6 +201,7 @@ fn no_leader() {
         block_writer.into_block_store(),
         test_metrics(),
     )
+    .with_wave_length(wave_length)
     .build();
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -222,22 +226,22 @@ fn direct_skip() {
 
     let mut block_writer = TestBlockWriter::new(&committee);
 
-    // Add enough blocks to reach the leader of wave 1.
+    // Add enough blocks to reach the first leader.
     let leader_round_1 = wave_length;
     let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_1_without_leader: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_1
         .into_iter()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
         .collect();
 
-    // Add enough blocks to reach the decision round of wave 1.
+    // Add enough blocks to reach the decision round of the first leader.
     let decision_round_1 = 2 * wave_length - 1;
     build_dag(
         &committee,
         &mut block_writer,
-        Some(references_1_without_leader),
+        Some(references_without_leader_1),
         decision_round_1,
     );
 
@@ -247,6 +251,7 @@ fn direct_skip() {
         block_writer.into_block_store(),
         test_metrics(),
     )
+    .with_wave_length(wave_length)
     .build();
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -277,7 +282,7 @@ fn indirect_skip() {
 
     // Filter out that leader.
     let leader_2 = committee.elect_leader(leader_round_2);
-    let references_2_without_leader: Vec<_> = references_2
+    let references_without_leader_2: Vec<_> = references_2
         .iter()
         .cloned()
         .filter(|x| x.authority != leader_2)
@@ -288,7 +293,7 @@ fn indirect_skip() {
     let leader_connection = vec![(authorities.next().unwrap(), references_2)];
     let non_leader_connections: Vec<_> = authorities
         .take((committee.quorum_threshold() - 1) as usize)
-        .map(|authority| (authority, references_2_without_leader.clone()))
+        .map(|authority| (authority, references_without_leader_2.clone()))
         .collect();
 
     let connections = leader_connection.into_iter().chain(non_leader_connections);
@@ -309,6 +314,7 @@ fn indirect_skip() {
         block_writer.into_block_store(),
         test_metrics(),
     )
+    .with_wave_length(wave_length)
     .build();
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -353,29 +359,29 @@ fn undecided() {
 
     let mut block_writer = TestBlockWriter::new(&committee);
 
-    // Add enough blocks to reach the leader of wave 1.
+    // Add enough blocks to reach the first leader.
     let leader_round_1 = wave_length;
     let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_1_without_leader: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_1
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
         .collect();
 
-    // Create a dag layer where only one authority votes for the leader of wave 1.
+    // Create a dag layer where only one authority votes for the first leader.
     let mut authorities = committee.authorities();
     let leader_connection = vec![(authorities.next().unwrap(), references_1)];
     let non_leader_connections: Vec<_> = authorities
         .take((committee.quorum_threshold() - 1) as usize)
-        .map(|authority| (authority, references_1_without_leader.clone()))
+        .map(|authority| (authority, references_without_leader_1.clone()))
         .collect();
 
     let connections = leader_connection.into_iter().chain(non_leader_connections);
     let references = build_dag_layer(connections.collect(), &mut block_writer);
 
-    // Add enough blocks to reach the decision round of wave 1.
+    // Add enough blocks to reach the decision round of the first leader.
     let decision_round_1 = 2 * wave_length - 1;
     build_dag(
         &committee,
@@ -390,6 +396,7 @@ fn undecided() {
         block_writer.into_block_store(),
         test_metrics(),
     )
+    .with_wave_length(wave_length)
     .build();
 
     let last_committed = BlockReference::new_test(0, 0);

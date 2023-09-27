@@ -278,7 +278,7 @@ fn direct_skip() {
     }
 }
 
-/// Commit the first 3 leaders, skip the 4th, and commit the next 3 leaders.
+/// Indirect-commit the first leader.
 #[test]
 #[tracing_test::traced_test]
 fn indirect_commit() {
@@ -354,7 +354,7 @@ fn indirect_commit() {
         decision_round_3,
     );
 
-    // Ensure we commit the first 2 leaders.
+    // Ensure we commit the first leaders.
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
@@ -369,7 +369,6 @@ fn indirect_commit() {
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 5);
 
-    // Ensure we commit the first 3 leaders.
     let leader_round = 1;
     let leader = committee.elect_leader(leader_round);
     if let LeaderStatus::Commit(ref block) = sequence[0] {

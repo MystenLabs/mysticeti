@@ -43,7 +43,7 @@ pub fn committee_and_cores(
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted_epoch_duration(n, None, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+    committee_and_cores_persisted_epoch_duration(n, None, &Parameters::default())
 }
 
 pub fn committee_and_cores_epoch_duration(
@@ -54,7 +54,11 @@ pub fn committee_and_cores_epoch_duration(
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted_epoch_duration(n, None, rounds_in_epoch)
+    let parameters = Parameters {
+        rounds_in_epoch,
+        ..Default::default()
+    };
+    committee_and_cores_persisted_epoch_duration(n, None, &parameters)
 }
 
 pub fn committee_and_cores_persisted(
@@ -65,13 +69,13 @@ pub fn committee_and_cores_persisted(
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted_epoch_duration(n, path, Parameters::DEFAULT_ROUNDS_IN_EPOCH)
+    committee_and_cores_persisted_epoch_duration(n, path, &Parameters::default())
 }
 
 pub fn committee_and_cores_persisted_epoch_duration(
     n: usize,
     path: Option<&Path>,
-    rounds_in_epoch: RoundNumber,
+    parameters: &Parameters,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
@@ -100,7 +104,7 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 block_handler,
                 authority,
                 committee.clone(),
-                rounds_in_epoch,
+                parameters,
                 metrics,
                 wal_file,
                 CoreOptions::test(),

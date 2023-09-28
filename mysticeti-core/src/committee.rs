@@ -64,6 +64,10 @@ impl Committee {
             .map(Authority::stake)
     }
 
+    pub fn validity_threshold(&self) -> Stake {
+        self.validity_threshold + 1
+    }
+
     pub fn quorum_threshold(&self) -> Stake {
         self.quorum_threshold + 1
     }

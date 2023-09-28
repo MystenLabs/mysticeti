@@ -1,50 +1,89 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+use std::fmt::Display;
+
 use crate::{
     data::Data,
-    types::{AuthorityIndex, RoundNumber, StatementBlock},
+    types::{format_authority_round, AuthorityIndex, RoundNumber, StatementBlock},
 };
-
-use self::base_committer::BaseCommitter;
 
 pub mod base_committer;
 pub mod linearizer;
-pub mod multi_committer;
-pub mod pipelined_committer;
+pub mod universal_committer;
+
+#[cfg(test)]
+mod tests;
 
 /// Default wave length for all committers. A longer wave_length increases the chance of committing the leader
 /// under asynchrony at the cost of latency in the common case.
-pub const DEFAULT_WAVE_LENGTH: RoundNumber = BaseCommitter::MINIMUM_WAVE_LENGTH;
+pub const DEFAULT_WAVE_LENGTH: RoundNumber = MINIMUM_WAVE_LENGTH;
+
+/// We need at least one leader round, one voting round, and one decision round.
+pub const MINIMUM_WAVE_LENGTH: RoundNumber = 3;
 
 /// The status of every leader output by the committers. While the core only cares about committed
 /// leaders, providing a richer status allows for easier debugging, testing, and composition with
 /// advanced commit strategies.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
     Skip(AuthorityIndex, RoundNumber),
+    Undecided(AuthorityIndex, RoundNumber),
 }
 
 impl LeaderStatus {
     pub fn round(&self) -> RoundNumber {
         match self {
-            LeaderStatus::Commit(block) => block.round(),
-            LeaderStatus::Skip(_, round) => *round,
+            Self::Commit(block) => block.round(),
+            Self::Skip(_, round) => *round,
+            Self::Undecided(_, round) => *round,
         }
     }
 
     pub fn authority(&self) -> AuthorityIndex {
         match self {
-            LeaderStatus::Commit(block) => block.author(),
-            LeaderStatus::Skip(authority, _) => *authority,
+            Self::Commit(block) => block.author(),
+            Self::Skip(authority, _) => *authority,
+            Self::Undecided(authority, _) => *authority,
+        }
+    }
+
+    pub fn is_decided(&self) -> bool {
+        match self {
+            Self::Commit(_) => true,
+            Self::Skip(_, _) => true,
+            Self::Undecided(_, _) => false,
+        }
+    }
+
+    pub fn into_decided_block(self) -> Option<Data<StatementBlock>> {
+        match self {
+            Self::Commit(block) => Some(block),
+            Self::Skip(..) => None,
+            Self::Undecided(..) => panic!("Decided block is either Commit or Skip"),
         }
     }
 }
 
-pub trait Committer {
-    /// Try to commit part of the dag. This function is idempotent and returns a list of
-    /// ordered committed leaders.
-    fn try_commit(&self, last_committed_round: RoundNumber) -> Vec<LeaderStatus>;
+impl PartialOrd for LeaderStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
-    /// Return list of leaders for the round. Syncer will give those leaders some extra time.
-    /// Can return empty vec if round does not have a designated leader.
-    fn leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex>;
+impl Ord for LeaderStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.round(), self.authority()).cmp(&(other.round(), other.authority()))
+    }
+}
+
+impl Display for LeaderStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Commit(block) => write!(f, "Commit({})", block.reference()),
+            Self::Skip(a, r) => write!(f, "Skip({})", format_authority_round(*a, *r)),
+            Self::Undecided(a, r) => write!(f, "Undecided({})", format_authority_round(*a, *r)),
+        }
+    }
 }

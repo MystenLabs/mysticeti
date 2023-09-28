@@ -5,6 +5,7 @@ use minibytes::Bytes;
 use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -110,5 +111,13 @@ impl<T: fmt::Display> fmt::Display for Data<T> {
 impl<T: PartialEq> PartialEq for Data<T> {
     fn eq(&self, other: &Self) -> bool {
         self.0.t == other.0.t
+    }
+}
+
+impl<T: Eq> Eq for Data<T> {}
+
+impl<T: Hash> Hash for Data<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.t.hash(state)
     }
 }

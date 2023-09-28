@@ -1,7 +1,4 @@
-use crate::block_handler::BlockHandler;
-use crate::consensus::{
-    linearizer::CommittedSubDag, pipelined_committer::PipelinedCommitterBuilder, Committer,
-};
+use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -11,24 +8,24 @@ use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
+use crate::{
+    block_handler::BlockHandler, consensus::universal_committer::UniversalCommitterBuilder,
+};
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use crate::{
     block_store::{
         BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
         WAL_ENTRY_STATE,
     },
-    consensus::pipelined_committer::PipelinedCommitter,
+    consensus::universal_committer::UniversalCommitter,
 };
-use crate::{committee::Committee, consensus::LeaderStatus};
+use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::{
-    cmp::max,
-    collections::{HashSet, VecDeque},
-};
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -38,7 +35,7 @@ pub struct Core<H: BlockHandler> {
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
-    last_commit_round: RoundNumber,
+    last_commit_leader: BlockReference,
     wal_writer: WalWriter,
     block_store: BlockStore,
     pub(crate) metrics: Arc<Metrics>,
@@ -48,7 +45,7 @@ pub struct Core<H: BlockHandler> {
     recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
-    committer: PipelinedCommitter,
+    committer: UniversalCommitter,
 }
 
 pub struct CoreOptions {
@@ -66,7 +63,7 @@ impl<H: BlockHandler> Core<H> {
         mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
-        rounds_in_epoch: RoundNumber,
+        parameters: &Parameters,
         metrics: Arc<Metrics>,
         wal_file: File,
         options: CoreOptions,
@@ -120,10 +117,6 @@ impl<H: BlockHandler> Core<H> {
             own_block_data
         };
         let block_manager = BlockManager::new(block_store.clone(), &committee);
-        let last_commit_round = last_committed_leader
-            .as_ref()
-            .map(BlockReference::round)
-            .unwrap_or_default();
 
         if let Some(state) = state {
             block_handler.recover_state(&state);
@@ -132,7 +125,9 @@ impl<H: BlockHandler> Core<H> {
         let epoch_manager = EpochManager::new();
 
         let committer =
-            PipelinedCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+            UniversalCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
+                .with_number_of_leaders(parameters.number_of_leaders)
+                .with_pipeline(parameters.enable_pipelining)
                 .build();
 
         let mut this = Self {
@@ -143,7 +138,7 @@ impl<H: BlockHandler> Core<H> {
             authority,
             threshold_clock,
             committee,
-            last_commit_round,
+            last_commit_leader: last_committed_leader.unwrap_or_default(),
             wal_writer,
             block_store,
             metrics,
@@ -151,7 +146,7 @@ impl<H: BlockHandler> Core<H> {
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
-            rounds_in_epoch,
+            rounds_in_epoch: parameters.rounds_in_epoch(),
             committer,
         };
 
@@ -335,22 +330,17 @@ impl<H: BlockHandler> Core<H> {
     pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
         let sequence: Vec<_> = self
             .committer
-            .try_commit(self.last_commit_round)
+            .try_commit(self.last_commit_leader)
             .into_iter()
-            .inspect(|leader| tracing::debug!("Decided {leader:?}"))
-            .filter_map(|leader| match leader {
-                LeaderStatus::Commit(block) => Some(block),
-                LeaderStatus::Skip(..) => None,
-            })
+            .filter_map(|leader| leader.into_decided_block())
             .collect();
 
-        self.last_commit_round = max(
-            self.last_commit_round,
-            sequence.iter().last().map_or(0, |x| x.round()),
-        );
+        if let Some(last) = sequence.last() {
+            self.last_commit_leader = *last.reference();
+        }
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_round > self.rounds_in_epoch {
+        if self.last_commit_leader.round() > self.rounds_in_epoch {
             self.epoch_manager.epoch_change_begun();
         }
 
@@ -361,7 +351,8 @@ impl<H: BlockHandler> Core<H> {
         const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 12;
 
         self.block_store.cleanup(
-            self.last_commit_round
+            self.last_commit_leader
+                .round()
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );
 
@@ -376,9 +367,9 @@ impl<H: BlockHandler> Core<H> {
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block
-        if quorum_round > self.last_commit_round.max(period - 1) {
+        if quorum_round > self.last_commit_leader.round().max(period - 1) {
             let leader_round = quorum_round - 1;
-            let leaders = self.committer.leaders(leader_round);
+            let leaders = self.committer.get_leaders(leader_round);
             self.block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)
         } else {

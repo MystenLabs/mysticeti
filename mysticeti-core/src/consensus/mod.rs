@@ -56,6 +56,14 @@ impl LeaderStatus {
             Self::Undecided(_, _) => false,
         }
     }
+
+    pub fn into_decided_block(self) -> Option<Data<StatementBlock>> {
+        match self {
+            Self::Commit(block) => Some(block),
+            Self::Skip(..) => None,
+            Self::Undecided(..) => panic!("Decided block is either Commit or Skip"),
+        }
+    }
 }
 
 impl PartialOrd for LeaderStatus {

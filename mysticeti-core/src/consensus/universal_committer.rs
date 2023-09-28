@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::max, collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
 use crate::{
     block_store::BlockStore,
@@ -28,8 +28,9 @@ impl UniversalCommitter {
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
-        let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
-        let last_decided_round_authority = (last_decided_round, last_decided.authority);
+        // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
+        let last_decided_round = last_decided.round();
+        let last_decided_round_authority = (last_decided.round(), last_decided.authority);
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = VecDeque::new();
@@ -63,8 +64,15 @@ impl UniversalCommitter {
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
-            .filter(|x| (x.round(), x.authority()) > last_decided_round_authority)
+            // Skip all leaders before the last decided round.
+            .skip_while(|x| (x.round(), x.authority()) != last_decided_round_authority)
+            // Skip the last decided leader.
+            .skip(1)
+            // Filter out all the genesis.
+            .filter(|x| x.round() > 0)
+            // Stop the sequence upon encountering an undecided leader.
             .take_while(|x| x.is_decided())
+            .inspect(|x| tracing::debug!("Decided {x}"))
             .collect()
     }
 
@@ -72,14 +80,10 @@ impl UniversalCommitter {
     /// To preserve (theoretical) liveness, we should wait `Delta` time for at least the first leader.
     /// Can return empty vec if round does not have a designated leader.
     pub fn get_leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
-        let mut leaders: Vec<_> = self
-            .committers
+        self.committers
             .iter()
             .filter_map(|committer| committer.elect_leader(round))
-            .collect();
-
-        leaders.sort();
-        leaders
+            .collect()
     }
 
     /// Update metrics.

@@ -1,3 +1,4 @@
+use crate::committee::Committee;
 use crate::crypto::{dummy_signer, Signer};
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -18,7 +19,6 @@ use crate::{
     },
     consensus::universal_committer::UniversalCommitter,
 };
-use crate::{committee::Committee, consensus::LeaderStatus};
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
 use std::collections::{HashSet, VecDeque};
@@ -332,21 +332,12 @@ impl<H: BlockHandler> Core<H> {
             .committer
             .try_commit(self.last_commit_leader)
             .into_iter()
-            .inspect(|leader| tracing::debug!("Decided {leader:?}"))
-            .filter_map(|leader| match leader {
-                LeaderStatus::Commit(block) => Some(block),
-                LeaderStatus::Skip(..) => None,
-                LeaderStatus::Undecided(..) => panic!("Commit sequence does not contain a commit"),
-            })
+            .filter_map(|leader| leader.into_decided_block())
             .collect();
 
-        self.last_commit_leader = sequence
-            .iter()
-            .map(|x| x.reference())
-            .chain(std::iter::once(&self.last_commit_leader))
-            .max()
-            .cloned()
-            .unwrap_or_default();
+        if let Some(last) = sequence.last() {
+            self.last_commit_leader = *last.reference();
+        }
 
         // todo: should ideally come from execution result of epoch smart contract
         if self.last_commit_leader.round() > self.rounds_in_epoch {

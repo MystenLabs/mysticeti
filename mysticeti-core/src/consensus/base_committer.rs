@@ -198,8 +198,7 @@ impl BaseCommitter {
             })
             .collect();
 
-        // There can be at most one certified leader, otherwise it means the BFT assumption
-        // is broken.
+        // There can be at most one certified leader, otherwise it means the BFT assumption is broken.
         if certified_leader_blocks.len() > 1 {
             panic!("More than one certified block at wave {wave} from leader {leader}")
         }

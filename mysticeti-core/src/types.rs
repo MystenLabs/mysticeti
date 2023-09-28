@@ -100,7 +100,7 @@ impl PartialOrd for BlockReference {
 
 impl Ord for BlockReference {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.round, self.authority).cmp(&(other.round, other.authority))
+        (self.round, self.authority, self.digest).cmp(&(other.round, other.authority, self.digest))
     }
 }
 

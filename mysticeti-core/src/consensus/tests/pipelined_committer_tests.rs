@@ -64,8 +64,8 @@ fn idempotence() {
     let committed = committer.try_commit(last_committed);
 
     // Ensure we don't commit it again.
-    let max = committed.into_iter().max().unwrap();
-    let last_committed = BlockReference::new_test(max.authority(), max.round());
+    let last = committed.into_iter().last().unwrap();
+    let last_committed = BlockReference::new_test(last.authority(), last.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());
@@ -104,8 +104,8 @@ fn multiple_direct_commit() {
             panic!("Expected a committed leader")
         }
 
-        let max = sequence.into_iter().max().unwrap();
-        last_committed = BlockReference::new_test(max.authority(), max.round());
+        let last = sequence.into_iter().last().unwrap();
+        last_committed = BlockReference::new_test(last.authority(), last.round());
     }
 }
 

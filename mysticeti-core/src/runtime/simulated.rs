@@ -44,3 +44,18 @@ impl TimeInstant {
 pub fn timestamp_utc() -> Duration {
     SimulatorContext::time()
 }
+
+#[allow(dead_code)]
+pub struct TimeInterval(Duration);
+
+#[allow(dead_code)]
+impl TimeInterval {
+    pub fn new(duration: Duration) -> Self {
+        Self(duration)
+    }
+
+    pub async fn tick(&mut self) -> TimeInstant {
+        sleep(self.0);
+        TimeInstant::now()
+    }
+}

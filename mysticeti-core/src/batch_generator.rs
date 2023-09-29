@@ -30,6 +30,7 @@ impl BatchGenerator {
         transaction_size: usize,
         initial_delay: Duration,
     ) {
+        assert!(transaction_size >= 16 + 8); // 16 bytes timestamp + 8 bytes random
         runtime::Handle::current().spawn(
             Self {
                 sender,
@@ -51,9 +52,10 @@ impl BatchGenerator {
         let mut random: u64 = self.rng.gen(); // 8 bytes
         let zeros = vec![0u8; self.transaction_size - 16 - 8]; // 16 bytes timestamp + 8 bytes random
 
+        let mut interval = runtime::TimeInterval::new(Self::TARGET_BLOCK_INTERVAL);
         runtime::sleep(self.initial_delay).await;
         loop {
-            runtime::sleep(Self::TARGET_BLOCK_INTERVAL).await;
+            interval.tick().await;
 
             let timestamp = timestamp_utc().as_millis().to_le_bytes();
 

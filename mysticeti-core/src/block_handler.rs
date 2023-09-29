@@ -352,7 +352,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         // Record end-to-end latency. The first 8 bytes of the transaction are the timestamp of the
         // transaction submission.
         if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
-            let latency = current_timestamp - tx_submission_timestamp;
+            let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
             let square_latency = latency.as_secs_f64().powf(2.0);
             self.metrics
                 .latency_s

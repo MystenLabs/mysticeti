@@ -1,11 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::committee::{
-    Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
-};
 use crate::config::StorageDir;
-use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
@@ -15,7 +11,15 @@ use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
+use crate::{
+    batch_generator::BatchGenerator,
+    consensus::linearizer::{CommittedSubDag, Linearizer},
+};
 use crate::{block_store::BlockStore, metrics::Metrics};
+use crate::{
+    committee::{Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator},
+    runtime,
+};
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -322,23 +326,42 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
     }
 
     /// Note: these metrics are used to compute performance during benchmarks.
-    fn update_metrics(&self, timestamp: &Duration) {
+    fn update_metrics(
+        &self,
+        block_creation: Option<&TimeInstant>,
+        current_timestamp: Duration,
+        transaction: &Transaction,
+    ) {
+        // Record inter-block latency.
+        if let Some(instant) = block_creation {
+            self.metrics
+                .transaction_committed_latency
+                .observe(instant.elapsed());
+        }
+
+        // Record benchmark start time.
         let time_from_start = self.start_time.elapsed();
         let benchmark_duration = self.metrics.benchmark_duration.get();
         if let Some(delta) = time_from_start.as_secs().checked_sub(benchmark_duration) {
             self.metrics.benchmark_duration.inc_by(delta);
         }
 
-        self.metrics
-            .latency_s
-            .with_label_values(&["default"])
-            .observe(timestamp.as_secs_f64());
+        // Record end-to-end latency. The first 8 bytes of the transaction are the timestamp of the
+        // transaction submission.
+        if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
+            let latency = current_timestamp - tx_submission_timestamp;
 
-        let square_latency = timestamp.as_secs_f64().powf(2.0);
-        self.metrics
-            .latency_squared_s
-            .with_label_values(&["default"])
-            .inc_by(square_latency);
+            self.metrics
+                .latency_s
+                .with_label_values(&["default"])
+                .observe(latency.as_secs_f64());
+
+            let square_latency = latency.as_secs_f64().powf(2.0);
+            self.metrics
+                .latency_squared_s
+                .with_label_values(&["default"])
+                .inc_by(square_latency);
+        }
     }
 }
 
@@ -350,6 +373,8 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
+        let current_timestamp = runtime::timestamp_utc();
+
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);
@@ -368,15 +393,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(instant.elapsed());
                     }
                 }
-                for (locator, _) in block.shared_transactions() {
-                    if let Some(instant) = transaction_time.get(&locator) {
-                        let timestamp = instant.elapsed();
-                        self.update_metrics(&timestamp);
-                        // todo - batch send data points
-                        self.metrics
-                            .transaction_committed_latency
-                            .observe(timestamp);
-                    }
+                for (locator, transaction) in block.shared_transactions() {
+                    self.update_metrics(
+                        transaction_time.get(&locator),
+                        current_timestamp,
+                        transaction,
+                    );
                 }
             }
             // self.committed_dags.push(commit);

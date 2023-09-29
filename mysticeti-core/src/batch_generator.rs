@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::{
+    crypto::AsBytes,
     runtime,
     runtime::timestamp_utc,
     types::{AuthorityIndex, Transaction},
@@ -30,7 +31,7 @@ impl BatchGenerator {
         transaction_size: usize,
         initial_delay: Duration,
     ) {
-        assert!(transaction_size >= 16 + 8); // 16 bytes timestamp + 8 bytes random
+        assert!(transaction_size >= 8 + 8); // 8 bytes timestamp + 8 bytes random
         runtime::Handle::current().spawn(
             Self {
                 sender,
@@ -50,20 +51,20 @@ impl BatchGenerator {
 
         let mut counter = 0;
         let mut random: u64 = self.rng.gen(); // 8 bytes
-        let zeros = vec![0u8; self.transaction_size - 16 - 8]; // 16 bytes timestamp + 8 bytes random
+        let zeros = vec![0u8; self.transaction_size - 8 - 8]; // 8 bytes timestamp + 8 bytes random
 
         let mut interval = runtime::TimeInterval::new(Self::TARGET_BLOCK_INTERVAL);
         runtime::sleep(self.initial_delay).await;
         loop {
             interval.tick().await;
 
-            let timestamp = timestamp_utc().as_millis().to_le_bytes();
+            let timestamp = (timestamp_utc().as_millis() as u64).to_le_bytes();
 
             for _ in 0..transactions_per_100ms {
                 random += counter;
 
                 transaction.clear();
-                transaction.extend_from_slice(&timestamp); // 16 bytes
+                transaction.extend_from_slice(&timestamp); // 8 bytes
                 transaction.extend_from_slice(&random.to_le_bytes()); // 8 bytes
                 transaction.extend_from_slice(&zeros[..]);
 
@@ -76,5 +77,12 @@ impl BatchGenerator {
             }
             block.clear();
         }
+    }
+
+    pub fn extract_timestamp(transaction: &Transaction) -> Option<Duration> {
+        transaction.as_bytes()[0..8]
+            .try_into()
+            .ok()
+            .map(|x| Duration::from_millis(u64::from_le_bytes(x)))
     }
 }

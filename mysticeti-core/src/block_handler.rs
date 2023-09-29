@@ -10,7 +10,6 @@ use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
 use crate::metrics::UtilizationTimerVecExt;
-use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
 use crate::types::{
@@ -19,7 +18,6 @@ use crate::types::{
 use crate::{block_store::BlockStore, metrics::Metrics};
 use minibytes::Bytes;
 use parking_lot::Mutex;
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -274,52 +272,6 @@ impl BlockHandler for TestBlockHandler {
             .expect("Failed to deserialize transaction aggregator state");
         self.transaction_votes.with_state(&transaction_votes);
         self.last_transaction = last_transaction;
-    }
-}
-
-pub struct TransactionGenerator {
-    sender: mpsc::Sender<Vec<Transaction>>,
-    rng: StdRng,
-    transactions_per_100ms: usize,
-    initial_delay: Duration,
-}
-
-impl TransactionGenerator {
-    pub fn start(
-        sender: mpsc::Sender<Vec<Transaction>>,
-        seed: AuthorityIndex,
-        transactions_per_100ms: usize,
-        initial_delay: Duration,
-    ) {
-        let rng = StdRng::seed_from_u64(seed);
-        let this = TransactionGenerator {
-            sender,
-            rng,
-            transactions_per_100ms,
-            initial_delay,
-        };
-        runtime::Handle::current().spawn(this.run());
-    }
-
-    pub async fn run(mut self) {
-        runtime::sleep(self.initial_delay).await;
-        loop {
-            runtime::sleep(Duration::from_millis(100)).await;
-            let mut block = Vec::with_capacity(self.transactions_per_100ms);
-
-            for _ in 0..self.transactions_per_100ms {
-                let mut transaction: Vec<u8> = Vec::with_capacity(REAL_BLOCK_HANDLER_TXN_SIZE);
-                while transaction.len() < REAL_BLOCK_HANDLER_TXN_SIZE {
-                    transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
-                }
-                let transaction = Transaction::new(transaction);
-                block.push(transaction);
-            }
-
-            if self.sender.send(block).await.is_err() {
-                break;
-            }
-        }
     }
 }
 

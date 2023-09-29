@@ -334,9 +334,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
     ) {
         // Record inter-block latency.
         if let Some(instant) = block_creation {
+            let latency = instant.elapsed();
+            self.metrics.transaction_committed_latency.observe(latency);
             self.metrics
-                .transaction_committed_latency
-                .observe(instant.elapsed());
+                .inter_block_latency_s
+                .with_label_values(&["shared"])
+                .observe(latency.as_secs_f64());
         }
 
         // Record benchmark start time.
@@ -350,16 +353,14 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         // transaction submission.
         if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
             let latency = current_timestamp - tx_submission_timestamp;
-
-            self.metrics
-                .latency_s
-                .with_label_values(&["default"])
-                .observe(latency.as_secs_f64());
-
             let square_latency = latency.as_secs_f64().powf(2.0);
             self.metrics
+                .latency_s
+                .with_label_values(&["shared"])
+                .observe(latency.as_secs_f64());
+            self.metrics
                 .latency_squared_s
-                .with_label_values(&["default"])
+                .with_label_values(&["shared"])
                 .inc_by(square_latency);
         }
     }

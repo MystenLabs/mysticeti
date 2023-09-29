@@ -98,6 +98,39 @@ impl RealBlockHandler {
         self.pending_transactions += received.len();
         Some(received)
     }
+
+    /// Expose a metric for certified transactions.
+    #[allow(dead_code)]
+    fn update_metrics(
+        &self,
+        block_creation: Option<&TimeInstant>,
+        transaction: &Transaction,
+        current_timestamp: &Duration,
+    ) {
+        // Record inter-block latency.
+        if let Some(instant) = block_creation {
+            let latency = instant.elapsed();
+            self.metrics.transaction_certified_latency.observe(latency);
+            self.metrics
+                .inter_block_latency_s
+                .with_label_values(&["owned"])
+                .observe(latency.as_secs_f64());
+        }
+
+        // Record end-to-end latency.
+        if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
+            let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+            let square_latency = latency.as_secs_f64().powf(2.0);
+            self.metrics
+                .latency_s
+                .with_label_values(&["owned"])
+                .observe(latency.as_secs_f64());
+            self.metrics
+                .latency_squared_s
+                .with_label_values(&["owned"])
+                .inc_by(square_latency);
+        }
+    }
 }
 
 impl BlockHandler for RealBlockHandler {

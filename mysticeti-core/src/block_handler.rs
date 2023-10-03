@@ -11,14 +11,14 @@ use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
-use crate::{
-    batch_generator::BatchGenerator,
-    consensus::linearizer::{CommittedSubDag, Linearizer},
-};
 use crate::{block_store::BlockStore, metrics::Metrics};
 use crate::{
     committee::{Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator},
     runtime,
+};
+use crate::{
+    consensus::linearizer::{CommittedSubDag, Linearizer},
+    transactions_generator::TransactionGenerator,
 };
 use minibytes::Bytes;
 use parking_lot::Mutex;
@@ -119,18 +119,17 @@ impl RealBlockHandler {
         }
 
         // Record end-to-end latency.
-        if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
-            let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
-            let square_latency = latency.as_secs_f64().powf(2.0);
-            self.metrics
-                .latency_s
-                .with_label_values(&["owned"])
-                .observe(latency.as_secs_f64());
-            self.metrics
-                .latency_squared_s
-                .with_label_values(&["owned"])
-                .inc_by(square_latency);
-        }
+        let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
+        let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+        let square_latency = latency.as_secs_f64().powf(2.0);
+        self.metrics
+            .latency_s
+            .with_label_values(&["owned"])
+            .observe(latency.as_secs_f64());
+        self.metrics
+            .latency_squared_s
+            .with_label_values(&["owned"])
+            .inc_by(square_latency);
     }
 }
 
@@ -385,18 +384,17 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
 
         // Record end-to-end latency. The first 8 bytes of the transaction are the timestamp of the
         // transaction submission.
-        if let Some(tx_submission_timestamp) = BatchGenerator::extract_timestamp(transaction) {
-            let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
-            let square_latency = latency.as_secs_f64().powf(2.0);
-            self.metrics
-                .latency_s
-                .with_label_values(&["shared"])
-                .observe(latency.as_secs_f64());
-            self.metrics
-                .latency_squared_s
-                .with_label_values(&["shared"])
-                .inc_by(square_latency);
-        }
+        let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
+        let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+        let square_latency = latency.as_secs_f64().powf(2.0);
+        self.metrics
+            .latency_s
+            .with_label_values(&["shared"])
+            .observe(latency.as_secs_f64());
+        self.metrics
+            .latency_squared_s
+            .with_label_values(&["shared"])
+            .inc_by(square_latency);
     }
 }
 

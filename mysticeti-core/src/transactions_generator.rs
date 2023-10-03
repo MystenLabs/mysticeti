@@ -12,7 +12,7 @@ use crate::{
     types::{AuthorityIndex, Transaction},
 };
 
-pub struct BatchGenerator {
+pub struct TransactionGenerator {
     sender: mpsc::Sender<Vec<Transaction>>,
     rng: StdRng,
     transactions_per_second: usize,
@@ -20,7 +20,7 @@ pub struct BatchGenerator {
     initial_delay: Duration,
 }
 
-impl BatchGenerator {
+impl TransactionGenerator {
     pub const DEFAULT_TRANSACTION_SIZE: usize = 512;
     const TARGET_BLOCK_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -46,8 +46,6 @@ impl BatchGenerator {
 
     pub async fn run(mut self) {
         let transactions_per_100ms = (self.transactions_per_second + 9) / 10;
-        let mut block = Vec::with_capacity(transactions_per_100ms);
-        let mut transaction = Vec::with_capacity(self.transaction_size);
 
         let mut counter = 0;
         let mut random: u64 = self.rng.gen(); // 8 bytes
@@ -58,31 +56,31 @@ impl BatchGenerator {
         loop {
             interval.tick().await;
 
+            let mut block = Vec::with_capacity(transactions_per_100ms);
             let timestamp = (timestamp_utc().as_millis() as u64).to_le_bytes();
 
             for _ in 0..transactions_per_100ms {
                 random += counter;
 
-                transaction.clear();
+                let mut transaction = Vec::with_capacity(self.transaction_size);
                 transaction.extend_from_slice(&timestamp); // 8 bytes
                 transaction.extend_from_slice(&random.to_le_bytes()); // 8 bytes
                 transaction.extend_from_slice(&zeros[..]);
 
-                block.push(Transaction::new(transaction.clone()));
+                block.push(Transaction::new(transaction));
                 counter += 1;
             }
 
-            if self.sender.send(block.clone()).await.is_err() {
+            if self.sender.send(block).await.is_err() {
                 break;
             }
-            block.clear();
         }
     }
 
-    pub fn extract_timestamp(transaction: &Transaction) -> Option<Duration> {
-        transaction.as_bytes()[0..8]
+    pub fn extract_timestamp(transaction: &Transaction) -> Duration {
+        let bytes = transaction.as_bytes()[0..8]
             .try_into()
-            .ok()
-            .map(|x| Duration::from_millis(u64::from_le_bytes(x)))
+            .expect("Transactions should be at least 8 bytes");
+        Duration::from_millis(u64::from_le_bytes(bytes))
     }
 }

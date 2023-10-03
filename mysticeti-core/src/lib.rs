@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-mod batch_generator;
 pub mod block_handler;
 mod block_manager;
 mod block_store;
@@ -40,6 +39,7 @@ mod synchronizer;
 #[cfg(test)]
 mod test_util;
 mod threshold_clock;
+mod transactions_generator;
 pub mod types;
 pub mod validator;
 mod wal;

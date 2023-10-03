@@ -11,9 +11,9 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
-use crate::batch_generator::BatchGenerator;
 use crate::core::CoreOptions;
 use crate::log::TransactionLog;
+use crate::transactions_generator::TransactionGenerator;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -84,11 +84,11 @@ impl Validator {
                 t.parse::<usize>()
                     .expect("Failed to parse TRANSACTION_SIZE variable")
             })
-            .unwrap_or(BatchGenerator::DEFAULT_TRANSACTION_SIZE);
+            .unwrap_or(TransactionGenerator::DEFAULT_TRANSACTION_SIZE);
 
         tracing::info!("Starting generator with {tps} transactions per second, initial delay {initial_delay} sec");
         let initial_delay = Duration::from_secs(initial_delay);
-        BatchGenerator::start(
+        TransactionGenerator::start(
             block_sender,
             authority,
             tps,

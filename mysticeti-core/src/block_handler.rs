@@ -1,25 +1,27 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::committee::{
-    Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
-};
 use crate::config::StorageDir;
-use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
 use crate::metrics::UtilizationTimerVecExt;
-use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::syncer::CommitObserver;
 use crate::types::{
     AuthorityIndex, BaseStatement, BlockReference, StatementBlock, Transaction, TransactionLocator,
 };
 use crate::{block_store::BlockStore, metrics::Metrics};
+use crate::{
+    committee::{Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator},
+    runtime,
+};
+use crate::{
+    consensus::linearizer::{CommittedSubDag, Linearizer},
+    transactions_generator::TransactionGenerator,
+};
 use minibytes::Bytes;
 use parking_lot::Mutex;
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -95,6 +97,39 @@ impl RealBlockHandler {
         let received = self.receiver.try_recv().ok()?;
         self.pending_transactions += received.len();
         Some(received)
+    }
+
+    /// Expose a metric for certified transactions.
+    /// TODO: This function is currently unused.
+    #[allow(dead_code)]
+    fn update_metrics(
+        &self,
+        block_creation: Option<&TimeInstant>,
+        transaction: &Transaction,
+        current_timestamp: &Duration,
+    ) {
+        // Record inter-block latency.
+        if let Some(instant) = block_creation {
+            let latency = instant.elapsed();
+            self.metrics.transaction_certified_latency.observe(latency);
+            self.metrics
+                .inter_block_latency_s
+                .with_label_values(&["owned"])
+                .observe(latency.as_secs_f64());
+        }
+
+        // Record end-to-end latency.
+        let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
+        let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+        let square_latency = latency.as_secs_f64().powf(2.0);
+        self.metrics
+            .latency_s
+            .with_label_values(&["owned"])
+            .observe(latency.as_secs_f64());
+        self.metrics
+            .latency_squared_s
+            .with_label_values(&["owned"])
+            .inc_by(square_latency);
     }
 }
 
@@ -277,52 +312,6 @@ impl BlockHandler for TestBlockHandler {
     }
 }
 
-pub struct TransactionGenerator {
-    sender: mpsc::Sender<Vec<Transaction>>,
-    rng: StdRng,
-    transactions_per_100ms: usize,
-    initial_delay: Duration,
-}
-
-impl TransactionGenerator {
-    pub fn start(
-        sender: mpsc::Sender<Vec<Transaction>>,
-        seed: AuthorityIndex,
-        transactions_per_100ms: usize,
-        initial_delay: Duration,
-    ) {
-        let rng = StdRng::seed_from_u64(seed);
-        let this = TransactionGenerator {
-            sender,
-            rng,
-            transactions_per_100ms,
-            initial_delay,
-        };
-        runtime::Handle::current().spawn(this.run());
-    }
-
-    pub async fn run(mut self) {
-        runtime::sleep(self.initial_delay).await;
-        loop {
-            runtime::sleep(Duration::from_millis(100)).await;
-            let mut block = Vec::with_capacity(self.transactions_per_100ms);
-
-            for _ in 0..self.transactions_per_100ms {
-                let mut transaction: Vec<u8> = Vec::with_capacity(REAL_BLOCK_HANDLER_TXN_SIZE);
-                while transaction.len() < REAL_BLOCK_HANDLER_TXN_SIZE {
-                    transaction.extend(&self.rng.gen::<[u8; REAL_BLOCK_HANDLER_TXN_GEN_STEP]>());
-                }
-                let transaction = Transaction::new(transaction);
-                block.push(transaction);
-            }
-
-            if self.sender.send(block).await.is_err() {
-                break;
-            }
-        }
-    }
-}
-
 pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
     commit_interpreter: Linearizer,
     transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, H>,
@@ -370,22 +359,41 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
     }
 
     /// Note: these metrics are used to compute performance during benchmarks.
-    fn update_metrics(&self, timestamp: &Duration) {
+    fn update_metrics(
+        &self,
+        block_creation: Option<&TimeInstant>,
+        current_timestamp: Duration,
+        transaction: &Transaction,
+    ) {
+        // Record inter-block latency.
+        if let Some(instant) = block_creation {
+            let latency = instant.elapsed();
+            self.metrics.transaction_committed_latency.observe(latency);
+            self.metrics
+                .inter_block_latency_s
+                .with_label_values(&["shared"])
+                .observe(latency.as_secs_f64());
+        }
+
+        // Record benchmark start time.
         let time_from_start = self.start_time.elapsed();
         let benchmark_duration = self.metrics.benchmark_duration.get();
         if let Some(delta) = time_from_start.as_secs().checked_sub(benchmark_duration) {
             self.metrics.benchmark_duration.inc_by(delta);
         }
 
+        // Record end-to-end latency. The first 8 bytes of the transaction are the timestamp of the
+        // transaction submission.
+        let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
+        let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+        let square_latency = latency.as_secs_f64().powf(2.0);
         self.metrics
             .latency_s
-            .with_label_values(&["default"])
-            .observe(timestamp.as_secs_f64());
-
-        let square_latency = timestamp.as_secs_f64().powf(2.0);
+            .with_label_values(&["shared"])
+            .observe(latency.as_secs_f64());
         self.metrics
             .latency_squared_s
-            .with_label_values(&["default"])
+            .with_label_values(&["shared"])
             .inc_by(square_latency);
     }
 }
@@ -398,6 +406,8 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
+        let current_timestamp = runtime::timestamp_utc();
+
         let committed = self
             .commit_interpreter
             .handle_commit(block_store, committed_leaders);
@@ -416,15 +426,12 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .observe(instant.elapsed());
                     }
                 }
-                for (locator, _) in block.shared_transactions() {
-                    if let Some(instant) = transaction_time.get(&locator) {
-                        let timestamp = instant.elapsed();
-                        self.update_metrics(&timestamp);
-                        // todo - batch send data points
-                        self.metrics
-                            .transaction_committed_latency
-                            .observe(timestamp);
-                    }
+                for (locator, transaction) in block.shared_transactions() {
+                    self.update_metrics(
+                        transaction_time.get(&locator),
+                        current_timestamp,
+                        transaction,
+                    );
                 }
             }
             // self.committed_dags.push(commit);

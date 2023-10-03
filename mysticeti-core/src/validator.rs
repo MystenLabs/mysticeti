@@ -11,9 +11,9 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
-use crate::block_handler::TransactionGenerator;
 use crate::core::CoreOptions;
 use crate::log::TransactionLog;
+use crate::transactions_generator::TransactionGenerator;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -72,19 +72,27 @@ impl Validator {
         let tps = env::var("TPS");
         let tps = tps.map(|t| t.parse::<usize>().expect("Failed to parse TPS variable"));
         let tps = tps.unwrap_or(10);
-        let transactions_per_100ms = (tps + 9) / 10;
         let initial_delay = env::var("INITIAL_DELAY");
         let initial_delay = initial_delay.map(|t| {
             t.parse::<u64>()
                 .expect("Failed to parse INITIAL_DELAY variable")
         });
         let initial_delay = initial_delay.unwrap_or(10);
-        tracing::info!("Starting generator with {transactions_per_100ms} transactions per 100ms, initial delay {initial_delay} sec");
+        let transaction_size = env::var("TRANSACTION_SIZE");
+        let transaction_size = transaction_size
+            .map(|t| {
+                t.parse::<usize>()
+                    .expect("Failed to parse TRANSACTION_SIZE variable")
+            })
+            .unwrap_or(TransactionGenerator::DEFAULT_TRANSACTION_SIZE);
+
+        tracing::info!("Starting generator with {tps} transactions per second, initial delay {initial_delay} sec");
         let initial_delay = Duration::from_secs(initial_delay);
         TransactionGenerator::start(
             block_sender,
             authority,
-            transactions_per_100ms,
+            tps,
+            transaction_size,
             initial_delay,
         );
         let committed_transaction_log =

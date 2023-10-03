@@ -36,6 +36,7 @@ pub struct Metrics {
     pub latency_squared_s: CounterVec,
     pub committed_leaders_total: IntCounterVec,
     pub leader_timeout_total: IntCounter,
+    pub inter_block_latency_s: HistogramVec,
 
     pub block_store_unloaded_blocks: IntCounter,
     pub block_store_loaded_blocks: IntCounter,
@@ -202,6 +203,13 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
+            inter_block_latency_s: register_histogram_vec_with_registry!(
+                "inter_block_latency_s",
+                "Buckets measuring the inter-block latency in seconds",
+                &["workload"],
+                LATENCY_SEC_BUCKETS.to_vec(),
+                registry,
+            ).unwrap(),
             leader_timeout_total: register_int_counter_with_registry!(
                 "leader_timeout_total",
                 "Total number of leader timeouts",

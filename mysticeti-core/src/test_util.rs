@@ -99,6 +99,15 @@ pub fn committee_and_cores_persisted_epoch_duration(
             } else {
                 tempfile::tempfile().unwrap()
             };
+            let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
+            let recovered = BlockStore::open(
+                authority,
+                Arc::new(wal_reader),
+                &wal_writer,
+                metrics.clone(),
+                &committee,
+            );
+
             println!("Opening core {authority}");
             let core = Core::open(
                 block_handler,
@@ -106,9 +115,10 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 committee.clone(),
                 parameters,
                 metrics,
-                wal_file,
-                CoreOptions::test(),
-            );
+                recovered,
+                wal_writer,
+            )
+            .with_options(CoreOptions::test());
             (core, reporter)
         })
         .collect();

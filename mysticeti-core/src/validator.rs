@@ -11,9 +11,8 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
-use crate::core::CoreOptions;
-use crate::log::TransactionLog;
 use crate::transactions_generator::TransactionGenerator;
+use crate::wal::walf;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
     committee::Committee,
@@ -27,6 +26,7 @@ use crate::{
     types::AuthorityIndex,
     wal,
 };
+use crate::{block_store::BlockStore, log::TransactionLog};
 
 pub struct Validator {
     network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler<TransactionLog>>,
@@ -62,11 +62,24 @@ impl Validator {
         let metrics_handle =
             prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
+        // Open the block store.
+        let wal_file =
+            wal::open_file_for_wal(config.storage().wal()).expect("Failed to open wal file");
+        let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
+        let recovered = BlockStore::open(
+            authority,
+            Arc::new(wal_reader),
+            &wal_writer,
+            metrics.clone(),
+            &committee,
+        );
+
         // Boot the validator node.
         let (block_handler, block_sender) = RealBlockHandler::new(
             committee.clone(),
             authority,
             config.storage(),
+            recovered.block_store.clone(),
             metrics.clone(),
         );
         let tps = env::var("TPS");
@@ -104,16 +117,14 @@ impl Validator {
             metrics.clone(),
             committed_transaction_log,
         );
-        let wal_file =
-            wal::open_file_for_wal(config.storage().wal()).expect("Failed to open wal file");
         let core = Core::open(
             block_handler,
             authority,
             committee.clone(),
             parameters,
             metrics.clone(),
-            wal_file,
-            CoreOptions::test(),
+            recovered,
+            wal_writer,
         );
         let network = Network::load(
             parameters,

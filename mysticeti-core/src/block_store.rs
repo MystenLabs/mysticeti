@@ -1,13 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::committee::Committee;
-use crate::consensus::linearizer::CommittedSubDag;
-use crate::data::Data;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{RecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
+use crate::{committee::Committee, types::TransactionLocator};
+use crate::{consensus::linearizer::CommittedSubDag, types::Transaction};
+use crate::{data::Data, types::BaseStatement};
 use minibytes::Bytes;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,24 @@ impl BlockStore {
 
     pub fn block_exists(&self, reference: BlockReference) -> bool {
         self.inner.read().block_exists(reference)
+    }
+
+    pub fn get_transaction(&self, locator: &TransactionLocator) -> Option<Transaction> {
+        self.get_block(*locator.block())
+            .and_then(|block| {
+                block
+                    .statements()
+                    .get(locator.offset() as usize)
+                    .cloned()
+                    .map(|statement| {
+                        if let BaseStatement::Share(transaction) = statement {
+                            Some(transaction)
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .flatten()
     }
 
     pub fn len_expensive(&self) -> usize {

@@ -59,6 +59,7 @@ pub struct RealBlockHandler {
     pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
+    block_store: BlockStore,
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
     pending_transactions: usize,
@@ -71,16 +72,19 @@ impl RealBlockHandler {
         committee: Arc<Committee>,
         authority: AuthorityIndex,
         config: &StorageDir,
+        block_store: BlockStore,
         metrics: Arc<Metrics>,
     ) -> (Self, mpsc::Sender<Vec<Transaction>>) {
         let (sender, receiver) = mpsc::channel(1024);
         let transaction_log = TransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
+
         let this = Self {
             transaction_votes: TransactionAggregator::with_handler(transaction_log),
             transaction_time: Default::default(),
             committee,
             authority,
+            block_store,
             metrics,
             receiver,
             pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
@@ -139,6 +143,7 @@ impl BlockHandler for RealBlockHandler {
         blocks: &[Data<StatementBlock>],
         require_response: bool,
     ) -> Vec<BaseStatement> {
+        let current_timestamp = runtime::timestamp_utc();
         let _timer = self
             .metrics
             .utilization_timer
@@ -162,11 +167,12 @@ impl BlockHandler for RealBlockHandler {
                 self.transaction_votes
                     .process_block(block, response_option, &self.committee);
             for processed_locator in processed {
-                if let Some(instant) = transaction_time.get(&processed_locator) {
-                    self.metrics
-                        .transaction_certified_latency
-                        .observe(instant.elapsed());
-                }
+                let block_creation = transaction_time.get(&processed_locator);
+                let transaction = self
+                    .block_store
+                    .get_transaction(&processed_locator)
+                    .expect("Failed to get certified transaction");
+                self.update_metrics(block_creation, &transaction, &current_timestamp);
             }
         }
         self.metrics

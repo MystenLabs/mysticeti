@@ -317,6 +317,10 @@ impl TransactionLocator {
         Self { block, offset }
     }
 
+    pub fn block(&self) -> &BlockReference {
+        &self.block
+    }
+
     pub fn offset(&self) -> u64 {
         self.offset
     }

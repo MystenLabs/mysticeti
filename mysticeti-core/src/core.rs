@@ -7,7 +7,7 @@ use crate::runtime::timestamp_utc;
 use crate::state::RecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
-use crate::wal::{walf, WalPosition, WalSyncer, WalWriter};
+use crate::wal::{WalPosition, WalSyncer, WalWriter};
 use crate::{
     block_handler::BlockHandler, consensus::universal_committer::UniversalCommitterBuilder,
 };
@@ -22,7 +22,6 @@ use crate::{
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
 use std::collections::{HashSet, VecDeque};
-use std::fs::File;
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -59,23 +58,17 @@ pub enum MetaStatement {
 }
 
 impl<H: BlockHandler> Core<H> {
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         mut block_handler: H,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         parameters: &Parameters,
         metrics: Arc<Metrics>,
-        wal_file: File,
+        recovered: RecoveredState,
+        mut wal_writer: WalWriter,
         options: CoreOptions,
     ) -> Self {
-        let (mut wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let recovered = BlockStore::open(
-            authority,
-            Arc::new(wal_reader),
-            &wal_writer,
-            metrics.clone(),
-            &committee,
-        );
         let RecoveredState {
             block_store,
             last_own_block,
@@ -159,6 +152,11 @@ impl<H: BlockHandler> Core<H> {
         }
 
         this
+    }
+
+    pub fn with_options(mut self, options: CoreOptions) -> Self {
+        self.options = options;
+        self
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -468,12 +466,17 @@ impl<H: BlockHandler> Core<H> {
     }
 }
 
+impl Default for CoreOptions {
+    fn default() -> Self {
+        Self::test()
+    }
+}
+
 impl CoreOptions {
     pub fn test() -> Self {
         Self { fsync: false }
     }
 
-    #[allow(dead_code)]
     pub fn production() -> Self {
         Self { fsync: true }
     }

@@ -7,6 +7,6 @@
     "specs": "m5d.8xlarge",
     "repository": {
         "url": "https://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@github.com/mystenlabs/project-mysticeti.git",
-        "commit": "adapt-orch"
+        "commit": "main"
     }
 }

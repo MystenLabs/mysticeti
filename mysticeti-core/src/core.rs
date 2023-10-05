@@ -58,6 +58,7 @@ pub enum MetaStatement {
 }
 
 impl<H: BlockHandler> Core<H> {
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         mut block_handler: H,
         authority: AuthorityIndex,
@@ -66,6 +67,7 @@ impl<H: BlockHandler> Core<H> {
         metrics: Arc<Metrics>,
         recovered: RecoveredState,
         mut wal_writer: WalWriter,
+        options: CoreOptions,
     ) -> Self {
         let RecoveredState {
             block_store,
@@ -133,7 +135,7 @@ impl<H: BlockHandler> Core<H> {
             wal_writer,
             block_store,
             metrics,
-            options: CoreOptions::default(),
+            options,
             signer: dummy_signer(), // todo - load from config
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
@@ -466,7 +468,7 @@ impl<H: BlockHandler> Core<H> {
 
 impl Default for CoreOptions {
     fn default() -> Self {
-        Self::production()
+        Self::test()
     }
 }
 

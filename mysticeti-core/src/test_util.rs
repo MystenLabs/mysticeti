@@ -117,8 +117,8 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 metrics,
                 recovered,
                 wal_writer,
-            )
-            .with_options(CoreOptions::test());
+                CoreOptions::test(),
+            );
             (core, reporter)
         })
         .collect();

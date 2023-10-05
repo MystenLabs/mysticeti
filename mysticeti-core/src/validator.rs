@@ -11,7 +11,6 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
-use crate::transactions_generator::TransactionGenerator;
 use crate::wal::walf;
 use crate::{
     block_handler::{RealBlockHandler, TestCommitHandler},
@@ -27,6 +26,7 @@ use crate::{
     wal,
 };
 use crate::{block_store::BlockStore, log::TransactionLog};
+use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 
 pub struct Validator {
     network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler<TransactionLog>>,
@@ -125,6 +125,7 @@ impl Validator {
             metrics.clone(),
             recovered,
             wal_writer,
+            CoreOptions::default(),
         );
         let network = Network::load(
             parameters,

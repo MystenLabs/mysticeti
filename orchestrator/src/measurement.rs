@@ -65,11 +65,15 @@ impl Measurement {
             .samples
             .iter()
             .find(|x| x.metric == M::LATENCY_SUM)
-            .map(|x| match x.value {
-                prometheus_parse::Value::Untyped(value) => Duration::from_secs_f64(value),
-                _ => panic!("Unexpected scraped value"),
+            .map(|x| {
+                println!("x: {:?}", x);
+                match x.value {
+                    prometheus_parse::Value::Untyped(value) => Duration::from_secs_f64(value),
+                    _ => panic!("Unexpected scraped value"),
+                }
             })
             .unwrap_or_default();
+        // assert!(false);
 
         let count = parsed
             .samples
@@ -344,28 +348,47 @@ mod test {
             benchmark_duration 30
             # HELP latency_s Total time in seconds to return a response
             # TYPE latency_s histogram
-            latency_s_bucket{workload=transfer_object,le=0.1} 0
-            latency_s_bucket{workload=transfer_object,le=0.25} 0
-            latency_s_bucket{workload=transfer_object,le=0.5} 506
-            latency_s_bucket{workload=transfer_object,le=0.75} 1282
-            latency_s_bucket{workload=transfer_object,le=1} 1693
-            latency_s_bucket{workload="transfer_object",le="1.25"} 1816
-            latency_s_bucket{workload="transfer_object",le="1.5"} 1860
-            latency_s_bucket{workload="transfer_object",le="1.75"} 1860
-            latency_s_bucket{workload="transfer_object",le="2"} 1860
-            latency_s_bucket{workload=transfer_object,le=2.5} 1860
-            latency_s_bucket{workload=transfer_object,le=5} 1860
-            latency_s_bucket{workload=transfer_object,le=10} 1860
-            latency_s_bucket{workload=transfer_object,le=20} 1860
-            latency_s_bucket{workload=transfer_object,le=30} 1860
-            latency_s_bucket{workload=transfer_object,le=60} 1860
-            latency_s_bucket{workload=transfer_object,le=90} 1860
-            latency_s_bucket{workload=transfer_object,le=+Inf} 1860
-            latency_s_sum{workload=transfer_object} 1265.287933130998
-            latency_s_count{workload=transfer_object} 1860
+            latency_s_bucket{workload=owned,le=0.1} 0
+            latency_s_bucket{workload=owned,le=0.25} 0
+            latency_s_bucket{workload=owned,le=0.5} 506
+            latency_s_bucket{workload=owned,le=0.75} 1282
+            latency_s_bucket{workload=owned,le=1} 1693
+            latency_s_bucket{workload="owned",le="1.25"} 1816
+            latency_s_bucket{workload="owned",le="1.5"} 1860
+            latency_s_bucket{workload="owned",le="1.75"} 1860
+            latency_s_bucket{workload="owned",le="2"} 1860
+            latency_s_bucket{workload=owned,le=2.5} 1860
+            latency_s_bucket{workload=owned,le=5} 1860
+            latency_s_bucket{workload=owned,le=10} 1860
+            latency_s_bucket{workload=owned,le=20} 1860
+            latency_s_bucket{workload=owned,le=30} 1860
+            latency_s_bucket{workload=owned,le=60} 1860
+            latency_s_bucket{workload=owned,le=90} 1860
+            latency_s_bucket{workload=owned,le=+Inf} 1860
+            latency_s_sum{workload=owned} 1265.287933130998
+            latency_s_count{workload=owned} 1860
+            latency_s_bucket{workload="shared",le="0.1"} 42380
+            latency_s_bucket{workload="shared",le="0.25"} 104320
+            latency_s_bucket{workload="shared",le="0.5"} 110720
+            latency_s_bucket{workload="shared",le="0.75"} 112780
+            latency_s_bucket{workload="shared",le="1"} 112780
+            latency_s_bucket{workload="shared",le="1.25"} 112780
+            latency_s_bucket{workload="shared",le="1.5"} 112780
+            latency_s_bucket{workload="shared",le="1.75"} 112780
+            latency_s_bucket{workload="shared",le="2"} 112780
+            latency_s_bucket{workload="shared",le="2.5"} 112780
+            latency_s_bucket{workload="shared",le="5"} 112780
+            latency_s_bucket{workload="shared",le="10"} 112780
+            latency_s_bucket{workload="shared",le="20"} 112780
+            latency_s_bucket{workload="shared",le="30"} 112780
+            latency_s_bucket{workload="shared",le="60"} 112780
+            latency_s_bucket{workload="shared",le="90"} 112780
+            latency_s_bucket{workload="shared",le="+Inf"} 112780
+            latency_s_sum{workload="shared"} 15452.286558500084
+            latency_s_count{workload="shared"} 112780
             # HELP latency_squared_s Square of total time in seconds to return a response
             # TYPE latency_squared_s counter
-            latency_squared_s{workload="transfer_object"} 952.8160642745289
+            latency_squared_s{workload="owned"} 952.8160642745289
         "#;
 
         let measurement = Measurement::from_prometheus::<TestProtocolMetrics>(report);

@@ -286,6 +286,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         let install_node_exporter =
             include_str!("../assets/install_node_exporter.sh").replace('\n', "\\n");
         let basic_commands = [
+            "sudo rm -r project-mysticeti",
             "sudo apt-get update",
             "sudo apt-get -y upgrade",
             "sudo apt-get -y autoremove",

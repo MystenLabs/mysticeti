@@ -562,6 +562,14 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                         }
                     }
 
+                    let results_directory = &self.settings.results_dir;
+                    let commit = &self.settings.repository.commit;
+                    let path: PathBuf = [results_directory, &format!("results-{commit}").into()]
+                        .iter()
+                        .collect();
+                    fs::create_dir_all(&path).expect("Failed to create log directory");
+                    aggregator.save(path);
+
                     if elapsed > parameters.duration .as_secs() {
                         break;
                     }
@@ -584,14 +592,6 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                 }
             }
         }
-
-        let results_directory = &self.settings.results_dir;
-        let commit = &self.settings.repository.commit;
-        let path: PathBuf = [results_directory, &format!("results-{commit}").into()]
-            .iter()
-            .collect();
-        fs::create_dir_all(&path).expect("Failed to create log directory");
-        aggregator.save(path);
 
         display::done();
         Ok(aggregator)

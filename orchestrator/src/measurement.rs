@@ -106,9 +106,6 @@ impl Measurement {
     }
 
     /// Compute the tps.
-    /// NOTE: Do not use `self.timestamp` as benchmark duration because some clients may
-    /// be unable to submit transactions passed the first few seconds of the benchmark. This
-    /// may happen as a result of a bad control system withing the nodes.
     pub fn tps(&self, duration: &Duration) -> u64 {
         let tps = self.count.checked_div(duration.as_secs() as usize);
         tps.unwrap_or_default() as u64
@@ -221,16 +218,21 @@ impl<T: BenchmarkType> MeasurementsCollection<T> {
     }
 
     /// Aggregate the benchmark duration of multiple data points by taking the max.
-    pub fn benchmark_duration(&self, label: &Label) -> Duration {
-        self.all_measurements(label)
-            .iter()
-            .filter_map(|x| x.last())
-            .map(|x| x.timestamp)
+    pub fn benchmark_duration(&self) -> Duration {
+        self.labels()
+            .map(|label| {
+                self.all_measurements(label)
+                    .iter()
+                    .filter_map(|x| x.last())
+                    .map(|x| x.timestamp)
+                    .max()
+                    .unwrap_or_default()
+            })
             .max()
             .unwrap_or_default()
     }
 
-    /// Aggregate the tps of multiple data points by taking the sum.
+    /// Aggregate the tps of multiple data points.
     pub fn aggregate_tps(&self, label: &Label) -> u64 {
         let duration = self
             .all_measurements(label)
@@ -243,7 +245,8 @@ impl<T: BenchmarkType> MeasurementsCollection<T> {
             .iter()
             .filter_map(|x| x.last())
             .map(|x| x.tps(&duration))
-            .sum()
+            .max()
+            .unwrap_or_default()
     }
 
     /// Aggregate the average latency of multiple data points by taking the average.
@@ -281,25 +284,28 @@ impl<T: BenchmarkType> MeasurementsCollection<T> {
         let mut table = Table::new();
         table.set_format(display::default_table_format());
 
+        let duration = self.benchmark_duration();
+
         table.set_titles(row![bH2->"Benchmark Summary"]);
         table.add_row(row![b->"Benchmark type:", self.parameters.benchmark_type]);
         table.add_row(row![bH2->""]);
         table.add_row(row![b->"Nodes:", self.parameters.nodes]);
         table.add_row(row![b->"Faults:", self.parameters.faults]);
         table.add_row(row![b->"Load:", format!("{} tx/s", self.parameters.load)]);
+        table.add_row(row![b->"Duration:", format!("{} s", duration.as_secs())]);
 
-        for label in self.labels() {
-            let duration = self.benchmark_duration(label);
+        let mut labels: Vec<_> = self.labels().collect();
+        labels.sort();
+        for label in labels {
             let total_tps = self.aggregate_tps(label);
             let average_latency = self.aggregate_average_latency(label);
             let stdev_latency = self.aggregate_stdev_latency(label);
 
             table.add_row(row![bH2->""]);
-            table.add_row(row![b->label]);
+            table.add_row(row![b->"Workload:", label]);
             table.add_row(row![b->"TPS:", format!("{total_tps} tx/s")]);
             table.add_row(row![b->"Latency (avg):", format!("{} ms", average_latency.as_millis())]);
             table.add_row(row![b->"Latency (stdev):", format!("{} ms", stdev_latency.as_millis())]);
-            table.add_row(row![b->"Duration:", format!("{} s", duration.as_secs())]);
         }
 
         display::newline();

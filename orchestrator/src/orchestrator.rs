@@ -557,8 +557,9 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                         .execute_per_instance(metrics_commands.clone(), CommandContext::default())
                         .await?;
                     for (i, (stdout, _stderr)) in stdio.iter().enumerate() {
-                        let measurement = Measurement::from_prometheus::<P>(stdout);
-                        aggregator.add(i, measurement);
+                        for (label, measurement) in Measurement::from_prometheus::<P>(stdout) {
+                            aggregator.add(i, label,measurement);
+                        }
                     }
 
                     if elapsed > parameters.duration .as_secs() {

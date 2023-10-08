@@ -203,14 +203,18 @@ impl<T: BenchmarkType> BenchmarkParametersGenerator<T> {
         last_result: &MeasurementsCollection<T>,
         new_result: &MeasurementsCollection<T>,
     ) -> bool {
+        let Some(first_label) = new_result.labels().next() else {
+            return false;
+        };
+
         // We consider the system is out of capacity if the latency increased by over 5x with
         // respect to the latest run.
-        let threshold = last_result.aggregate_average_latency() * 5;
-        let high_latency = new_result.aggregate_average_latency() > threshold;
+        let threshold = last_result.aggregate_average_latency(&first_label) * 5;
+        let high_latency = new_result.aggregate_average_latency(&first_label) > threshold;
 
         // Or if the throughput is less than 2/3 of the input rate.
         let last_load = new_result.transaction_load() as u64;
-        let no_throughput_increase = new_result.aggregate_tps() < (2 * last_load / 3);
+        let no_throughput_increase = new_result.aggregate_tps(&first_label) < (2 * last_load / 3);
 
         high_latency || no_throughput_increase
     }
@@ -347,8 +351,8 @@ pub mod test {
 
         // Register a second result (with positive latency). This sets the upper bound.
         let mut collection = MeasurementsCollection::new(&settings, second_parameters);
-        let measurement = Measurement::new_for_test();
-        collection.scrapers.insert(1, vec![measurement]);
+        let (label, measurement) = Measurement::new_for_test();
+        collection.add(1, label, measurement);
         generator.register_result(collection);
 
         // Ensure the next load is between the upper and the lower bound.

@@ -286,6 +286,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         let install_node_exporter =
             include_str!("../assets/install_node_exporter.sh").replace('\n', "\\n");
         let basic_commands = [
+            "sudo rm -r project-mysticeti",
             "sudo apt-get update",
             "sudo apt-get -y upgrade",
             "sudo apt-get -y autoremove",
@@ -556,9 +557,18 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                         .execute_per_instance(metrics_commands.clone(), CommandContext::default())
                         .await?;
                     for (i, (stdout, _stderr)) in stdio.iter().enumerate() {
-                        let measurement = Measurement::from_prometheus::<P>(stdout);
-                        aggregator.add(i, measurement);
+                        for (label, measurement) in Measurement::from_prometheus::<P>(stdout) {
+                            aggregator.add(i, label,measurement);
+                        }
                     }
+
+                    let results_directory = &self.settings.results_dir;
+                    let commit = &self.settings.repository.commit;
+                    let path: PathBuf = [results_directory, &format!("results-{commit}").into()]
+                        .iter()
+                        .collect();
+                    fs::create_dir_all(&path).expect("Failed to create log directory");
+                    aggregator.save(path);
 
                     if elapsed > parameters.duration .as_secs() {
                         break;
@@ -582,14 +592,6 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                 }
             }
         }
-
-        let results_directory = &self.settings.results_dir;
-        let commit = &self.settings.repository.commit;
-        let path: PathBuf = [results_directory, &format!("results-{commit}").into()]
-            .iter()
-            .collect();
-        fs::create_dir_all(&path).expect("Failed to create log directory");
-        aggregator.save(path);
 
         display::done();
         Ok(aggregator)

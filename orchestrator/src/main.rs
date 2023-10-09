@@ -61,9 +61,8 @@ pub enum Operation {
 
     /// Run a benchmark on the specified testbed.
     Benchmark {
-        /// Percentage of shared vs owned objects; 0 means only owned objects and 100 means
-        /// only shared objects.
-        #[clap(long, default_value = "0", global = true)]
+        /// Transaction size in bytes.
+        #[clap(long, default_value = "512", global = true)]
         benchmark_type: String,
 
         /// The committee size to deploy.

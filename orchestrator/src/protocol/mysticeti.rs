@@ -28,22 +28,22 @@ const CARGO_FLAGS: &str = "--release";
 const RUST_FLAGS: &str = "RUSTFLAGS=-C\\ target-cpu=native";
 
 /// The type of benchmarks supported by Mysticeti.
+/// Note that all transactions are interpreted as both owned and shared.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MysticetiBenchmarkType {
-    /// Percentage of shared vs owned objects; 0 means only owned objects and 100 means
-    /// only shared objects.
-    shared_objects_ratio: u16,
+    /// The transaction size in bytes.
+    transaction_size: usize,
 }
 
 impl Debug for MysticetiBenchmarkType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.shared_objects_ratio)
+        write!(f, "{}", self.transaction_size)
     }
 }
 
 impl Display for MysticetiBenchmarkType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}% shared objects", self.shared_objects_ratio)
+        write!(f, "{}B transactions", self.transaction_size)
     }
 }
 
@@ -52,7 +52,7 @@ impl FromStr for MysticetiBenchmarkType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self {
-            shared_objects_ratio: s.parse::<u16>()?.min(100),
+            transaction_size: s.parse::<usize>()?,
         })
     }
 }
@@ -116,7 +116,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
     fn node_command<I>(
         &self,
         instances: I,
-        _parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
+        parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
     ) -> Vec<(Instance, String)>
     where
         I: IntoIterator<Item = Instance>,
@@ -157,7 +157,9 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                     ),
                 ]
                 .join(" ");
-                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &run].join("\\n");
+                let tps = format!("export TPS={}", parameters.load / parameters.nodes);
+                let tx_size = format!("export TRANSACTION_SIZE={}", parameters.benchmark_type.transaction_size);
+                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &tps, &tx_size, &run].join("\\n");
                 let command = format!("echo -e '{command}' > mysticeti-start.sh && chmod +x mysticeti-start.sh && ./mysticeti-start.sh");
 
                 (instance, command)

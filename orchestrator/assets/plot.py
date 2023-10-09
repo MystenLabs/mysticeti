@@ -98,17 +98,17 @@ def sec_major_formatter(x, pos):
 
 
 class PlotParameters:
-    def __init__(self, shared_objects_ratio, nodes, faults, specs=None, commit=None):
+    def __init__(self, transactions_size, nodes, faults, specs=None, commit=None):
         self.nodes = nodes
         self.faults = faults
-        self.shared_objects_ratio = shared_objects_ratio
+        self.transactions_size = transactions_size
         self.specs = specs
         self.commit = commit
 
 
 class MeasurementId:
     def __init__(self, measurement, max_latency=None):
-        self.shared_objects_ratio = measurement['parameters']['benchmark_type']['shared_objects_ratio']
+        self.transactions_size = measurement['parameters']['benchmark_type']['transactions_size']
         self.nodes = measurement['parameters']['nodes']
         if 'Permanent' in measurement['parameters']['faults']:
             self.faults = measurement['parameters']['faults']['Permanent']['faults']
@@ -139,11 +139,11 @@ class Plotter:
         if plot_type in [PlotType.L_GRAPH, PlotType.HEALTH]:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.nodes} nodes{f}'
-            return f'{l} - {id.shared_objects_ratio}% shared objects'
+            return f'{l} - {id.transactions_size}% shared objects'
         elif plot_type == PlotType.SCALABILITY:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.max_latency}s latency cap{f}'
-            return f'{l} - {id.shared_objects_ratio}% shared objects'
+            return f'{l} - {id.transactions_size}% shared objects'
         else:
             return None
 
@@ -174,13 +174,13 @@ class Plotter:
 
         if plot_type == PlotType.L_GRAPH:
             legend_anchor, legend_location = (0, 1), 'upper left'
-            plot_name = f'latency-{self.parameters.shared_objects_ratio}'
+            plot_name = f'latency-{self.parameters.transactions_size}'
         elif plot_type == PlotType.HEALTH:
             legend_anchor, legend_location = (0, 1), 'upper left'
-            plot_name = f'health-{self.parameters.shared_objects_ratio}'
+            plot_name = f'health-{self.parameters.transactions_size}'
         elif plot_type == PlotType.SCALABILITY:
             legend_anchor, legend_location = (0, 0), 'lower left'
-            plot_name = f'scalability-{self.parameters.shared_objects_ratio}'
+            plot_name = f'scalability-{self.parameters.transactions_size}'
         elif plot_type == PlotType.INSPECT_TPS:
             plot_name = f'inspect-tps-{id}'
         elif plot_type == PlotType.INSPECT_LATENCY:
@@ -239,15 +239,15 @@ class Plotter:
 
         return measurements
 
-    def _file_format(self, shared_objects_ratio, faults, nodes, load):
-        return f'measurements-{shared_objects_ratio}-{faults}-{nodes}-{load}.json'
+    def _file_format(self, transactions_size, faults, nodes, load):
+        return f'measurements-{transactions_size}-{faults}-{nodes}-{load}.json'
 
     def plot_latency_throughput(self):
         plot_lines_data = []
-        shared_objects_ratio = self.parameters.shared_objects_ratio
+        transactions_size = self.parameters.transactions_size
         for n in self.parameters.nodes:
             for f in self.parameters.faults:
-                filename = self._file_format(shared_objects_ratio, f, n, '*')
+                filename = self._file_format(transactions_size, f, n, '*')
                 plot_lines_data += [self._load_measurement_data(filename)]
 
         plot_data = []
@@ -271,10 +271,10 @@ class Plotter:
 
     def plot_health(self):
         plot_lines_data = []
-        shared_objects_ratio = self.parameters.shared_objects_ratio
+        transactions_size = self.parameters.transactions_size
         for n in self.parameters.nodes:
             for f in self.parameters.faults:
-                filename = self._file_format(shared_objects_ratio, f, n, '*')
+                filename = self._file_format(transactions_size, f, n, '*')
                 plot_lines_data += [self._load_measurement_data(filename)]
 
         plot_data = []
@@ -294,13 +294,13 @@ class Plotter:
 
     def plot_scalability(self, max_latencies):
         plot_lines_data = []
-        shared_objects_ratio = self.parameters.shared_objects_ratio
+        transactions_size = self.parameters.transactions_size
         for f in self.parameters.faults:
             for l in max_latencies:
                 filenames = []
                 for n in self.parameters.nodes:
                     filename = self._file_format(
-                        shared_objects_ratio, f, n, '*'
+                        transactions_size, f, n, '*'
                     )
                     measurements = self._load_measurement_data(filename)
                     measurements = [
@@ -425,8 +425,12 @@ if __name__ == "__main__":
         '--dir', default='./', help='Data directory'
     )
     parser.add_argument(
-        '--shared-objects-ratio', nargs='+', type=int, default=[0, 100],
-        help='The ratio of shared objects to plot (in separate graphs)'
+        '--transactions-size', nargs='+', type=int, default=[512],
+        help='The size of each transaction in the benchmark'
+    )
+    parser.add_argument(
+        '--workload', nargs='+', type=int, default=["owned", "shared"],
+        help='The type of object transaction (owned or shared)'
     )
     parser.add_argument(
         '--committee', nargs='+', type=int, default=[4],
@@ -455,7 +459,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    for r in args.shared_objects_ratio:
+    for r in args.transactions_size:
         parameters = PlotParameters(r, args.committee, args.faults)
         plotter = Plotter(
             args.dir, parameters, args.y_max, args.legend_columns, median=False

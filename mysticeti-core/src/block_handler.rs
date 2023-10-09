@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::config::StorageDir;
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
@@ -16,6 +15,7 @@ use crate::{
     committee::{Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator},
     runtime,
 };
+use crate::{config::StorageDir, crypto::AsBytes};
 use crate::{
     consensus::linearizer::{CommittedSubDag, Linearizer},
     transactions_generator::TransactionGenerator,
@@ -62,10 +62,11 @@ pub struct RealBlockHandler {
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
-    pending_transactions: usize,
+    pending_transactions_bytes: usize,
 }
 
-const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
+// The max block size is dilated by the WAL entry size.
+const SOFT_MAX_PROPOSED_PER_BLOCK: usize = crate::wal::MAX_ENTRY_SIZE / 4;
 
 impl RealBlockHandler {
     pub fn new(
@@ -87,7 +88,7 @@ impl RealBlockHandler {
             block_store,
             metrics,
             receiver,
-            pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
+            pending_transactions_bytes: 0, // todo - need to initialize correctly when loaded from disk
         };
         (this, sender)
     }
@@ -95,11 +96,12 @@ impl RealBlockHandler {
 
 impl RealBlockHandler {
     fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
-        if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
+        if self.pending_transactions_bytes >= SOFT_MAX_PROPOSED_PER_BLOCK {
             return None;
         }
         let received = self.receiver.try_recv().ok()?;
-        self.pending_transactions += received.len();
+        self.pending_transactions_bytes +=
+            received.iter().map(|x| x.as_bytes().len()).sum::<usize>();
         Some(received)
     }
 
@@ -183,7 +185,10 @@ impl BlockHandler for RealBlockHandler {
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         // todo - this is not super efficient
-        self.pending_transactions -= block.shared_transactions().count();
+        self.pending_transactions_bytes -= block
+            .shared_transactions()
+            .map(|(_, x)| x.as_bytes().len())
+            .sum::<usize>();
         let mut transaction_time = self.transaction_time.lock();
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());

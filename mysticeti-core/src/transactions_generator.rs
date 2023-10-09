@@ -45,8 +45,7 @@ impl TransactionGenerator {
     }
 
     pub async fn run(mut self) {
-        // The max block size is dilated by the WAL entry size (we leave 100 bytes for serialization
-        // overhead). Exceeding this limit will cause the block to be rejected by the validator.
+        // The max block size is dilated by the WAL entry size.
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
         let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 4) / self.transaction_size;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
@@ -74,10 +73,10 @@ impl TransactionGenerator {
                 counter += 1;
 
                 if block.len() >= max_block_size {
-                    if self.sender.send(block).await.is_err() {
+                    if self.sender.send(block.clone()).await.is_err() {
                         return;
                     }
-                    block = Vec::with_capacity(target_block_size)
+                    block.clear();
                 }
             }
 

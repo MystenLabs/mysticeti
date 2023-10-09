@@ -16,22 +16,28 @@ from itertools import cycle
 # the following dependencies: `pip install matplotlib`.
 
 
-def aggregate_tps(measurement, i=-1):
+def aggregate_tps(measurement, workload, i=-1):
+    if workload not in measurement:
+        return 0
+    
     max_duration = 0
-    for data in measurement['scrapers'].values():
+    for data in measurement[workload]['scrapers'].values():
         duration = float(data[i]['timestamp']['secs'])
         max_duration = max(duration, max_duration)
 
     tps = []
-    for data in measurement['scrapers'].values():
+    for data in measurement[workload]['scrapers'].values():
         count = float(data[i]['count'])
         tps += [(count / max_duration) if max_duration != 0 else 0]
     return sum(tps)
 
 
-def aggregate_average_latency(measurement, i=-1):
+def aggregate_average_latency(measurement, workload, i=-1):
+    if workload not in measurement:
+        return 0
+     
     latency = []
-    for data in measurement['scrapers'].values():
+    for data in measurement[workload]['scrapers'].values():
         last = data[i]
         count = float(last['count'])
         total = float(last['sum']['secs'])
@@ -39,9 +45,12 @@ def aggregate_average_latency(measurement, i=-1):
     return sum(latency) / len(latency) if latency else 0
 
 
-def aggregate_stdev_latency(measurement, i=-1):
+def aggregate_stdev_latency(measurement, workload, i=-1):
+    if workload not in measurement:
+        return 0
+     
     stdev = []
-    for data in measurement['scrapers'].values():
+    for data in measurement[workload]['scrapers'].values():
         last = data[i]
         count = float(last['count'])
         if count == 0:
@@ -53,9 +62,12 @@ def aggregate_stdev_latency(measurement, i=-1):
     return max(stdev)
 
 
-def aggregate_p_latency(measurement, p=50, i=-1):
+def aggregate_p_latency(measurement, workload, p=50, i=-1):
+    if workload not in measurement:
+        return 0
+     
     latency = []
-    for data in measurement['scrapers'].values():
+    for data in measurement[workload]['scrapers'].values():
         last = data[i]
         count = float(last['count'])
         buckets = [(float(l), c) for l, c in last['buckets'].items()]
@@ -98,17 +110,17 @@ def sec_major_formatter(x, pos):
 
 
 class PlotParameters:
-    def __init__(self, transactions_size, nodes, faults, specs=None, commit=None):
+    def __init__(self, transaction_size, nodes, faults, specs=None, commit=None):
         self.nodes = nodes
         self.faults = faults
-        self.transactions_size = transactions_size
+        self.transaction_size = transaction_size
         self.specs = specs
         self.commit = commit
 
 
 class MeasurementId:
     def __init__(self, measurement, max_latency=None):
-        self.transactions_size = measurement['parameters']['benchmark_type']['transactions_size']
+        self.transaction_size = measurement['parameters']['benchmark_type']['transaction_size']
         self.nodes = measurement['parameters']['nodes']
         if 'Permanent' in measurement['parameters']['faults']:
             self.faults = measurement['parameters']['faults']['Permanent']['faults']
@@ -139,11 +151,11 @@ class Plotter:
         if plot_type in [PlotType.L_GRAPH, PlotType.HEALTH]:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.nodes} nodes{f}'
-            return f'{l} - {id.transactions_size}% shared objects'
+            return f'{l} - {id.transaction_size}% shared objects'
         elif plot_type == PlotType.SCALABILITY:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.max_latency}s latency cap{f}'
-            return f'{l} - {id.transactions_size}% shared objects'
+            return f'{l} - {id.transaction_size}% shared objects'
         else:
             return None
 
@@ -174,13 +186,13 @@ class Plotter:
 
         if plot_type == PlotType.L_GRAPH:
             legend_anchor, legend_location = (0, 1), 'upper left'
-            plot_name = f'latency-{self.parameters.transactions_size}'
+            plot_name = f'latency-{self.parameters.transaction_size}'
         elif plot_type == PlotType.HEALTH:
             legend_anchor, legend_location = (0, 1), 'upper left'
-            plot_name = f'health-{self.parameters.transactions_size}'
+            plot_name = f'health-{self.parameters.transaction_size}'
         elif plot_type == PlotType.SCALABILITY:
             legend_anchor, legend_location = (0, 0), 'lower left'
-            plot_name = f'scalability-{self.parameters.transactions_size}'
+            plot_name = f'scalability-{self.parameters.transaction_size}'
         elif plot_type == PlotType.INSPECT_TPS:
             plot_name = f'inspect-tps-{id}'
         elif plot_type == PlotType.INSPECT_LATENCY:
@@ -239,15 +251,15 @@ class Plotter:
 
         return measurements
 
-    def _file_format(self, transactions_size, faults, nodes, load):
-        return f'measurements-{transactions_size}-{faults}-{nodes}-{load}.json'
+    def _file_format(self, transaction_size, faults, nodes, load):
+        return f'measurements-{transaction_size}-{faults}-{nodes}-{load}.json'
 
-    def plot_latency_throughput(self):
+    def plot_latency_throughput(self, workload):
         plot_lines_data = []
-        transactions_size = self.parameters.transactions_size
+        transaction_size = self.parameters.transaction_size
         for n in self.parameters.nodes:
             for f in self.parameters.faults:
-                filename = self._file_format(transactions_size, f, n, '*')
+                filename = self._file_format(transaction_size, f, n, '*')
                 plot_lines_data += [self._load_measurement_data(filename)]
 
         plot_data = []
@@ -255,13 +267,13 @@ class Plotter:
             x_values, y_values, e_values = [], [], []
             measurements.sort(key=lambda x: x['parameters']['load'])
             for measurement in measurements:
-                x_values += [aggregate_tps(measurement)]
+                x_values += [aggregate_tps(measurement, workload)]
                 if self.median:
-                    y_values += [aggregate_p_latency(measurement, p=50)]
-                    e_values += [aggregate_p_latency(measurement, p=75)]
+                    y_values += [aggregate_p_latency(measurement, workload, p=50)]
+                    e_values += [aggregate_p_latency(measurement, workload, p=75)]
                 else:
-                    y_values += [aggregate_average_latency(measurement)]
-                    e_values += [aggregate_stdev_latency(measurement)]
+                    y_values += [aggregate_average_latency(measurement, workload)]
+                    e_values += [aggregate_stdev_latency(measurement, workload)]
 
             if x_values:
                 id = MeasurementId(measurements[0])
@@ -269,12 +281,12 @@ class Plotter:
 
         self._plot(plot_data, PlotType.L_GRAPH)
 
-    def plot_health(self):
+    def plot_health(self, workload):
         plot_lines_data = []
-        transactions_size = self.parameters.transactions_size
+        transaction_size = self.parameters.transaction_size
         for n in self.parameters.nodes:
             for f in self.parameters.faults:
-                filename = self._file_format(transactions_size, f, n, '*')
+                filename = self._file_format(transaction_size, f, n, '*')
                 plot_lines_data += [self._load_measurement_data(filename)]
 
         plot_data = []
@@ -283,7 +295,7 @@ class Plotter:
             measurements.sort(key=lambda x: x['parameters']['load'])
             for measurement in measurements:
                 x_values += [measurement['parameters']['load']]
-                y_values += [aggregate_tps(measurement)]
+                y_values += [aggregate_tps(measurement, workload)]
                 e_values += [0]
 
             if x_values:
@@ -292,23 +304,23 @@ class Plotter:
 
         self._plot(plot_data, PlotType.HEALTH)
 
-    def plot_scalability(self, max_latencies):
+    def plot_scalability(self, max_latencies, workload):
         plot_lines_data = []
-        transactions_size = self.parameters.transactions_size
+        transaction_size = self.parameters.transaction_size
         for f in self.parameters.faults:
             for l in max_latencies:
                 filenames = []
                 for n in self.parameters.nodes:
                     filename = self._file_format(
-                        transactions_size, f, n, '*'
+                        transaction_size, f, n, '*'
                     )
                     measurements = self._load_measurement_data(filename)
                     measurements = [
-                        x for x in measurements if aggregate_average_latency(x) <= l
+                        x for x in measurements if aggregate_average_latency(x, workload) <= l
                     ]
                     if measurements:
                         filenames += [
-                            max(measurements, key=lambda x: aggregate_tps(x))
+                            max(measurements, key=lambda x: aggregate_tps(x, workload))
                         ]
                 plot_lines_data += [(filenames, l)]
 
@@ -317,7 +329,7 @@ class Plotter:
             x_values, y_values, e_values = [], [], []
             for measurement in measurements:
                 x_values += [measurement['parameters']['nodes']]
-                y_values += [aggregate_tps(measurement)]
+                y_values += [aggregate_tps(measurement, workload)]
                 e_values += [0]
 
             if x_values:
@@ -326,39 +338,39 @@ class Plotter:
 
         self._plot(plot_data, PlotType.SCALABILITY)
 
-    # def plot_inspect(self, file):
-    #     with open(file, 'r') as f:
-    #         try:
-    #             measurement = json.loads(f.read())
-    #         except json.JSONDecodeError as e:
-    #             raise PlotError(f'Failed to load file {file}: {e}')
+    def plot_inspect(self, file, workload):
+        with open(file, 'r') as f:
+            try:
+                measurement = json.loads(f.read())
+            except json.JSONDecodeError as e:
+                raise PlotError(f'Failed to load file {file}: {e}')
 
-    #     plot_tps_data, plot_lat_data = [], []
-    #     for data in measurement['scrapers'].values():
-    #         x_values, y_tps_values, y_lat_values, e_values = [], [], [], []
-    #         for d in data:
-    #             count = float(d['count'])
-    #             duration = float(d['timestamp']['secs'])
-    #             total = float(d['sum']['secs'])
+        plot_tps_data, plot_lat_data = [], []
+        for data in measurement[workload]['scrapers'].values():
+            x_values, y_tps_values, y_lat_values, e_values = [], [], [], []
+            for d in data:
+                count = float(d['count'])
+                duration = float(d['timestamp']['secs'])
+                total = float(d['sum']['secs'])
 
-    #             tps = (count / duration) if duration != 0 else 0
-    #             avg_latency = total / count if count != 0 else 0
+                tps = (count / duration) if duration != 0 else 0
+                avg_latency = total / count if count != 0 else 0
 
-    #             x_values += [duration]
-    #             y_tps_values += [tps]
-    #             y_lat_values += [avg_latency]
-    #             e_values += [0]
+                x_values += [duration]
+                y_tps_values += [tps]
+                y_lat_values += [avg_latency]
+                e_values += [0]
 
-    #         if x_values:
-    #             basename = os.path.basename(file)
-    #             id = '-'.join(basename.split('-')[1:]).split('.')[0]
-    #             plot_tps_data += [(id, x_values, y_tps_values, e_values)]
-    #             plot_lat_data += [(id, x_values, y_lat_values, e_values)]
+            if x_values:
+                basename = os.path.basename(file)
+                id = '-'.join(basename.split('-')[1:]).split('.')[0]
+                plot_tps_data += [(id, x_values, y_tps_values, e_values)]
+                plot_lat_data += [(id, x_values, y_lat_values, e_values)]
 
-    #     self._plot(plot_tps_data, PlotType.INSPECT_TPS)
-    #     self._plot(plot_lat_data, PlotType.INSPECT_LATENCY)
+        self._plot(plot_tps_data, PlotType.INSPECT_TPS)
+        self._plot(plot_lat_data, PlotType.INSPECT_LATENCY)
 
-    def plot_duration(self, file, precision):
+    def plot_duration(self, file, precision, workload):
         with open(file, 'r') as f:
             try:
                 measurement = json.loads(f.read())
@@ -369,7 +381,7 @@ class Plotter:
         length = int(total_duration / precision)
 
         scrapers_tps_data, scrapers_lat_data = [], []
-        for data in measurement['scrapers'].values():
+        for data in measurement[workload]['scrapers'].values():
             all_y_tps_values = [[] for _ in range(length)]
             all_y_lat_values = [[] for _ in range(length)]
 
@@ -425,7 +437,7 @@ if __name__ == "__main__":
         '--dir', default='./', help='Data directory'
     )
     parser.add_argument(
-        '--transactions-size', nargs='+', type=int, default=[512],
+        '--transaction-size', nargs='+', type=int, default=[512],
         help='The size of each transaction in the benchmark'
     )
     parser.add_argument(
@@ -459,15 +471,16 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    for r in args.transactions_size:
-        parameters = PlotParameters(r, args.committee, args.faults)
-        plotter = Plotter(
-            args.dir, parameters, args.y_max, args.legend_columns, median=False
-        )
-        plotter.plot_latency_throughput()
-        plotter.plot_health()
-        plotter.plot_scalability(args.max_latencies)
+    for r in args.transaction_size:
+        for w in args.workload:
+            parameters = PlotParameters(r, args.committee, args.faults)
+            plotter = Plotter(
+                args.dir, parameters, args.y_max, args.legend_columns, median=False
+            )
+            plotter.plot_latency_throughput(w)
+            plotter.plot_health(w)
+            plotter.plot_scalability(args.max_latencies, w)
 
     if args.inspect is not None:
-        # plotter.plot_inspect(args.inspect)
+        plotter.plot_inspect(args.inspect)
         plotter.plot_duration(args.inspect, args.precision)

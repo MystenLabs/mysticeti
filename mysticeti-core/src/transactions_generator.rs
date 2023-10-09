@@ -6,6 +6,7 @@ use std::{cmp::min, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::{
+    block_handler::SOFT_MAX_PROPOSED_PER_BLOCK,
     crypto::AsBytes,
     runtime,
     runtime::timestamp_utc,
@@ -45,9 +46,8 @@ impl TransactionGenerator {
     }
 
     pub async fn run(mut self) {
-        // The max block size is dilated by the WAL entry size.
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
-        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 4) / self.transaction_size;
+        let max_block_size = SOFT_MAX_PROPOSED_PER_BLOCK;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;
@@ -61,6 +61,7 @@ impl TransactionGenerator {
             let timestamp = (timestamp_utc().as_millis() as u64).to_le_bytes();
 
             let mut block = Vec::with_capacity(target_block_size);
+            let mut block_size = 0;
             for _ in 0..transactions_per_block_interval {
                 random += counter;
 
@@ -70,13 +71,15 @@ impl TransactionGenerator {
                 transaction.extend_from_slice(&zeros[..]);
 
                 block.push(Transaction::new(transaction));
+                block_size += self.transaction_size;
                 counter += 1;
 
-                if block.len() >= max_block_size {
+                if block_size >= max_block_size {
                     if self.sender.send(block.clone()).await.is_err() {
                         return;
                     }
                     block.clear();
+                    block_size = 0;
                 }
             }
 

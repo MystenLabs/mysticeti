@@ -65,8 +65,8 @@ pub struct RealBlockHandler {
     pending_transactions_bytes: usize,
 }
 
-// The max block size is dilated by the WAL entry size.
-const SOFT_MAX_PROPOSED_PER_BLOCK: usize = crate::wal::MAX_ENTRY_SIZE / 4;
+/// The max size of block in bytes. This value is capped by the wal entry size.
+pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 500 * 1024;
 
 impl RealBlockHandler {
     pub fn new(

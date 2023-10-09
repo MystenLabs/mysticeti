@@ -102,7 +102,7 @@ fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
 #[cfg(not(test))]
 const MAP_SIZE: u64 = 0x1_000_000;
 #[cfg(not(test))]
-const MAP_MASK: u64 = !0xfff_fff;
+const MAP_MASK: u64 = !0xffffff;
 #[cfg(test)]
 const MAP_SIZE: u64 = 0x10_000; // 16 pages
 #[cfg(test)]

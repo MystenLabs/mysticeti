@@ -59,10 +59,9 @@ impl TransactionGenerator {
         runtime::sleep(self.initial_delay).await;
         loop {
             interval.tick().await;
-
-            let mut block = Vec::with_capacity(target_block_size);
             let timestamp = (timestamp_utc().as_millis() as u64).to_le_bytes();
 
+            let mut block = Vec::with_capacity(target_block_size);
             for _ in 0..transactions_per_block_interval {
                 random += counter;
 

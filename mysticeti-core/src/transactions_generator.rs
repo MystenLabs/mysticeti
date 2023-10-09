@@ -47,7 +47,7 @@ impl TransactionGenerator {
     pub async fn run(mut self) {
         // The max block size is dilated by the WAL entry size.
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
-        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 5) / self.transaction_size;
+        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 4) / self.transaction_size;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;

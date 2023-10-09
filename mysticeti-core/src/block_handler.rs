@@ -66,7 +66,7 @@ pub struct RealBlockHandler {
 }
 
 // The max block size is dilated by the WAL entry size.
-const SOFT_MAX_PROPOSED_PER_BLOCK: usize = crate::wal::MAX_ENTRY_SIZE / 5;
+const SOFT_MAX_PROPOSED_PER_BLOCK: usize = crate::wal::MAX_ENTRY_SIZE / 4;
 
 impl RealBlockHandler {
     pub fn new(

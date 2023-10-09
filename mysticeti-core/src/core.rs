@@ -273,7 +273,9 @@ impl<H: BlockHandler> Core<H> {
         if block.serialized_bytes().len() > crate::wal::MAX_ENTRY_SIZE / 2 {
             // Sanity check for now
             panic!(
-                "Created an oversized block(check all limits set properly!): {:?}",
+                "Created an oversized block (check all limits set properly: {} > {}): {:?}",
+                block.serialized_bytes().len(),
+                crate::wal::MAX_ENTRY_SIZE / 2,
                 block.detailed()
             );
         }

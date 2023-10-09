@@ -209,12 +209,12 @@ impl<T: BenchmarkType> BenchmarkParametersGenerator<T> {
 
         // We consider the system is out of capacity if the latency increased by over 5x with
         // respect to the latest run.
-        let threshold = last_result.aggregate_average_latency(&first_label) * 5;
-        let high_latency = new_result.aggregate_average_latency(&first_label) > threshold;
+        let threshold = last_result.aggregate_average_latency(first_label) * 5;
+        let high_latency = new_result.aggregate_average_latency(first_label) > threshold;
 
         // Or if the throughput is less than 2/3 of the input rate.
         let last_load = new_result.transaction_load() as u64;
-        let no_throughput_increase = new_result.aggregate_tps(&first_label) < (2 * last_load / 3);
+        let no_throughput_increase = new_result.aggregate_tps(first_label) < (2 * last_load / 3);
 
         high_latency || no_throughput_increase
     }

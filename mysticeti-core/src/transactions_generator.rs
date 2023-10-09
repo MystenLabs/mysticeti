@@ -48,7 +48,7 @@ impl TransactionGenerator {
         // The max block size is dilated by the WAL entry size (we leave 100 bytes for serialization
         // overhead). Exceeding this limit will cause the block to be rejected by the validator.
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
-        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 2 - 100) / self.transaction_size;
+        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 4) / self.transaction_size;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;

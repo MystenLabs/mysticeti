@@ -326,37 +326,37 @@ class Plotter:
 
         self._plot(plot_data, PlotType.SCALABILITY)
 
-    def plot_inspect(self, file):
-        with open(file, 'r') as f:
-            try:
-                measurement = json.loads(f.read())
-            except json.JSONDecodeError as e:
-                raise PlotError(f'Failed to load file {file}: {e}')
+    # def plot_inspect(self, file):
+    #     with open(file, 'r') as f:
+    #         try:
+    #             measurement = json.loads(f.read())
+    #         except json.JSONDecodeError as e:
+    #             raise PlotError(f'Failed to load file {file}: {e}')
 
-        plot_tps_data, plot_lat_data = [], []
-        for data in measurement['scrapers'].values():
-            x_values, y_tps_values, y_lat_values, e_values = [], [], [], []
-            for d in data:
-                count = float(d['count'])
-                duration = float(d['timestamp']['secs'])
-                total = float(d['sum']['secs'])
+    #     plot_tps_data, plot_lat_data = [], []
+    #     for data in measurement['scrapers'].values():
+    #         x_values, y_tps_values, y_lat_values, e_values = [], [], [], []
+    #         for d in data:
+    #             count = float(d['count'])
+    #             duration = float(d['timestamp']['secs'])
+    #             total = float(d['sum']['secs'])
 
-                tps = (count / duration) if duration != 0 else 0
-                avg_latency = total / count if count != 0 else 0
+    #             tps = (count / duration) if duration != 0 else 0
+    #             avg_latency = total / count if count != 0 else 0
 
-                x_values += [duration]
-                y_tps_values += [tps]
-                y_lat_values += [avg_latency]
-                e_values += [0]
+    #             x_values += [duration]
+    #             y_tps_values += [tps]
+    #             y_lat_values += [avg_latency]
+    #             e_values += [0]
 
-            if x_values:
-                basename = os.path.basename(file)
-                id = '-'.join(basename.split('-')[1:]).split('.')[0]
-                plot_tps_data += [(id, x_values, y_tps_values, e_values)]
-                plot_lat_data += [(id, x_values, y_lat_values, e_values)]
+    #         if x_values:
+    #             basename = os.path.basename(file)
+    #             id = '-'.join(basename.split('-')[1:]).split('.')[0]
+    #             plot_tps_data += [(id, x_values, y_tps_values, e_values)]
+    #             plot_lat_data += [(id, x_values, y_lat_values, e_values)]
 
-        self._plot(plot_tps_data, PlotType.INSPECT_TPS)
-        self._plot(plot_lat_data, PlotType.INSPECT_LATENCY)
+    #     self._plot(plot_tps_data, PlotType.INSPECT_TPS)
+    #     self._plot(plot_lat_data, PlotType.INSPECT_LATENCY)
 
     def plot_duration(self, file, precision):
         with open(file, 'r') as f:
@@ -469,5 +469,5 @@ if __name__ == "__main__":
         plotter.plot_scalability(args.max_latencies)
 
     if args.inspect is not None:
-        plotter.plot_inspect(args.inspect)
+        # plotter.plot_inspect(args.inspect)
         plotter.plot_duration(args.inspect, args.precision)

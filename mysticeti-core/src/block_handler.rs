@@ -66,7 +66,7 @@ pub struct RealBlockHandler {
 }
 
 /// The max size of block in bytes. This value is capped by the wal entry size.
-pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 500 * 1024;
+pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 4 * 1024 * 1024;
 
 impl RealBlockHandler {
     pub fn new(

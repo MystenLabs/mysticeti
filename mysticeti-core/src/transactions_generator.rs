@@ -73,7 +73,6 @@ impl TransactionGenerator {
                 counter += 1;
 
                 if block.len() >= max_block_size {
-                    tracing::info!("1: Sending block of {} transactions", block.len());
                     if self.sender.send(block.clone()).await.is_err() {
                         return;
                     }
@@ -81,7 +80,6 @@ impl TransactionGenerator {
                 }
             }
 
-            tracing::info!("2: Sending block of {} transactions", block.len());
             if !block.is_empty() && self.sender.send(block).await.is_err() {
                 return;
             }

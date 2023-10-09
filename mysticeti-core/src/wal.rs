@@ -156,7 +156,7 @@ impl WalWriter {
     pub fn writev(&mut self, tag: Tag, v: &[IoSlice]) -> io::Result<WalPosition> {
         let v_len = v.iter().map(|s| s.len()).sum::<usize>();
         let len = v_len as u64 + HEADER_LEN_BYTES;
-        assert!(len <= MAP_SIZE);
+        assert!(len <= MAP_SIZE, "Wal entry too big, {len} < {MAP_SIZE}");
         let mut buffs = vec![];
         let mut written_expected = 0usize;
         tracing::trace!(

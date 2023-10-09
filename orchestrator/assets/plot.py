@@ -119,7 +119,7 @@ class PlotParameters:
 
 
 class MeasurementId:
-    def __init__(self, measurement, max_latency=None):
+    def __init__(self, measurement, workload, max_latency=None):
         self.transaction_size = measurement['parameters']['benchmark_type']['transaction_size']
         self.nodes = measurement['parameters']['nodes']
         if 'Permanent' in measurement['parameters']['faults']:
@@ -129,6 +129,8 @@ class MeasurementId:
         self.duration = measurement['parameters']['duration']
         self.machine_specs = measurement['machine_specs']
         self.commit = measurement['commit']
+
+        self.workload = workload
         self.max_latency = max_latency
 
 
@@ -151,11 +153,11 @@ class Plotter:
         if plot_type in [PlotType.L_GRAPH, PlotType.HEALTH]:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.nodes} nodes{f}'
-            return f'{l} - {id.transaction_size}B transactions'
+            return f'{l} - {id.workload} ({id.transaction_size}B tx)'
         elif plot_type == PlotType.SCALABILITY:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.max_latency}s latency cap{f}'
-            return f'{l} - {id.transaction_size}B transactions'
+            return f'{l} - {id.workload} ({id.transaction_size}B tx)'
         else:
             return None
 
@@ -264,20 +266,21 @@ class Plotter:
 
         plot_data = []
         for measurements in plot_lines_data:
-            x_values, y_values, e_values = [], [], []
-            measurements.sort(key=lambda x: x['parameters']['load'])
-            for measurement in measurements:
-                x_values += [aggregate_tps(measurement, workload)]
-                if self.median:
-                    y_values += [aggregate_p_latency(measurement, workload, p=50)]
-                    e_values += [aggregate_p_latency(measurement, workload, p=75)]
-                else:
-                    y_values += [aggregate_average_latency(measurement, workload)]
-                    e_values += [aggregate_stdev_latency(measurement, workload)]
+            for w in workload:
+                x_values, y_values, e_values = [], [], []
+                measurements.sort(key=lambda x: x['parameters']['load'])
+                for measurement in measurements:
+                    x_values += [aggregate_tps(measurement, w)]
+                    if self.median:
+                        y_values += [aggregate_p_latency(measurement, w, p=50)]
+                        e_values += [aggregate_p_latency(measurement, w, p=75)]
+                    else:
+                        y_values += [aggregate_average_latency(measurement, w)]
+                        e_values += [aggregate_stdev_latency(measurement, w)]
 
-            if x_values:
-                id = MeasurementId(measurements[0])
-                plot_data += [(id, x_values, y_values, e_values)]
+                if x_values:
+                    id = MeasurementId(measurements[0], w)
+                    plot_data += [(id, x_values, y_values, e_values)]
 
         self._plot(plot_data, PlotType.L_GRAPH)
 
@@ -291,50 +294,54 @@ class Plotter:
 
         plot_data = []
         for measurements in plot_lines_data:
-            x_values, y_values, e_values = [], [], []
-            measurements.sort(key=lambda x: x['parameters']['load'])
-            for measurement in measurements:
-                x_values += [measurement['parameters']['load']]
-                y_values += [aggregate_tps(measurement, workload)]
-                e_values += [0]
+            for w in workload:
+                x_values, y_values, e_values = [], [], []
+                measurements.sort(key=lambda x: x['parameters']['load'])
+                for measurement in measurements:
+                    x_values += [measurement['parameters']['load']]
+                    y_values += [aggregate_tps(measurement, w)]
+                    e_values += [0]
 
-            if x_values:
-                id = MeasurementId(measurements[0])
-                plot_data += [(id, x_values, y_values, e_values)]
+                if x_values:
+                    id = MeasurementId(measurements[0], w)
+                    plot_data += [(id, x_values, y_values, e_values)]
 
         self._plot(plot_data, PlotType.HEALTH)
 
     def plot_scalability(self, max_latencies, workload):
-        plot_lines_data = []
-        transaction_size = self.parameters.transaction_size
-        for f in self.parameters.faults:
-            for l in max_latencies:
-                filenames = []
-                for n in self.parameters.nodes:
-                    filename = self._file_format(
-                        transaction_size, f, n, '*'
-                    )
-                    measurements = self._load_measurement_data(filename)
-                    measurements = [
-                        x for x in measurements if aggregate_average_latency(x, workload) <= l
-                    ]
-                    if measurements:
-                        filenames += [
-                            max(measurements, key=lambda x: aggregate_tps(x, workload))
-                        ]
-                plot_lines_data += [(filenames, l)]
-
         plot_data = []
-        for measurements, max_latency in plot_lines_data:
-            x_values, y_values, e_values = [], [], []
-            for measurement in measurements:
-                x_values += [measurement['parameters']['nodes']]
-                y_values += [aggregate_tps(measurement, workload)]
-                e_values += [0]
 
-            if x_values:
-                id = MeasurementId(measurements[0], max_latency)
-                plot_data += [(id, x_values, y_values, e_values)]
+        for w in workload:
+            plot_lines_data = []
+            transaction_size = self.parameters.transaction_size
+            for f in self.parameters.faults:
+                for l in max_latencies:
+                    filenames = []
+                    for n in self.parameters.nodes:
+                        filename = self._file_format(
+                            transaction_size, f, n, '*'
+                        )
+                        measurements = self._load_measurement_data(filename)
+                        measurements = [
+                            x for x in measurements if aggregate_average_latency(x, w) <= l
+                        ]
+                        if measurements:
+                            filenames += [
+                                max(measurements, key=lambda x: aggregate_tps(x, w))
+                            ]
+                    plot_lines_data += [(filenames, l)]
+
+            
+            for measurements, max_latency in plot_lines_data:
+                x_values, y_values, e_values = [], [], []
+                for measurement in measurements:
+                    x_values += [measurement['parameters']['nodes']]
+                    y_values += [aggregate_tps(measurement, w)]
+                    e_values += [0]
+
+                if x_values:
+                    id = MeasurementId(measurements[0], w, max_latency)
+                    plot_data += [(id, x_values, y_values, e_values)]
 
         self._plot(plot_data, PlotType.SCALABILITY)
 
@@ -453,7 +460,7 @@ if __name__ == "__main__":
         help='The number of faults to plot on the same graph'
     )
     parser.add_argument(
-        '--max-latencies', nargs='+', type=float, default=[2],
+        '--max-latencies', nargs='+', type=float, default=[1,2],
         help='The latency cap (in seconds) for scalability graphs'
     )
     parser.add_argument(
@@ -472,14 +479,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for r in args.transaction_size:
-        for w in args.workload:
-            parameters = PlotParameters(r, args.committee, args.faults)
-            plotter = Plotter(
-                args.dir, parameters, args.y_max, args.legend_columns, median=False
-            )
-            plotter.plot_latency_throughput(w)
-            plotter.plot_health(w)
-            plotter.plot_scalability(args.max_latencies, w)
+        parameters = PlotParameters(r, args.committee, args.faults)
+        plotter = Plotter(
+            args.dir, parameters, args.y_max, args.legend_columns, median=False
+        )
+        plotter.plot_latency_throughput(args.workload)
+        plotter.plot_health(args.workload)
+        plotter.plot_scalability(args.max_latencies, args.workload)
 
     if args.inspect is not None:
         plotter.plot_inspect(args.inspect)

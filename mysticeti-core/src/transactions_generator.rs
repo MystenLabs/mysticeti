@@ -6,7 +6,6 @@ use std::{cmp::min, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::{
-    block_handler::SOFT_MAX_PROPOSED_PER_BLOCK,
     crypto::AsBytes,
     runtime,
     runtime::timestamp_utc,
@@ -32,7 +31,7 @@ impl TransactionGenerator {
         transaction_size: usize,
         initial_delay: Duration,
     ) {
-        assert!(transaction_size >= 8 + 8); // 8 bytes timestamp + 8 bytes random
+        assert!(transaction_size > 8 + 8); // 8 bytes timestamp + 8 bytes random
         runtime::Handle::current().spawn(
             Self {
                 sender,
@@ -47,7 +46,7 @@ impl TransactionGenerator {
 
     pub async fn run(mut self) {
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
-        let max_block_size = SOFT_MAX_PROPOSED_PER_BLOCK;
+        let max_block_size = 4 * 1024 * 1024;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;

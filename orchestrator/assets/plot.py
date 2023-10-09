@@ -425,8 +425,12 @@ if __name__ == "__main__":
         '--dir', default='./', help='Data directory'
     )
     parser.add_argument(
-        '--shared-objects-ratio', nargs='+', type=int, default=[0, 100],
-        help='The ratio of shared objects to plot (in separate graphs)'
+        '--transactions-size', nargs='+', type=int, default=[512],
+        help='The size of each transaction in the benchmark'
+    )
+    parser.add_argument(
+        '--workload', nargs='+', type=int, default=["owned", "shared"],
+        help='The type of object transaction (owned or shared)'
     )
     parser.add_argument(
         '--committee', nargs='+', type=int, default=[4],

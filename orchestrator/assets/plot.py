@@ -17,27 +17,27 @@ from itertools import cycle
 
 
 def aggregate_tps(measurement, workload, i=-1):
-    if workload not in measurement:
+    if workload not in measurement['data']:
         return 0
     
     max_duration = 0
-    for data in measurement[workload]['scrapers'].values():
+    for data in measurement['data'][workload].values():
         duration = float(data[i]['timestamp']['secs'])
         max_duration = max(duration, max_duration)
 
     tps = []
-    for data in measurement[workload]['scrapers'].values():
+    for data in measurement['data'][workload].values():
         count = float(data[i]['count'])
         tps += [(count / max_duration) if max_duration != 0 else 0]
-    return sum(tps)
+    return max(tps)
 
 
 def aggregate_average_latency(measurement, workload, i=-1):
-    if workload not in measurement:
+    if workload not in measurement['data']:
         return 0
      
     latency = []
-    for data in measurement[workload]['scrapers'].values():
+    for data in measurement['data'][workload].values():
         last = data[i]
         count = float(last['count'])
         total = float(last['sum']['secs'])
@@ -46,11 +46,11 @@ def aggregate_average_latency(measurement, workload, i=-1):
 
 
 def aggregate_stdev_latency(measurement, workload, i=-1):
-    if workload not in measurement:
+    if workload not in measurement['data']:
         return 0
      
     stdev = []
-    for data in measurement[workload]['scrapers'].values():
+    for data in measurement['data'][workload].values():
         last = data[i]
         count = float(last['count'])
         if count == 0:
@@ -63,11 +63,11 @@ def aggregate_stdev_latency(measurement, workload, i=-1):
 
 
 def aggregate_p_latency(measurement, workload, p=50, i=-1):
-    if workload not in measurement:
+    if workload not in measurement['data']:
         return 0
      
     latency = []
-    for data in measurement[workload]['scrapers'].values():
+    for data in measurement['data'][workload].values():
         last = data[i]
         count = float(last['count'])
         buckets = [(float(l), c) for l, c in last['buckets'].items()]
@@ -151,11 +151,11 @@ class Plotter:
         if plot_type in [PlotType.L_GRAPH, PlotType.HEALTH]:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.nodes} nodes{f}'
-            return f'{l} - {id.transaction_size}% shared objects'
+            return f'{l} - {id.transaction_size}B transactions'
         elif plot_type == PlotType.SCALABILITY:
             f = '' if id.faults == 0 else f' ({id.faults} faulty)'
             l = f'{id.max_latency}s latency cap{f}'
-            return f'{l} - {id.transaction_size}% shared objects'
+            return f'{l} - {id.transaction_size}B transactions'
         else:
             return None
 
@@ -346,7 +346,7 @@ class Plotter:
                 raise PlotError(f'Failed to load file {file}: {e}')
 
         plot_tps_data, plot_lat_data = [], []
-        for data in measurement[workload]['scrapers'].values():
+        for data in measurement['data'][workload].values():
             x_values, y_tps_values, y_lat_values, e_values = [], [], [], []
             for d in data:
                 count = float(d['count'])
@@ -381,7 +381,7 @@ class Plotter:
         length = int(total_duration / precision)
 
         scrapers_tps_data, scrapers_lat_data = [], []
-        for data in measurement[workload]['scrapers'].values():
+        for data in measurement['data'][workload].values():
             all_y_tps_values = [[] for _ in range(length)]
             all_y_lat_values = [[] for _ in range(length)]
 

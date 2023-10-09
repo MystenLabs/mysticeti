@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use std::time::Duration;
+use std::{cmp::min, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -45,7 +45,11 @@ impl TransactionGenerator {
     }
 
     pub async fn run(mut self) {
-        let transactions_per_100ms = (self.transactions_per_second + 9) / 10;
+        // The max block size is dilated by the WAL entry size (we leave 100 bytes for serialization
+        // overhead). Exceeding this limit will cause the block to be rejected by the validator.
+        let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
+        let max_block_size = (crate::wal::MAX_ENTRY_SIZE / 2 - 100) / self.transaction_size;
+        let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;
         let mut random: u64 = self.rng.gen(); // 8 bytes
@@ -56,10 +60,10 @@ impl TransactionGenerator {
         loop {
             interval.tick().await;
 
-            let mut block = Vec::with_capacity(transactions_per_100ms);
+            let mut block = Vec::with_capacity(target_block_size);
             let timestamp = (timestamp_utc().as_millis() as u64).to_le_bytes();
 
-            for _ in 0..transactions_per_100ms {
+            for _ in 0..transactions_per_block_interval {
                 random += counter;
 
                 let mut transaction = Vec::with_capacity(self.transaction_size);
@@ -69,10 +73,17 @@ impl TransactionGenerator {
 
                 block.push(Transaction::new(transaction));
                 counter += 1;
+
+                if block.len() >= max_block_size {
+                    if self.sender.send(block).await.is_err() {
+                        return;
+                    }
+                    block = Vec::with_capacity(target_block_size)
+                }
             }
 
-            if self.sender.send(block).await.is_err() {
-                break;
+            if !block.is_empty() && self.sender.send(block).await.is_err() {
+                return;
             }
         }
     }

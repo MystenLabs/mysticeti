@@ -62,11 +62,11 @@ pub struct RealBlockHandler {
     block_store: BlockStore,
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
-    pending_transactions_bytes: usize,
+    pending_transactions: usize,
 }
 
 /// The max size of block in bytes. This value is capped by the wal entry size.
-pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 10 * 1024 * 1024;
+pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
 
 impl RealBlockHandler {
     pub fn new(
@@ -88,7 +88,7 @@ impl RealBlockHandler {
             block_store,
             metrics,
             receiver,
-            pending_transactions_bytes: 0, // todo - need to initialize correctly when loaded from disk
+            pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
         };
         (this, sender)
     }
@@ -96,12 +96,11 @@ impl RealBlockHandler {
 
 impl RealBlockHandler {
     fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
-        if self.pending_transactions_bytes >= SOFT_MAX_PROPOSED_PER_BLOCK {
+        if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
             return None;
         }
         let received = self.receiver.try_recv().ok()?;
-        self.pending_transactions_bytes +=
-            received.iter().map(|x| x.as_bytes().len()).sum::<usize>();
+        self.pending_transactions += received.iter().map(|x| x.as_bytes().len()).sum::<usize>();
         Some(received)
     }
 
@@ -185,10 +184,7 @@ impl BlockHandler for RealBlockHandler {
 
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         // todo - this is not super efficient
-        self.pending_transactions_bytes -= block
-            .shared_transactions()
-            .map(|(_, x)| x.as_bytes().len())
-            .sum::<usize>();
+        self.pending_transactions -= block.shared_transactions().count();
         let mut transaction_time = self.transaction_time.lock();
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());

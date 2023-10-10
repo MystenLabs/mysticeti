@@ -23,6 +23,7 @@ use crate::{
 use minibytes::Bytes;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -63,6 +64,7 @@ pub struct RealBlockHandler {
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
     pending_transactions: usize,
+    consensus_only: bool,
 }
 
 /// The max number of transactions per block.
@@ -81,6 +83,7 @@ impl RealBlockHandler {
         let transaction_log = TransactionLog::start(config.certified_transactions_log())
             .expect("Failed to open certified transaction log for write");
 
+        let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         let this = Self {
             transaction_votes: TransactionAggregator::with_handler(transaction_log),
             transaction_time: Default::default(),
@@ -90,6 +93,7 @@ impl RealBlockHandler {
             metrics,
             receiver,
             pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
+            consensus_only,
         };
         (this, sender)
     }
@@ -165,16 +169,18 @@ impl BlockHandler for RealBlockHandler {
             } else {
                 None
             };
-            let processed =
-                self.transaction_votes
-                    .process_block(block, response_option, &self.committee);
-            for processed_locator in processed {
-                let block_creation = transaction_time.get(&processed_locator);
-                let transaction = self
-                    .block_store
-                    .get_transaction(&processed_locator)
-                    .expect("Failed to get certified transaction");
-                self.update_metrics(block_creation, &transaction, &current_timestamp);
+            if !self.consensus_only {
+                let processed =
+                    self.transaction_votes
+                        .process_block(block, response_option, &self.committee);
+                for processed_locator in processed {
+                    let block_creation = transaction_time.get(&processed_locator);
+                    let transaction = self
+                        .block_store
+                        .get_transaction(&processed_locator)
+                        .expect("Failed to get certified transaction");
+                    self.update_metrics(block_creation, &transaction, &current_timestamp);
+                }
             }
         }
         self.metrics
@@ -330,6 +336,7 @@ pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
     transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
 
     metrics: Arc<Metrics>,
+    consensus_only: bool,
 }
 
 impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitHandler<H> {
@@ -349,6 +356,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         metrics: Arc<Metrics>,
         handler: H,
     ) -> Self {
+        let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         Self {
             commit_interpreter: Linearizer::new(),
             transaction_votes: TransactionAggregator::with_handler(handler),
@@ -359,6 +367,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
             transaction_time,
 
             metrics,
+            consensus_only,
         }
     }
 
@@ -423,15 +432,17 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         for commit in &committed {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
-                let processed = self
-                    .transaction_votes
-                    .process_block(block, None, &self.committee);
-                for processed_locator in processed {
-                    if let Some(instant) = transaction_time.get(&processed_locator) {
-                        // todo - batch send data points
-                        self.metrics
-                            .certificate_committed_latency
-                            .observe(instant.elapsed());
+                if !self.consensus_only {
+                    let processed =
+                        self.transaction_votes
+                            .process_block(block, None, &self.committee);
+                    for processed_locator in processed {
+                        if let Some(instant) = transaction_time.get(&processed_locator) {
+                            // todo - batch send data points
+                            self.metrics
+                                .certificate_committed_latency
+                                .observe(instant.elapsed());
+                        }
                     }
                 }
                 for (locator, transaction) in block.shared_transactions() {

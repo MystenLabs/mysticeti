@@ -22,6 +22,7 @@ use digest::Digest;
 use eyre::{bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::time::Duration;
 #[cfg(test)]
@@ -45,7 +46,7 @@ pub enum InternalEpochStatus {
     SafeToClose,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub struct BlockReference {
     pub authority: AuthorityIndex,
     pub round: RoundNumber,
@@ -60,6 +61,12 @@ pub enum BaseStatement {
     Vote(TransactionLocator, Vote),
     // For now only accept votes are batched
     VoteRange(TransactionLocatorRange),
+}
+
+impl Hash for BlockReference {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write(&self.digest.as_ref()[..8]);
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

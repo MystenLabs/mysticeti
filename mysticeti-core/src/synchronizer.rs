@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, sync::Arc, time::Duration};
 
 use futures::future::join_all;
 use rand::{seq::SliceRandom, thread_rng};
@@ -249,6 +249,7 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
     senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
     parameters: SynchronizerParameters,
     metrics: Arc<Metrics>,
+    enable: bool,
 }
 
 impl<B, C> BlockFetcherWorker<B, C>
@@ -262,6 +263,7 @@ where
         receiver: mpsc::Receiver<BlockFetcherMessage>,
         metrics: Arc<Metrics>,
     ) -> Self {
+        let enable = env::var("USE_SYNCER").is_ok();
         Self {
             id,
             inner,
@@ -269,6 +271,7 @@ where
             senders: Default::default(),
             parameters: Default::default(),
             metrics,
+            enable,
         }
     }
 
@@ -293,6 +296,9 @@ where
 
     /// A simple and naive strategy that requests missing blocks from random peers.
     async fn sync_strategy(&self) {
+        if self.enable {
+            return;
+        }
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {

@@ -192,10 +192,10 @@ impl BlockHandler for RealBlockHandler {
     fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         // todo - this is not super efficient
         self.pending_transactions -= block.shared_transactions().count();
-        if !self.consensus_only {
-            let mut transaction_time = self.transaction_time.lock();
-            for (locator, _) in block.shared_transactions() {
-                transaction_time.insert(locator, TimeInstant::now());
+        let mut transaction_time = self.transaction_time.lock();
+        for (locator, _) in block.shared_transactions() {
+            transaction_time.insert(locator, TimeInstant::now());
+            if !self.consensus_only {
                 self.transaction_votes
                     .register(locator, self.authority, &self.committee);
             }

@@ -46,7 +46,7 @@ impl TransactionGenerator {
 
     pub async fn run(mut self) {
         let transactions_per_block_interval = (self.transactions_per_second + 9) / 10;
-        let max_block_size = 4 * 1024 * 1024;
+        let max_block_size = 1 * 1024 * 1024;
         let target_block_size = min(max_block_size, transactions_per_block_interval);
 
         let mut counter = 0;

@@ -65,7 +65,8 @@ pub struct RealBlockHandler {
     pending_transactions: usize,
 }
 
-/// The max size of block in bytes. This value is capped by the wal entry size.
+/// The max number of transactions per block.
+// todo - This value should be in bytes because it is capped by the wal entry size.
 pub const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
 
 impl RealBlockHandler {

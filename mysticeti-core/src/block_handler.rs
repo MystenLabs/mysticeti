@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::config::StorageDir;
 use crate::data::Data;
 use crate::log::TransactionLog;
 use crate::metrics::UtilizationTimerExt;
@@ -15,7 +16,6 @@ use crate::{
     committee::{Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator},
     runtime,
 };
-use crate::{config::StorageDir, crypto::AsBytes};
 use crate::{
     consensus::linearizer::{CommittedSubDag, Linearizer},
     transactions_generator::TransactionGenerator,

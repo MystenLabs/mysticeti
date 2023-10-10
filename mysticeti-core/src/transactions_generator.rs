@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use std::{cmp::min, time::Duration};
+use std::{cmp::min, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::{
     crypto::AsBytes,
+    metrics::Metrics,
     runtime,
     runtime::timestamp_utc,
     types::{AuthorityIndex, Transaction},
@@ -18,6 +19,7 @@ pub struct TransactionGenerator {
     transactions_per_second: usize,
     transaction_size: usize,
     initial_delay: Duration,
+    metrics: Arc<Metrics>,
 }
 
 impl TransactionGenerator {
@@ -30,6 +32,7 @@ impl TransactionGenerator {
         transactions_per_second: usize,
         transaction_size: usize,
         initial_delay: Duration,
+        metrics: Arc<Metrics>,
     ) {
         assert!(transaction_size > 8 + 8); // 8 bytes timestamp + 8 bytes random
         runtime::Handle::current().spawn(
@@ -39,6 +42,7 @@ impl TransactionGenerator {
                 transactions_per_second,
                 transaction_size,
                 initial_delay,
+                metrics,
             }
             .run(),
         );
@@ -77,13 +81,21 @@ impl TransactionGenerator {
                     if self.sender.send(block.clone()).await.is_err() {
                         return;
                     }
+                    self.metrics
+                        .submitted_transactions
+                        .inc_by(block.len() as u64);
                     block.clear();
                     block_size = 0;
                 }
             }
 
-            if !block.is_empty() && self.sender.send(block).await.is_err() {
-                return;
+            if !block.is_empty() {
+                self.metrics
+                    .submitted_transactions
+                    .inc_by(block.len() as u64);
+                if self.sender.send(block).await.is_err() {
+                    return;
+                }
             }
         }
     }

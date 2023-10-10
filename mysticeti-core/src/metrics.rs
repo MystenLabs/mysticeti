@@ -69,6 +69,7 @@ pub struct Metrics {
     pub connection_latency_sender: Vec<HistogramSender<Duration>>,
 
     pub utilization_timer: IntCounterVec,
+    pub submitted_transactions: IntCounter,
 }
 
 pub struct MetricReporter {
@@ -317,6 +318,12 @@ impl Metrics {
                 registry,
             )
             .unwrap(),
+
+            submitted_transactions: register_int_counter_with_registry!(
+                "submitted_transactions",
+                "Number of submitted transactions",
+                registry,
+            ).unwrap(),
 
             transaction_certified_latency,
             certificate_committed_latency,

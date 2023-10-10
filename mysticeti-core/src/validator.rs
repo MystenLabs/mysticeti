@@ -107,7 +107,6 @@ impl Validator {
             tps,
             transaction_size,
             initial_delay,
-            metrics.clone(),
         );
         let committed_transaction_log =
             TransactionLog::start(config.storage().committed_transactions_log())

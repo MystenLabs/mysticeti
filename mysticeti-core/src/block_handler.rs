@@ -101,7 +101,7 @@ impl RealBlockHandler {
             return None;
         }
         let received = self.receiver.try_recv().ok()?;
-        self.pending_transactions += received.iter().map(|x| x.as_bytes().len()).sum::<usize>();
+        self.pending_transactions += received.len();
         Some(received)
     }
 

@@ -531,6 +531,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
         // Select the instances to run.
         let (clients, nodes, _) = self.select_instances(parameters)?;
+        let mut killed_nodes: Vec<Instance> = Vec::new();
 
         // Regularly scrape the client metrics.
         let metrics_commands = self.protocol_commands.clients_metrics_command(clients);
@@ -552,9 +553,12 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                     let elapsed = now.duration_since(start).as_secs_f64().ceil() as u64;
                     display::status(format!("{elapsed}s"));
 
+                    let mut instances = metrics_commands.clone();
+                    instances.retain(|(instance, _)| !killed_nodes.contains(&instance));
+
                     let stdio = self
                         .ssh_manager
-                        .execute_per_instance(metrics_commands.clone(), CommandContext::default())
+                        .execute_per_instance(instances, CommandContext::default())
                         .await?;
                     for (i, (stdout, _stderr)) in stdio.iter().enumerate() {
                         for (label, measurement) in Measurement::from_prometheus::<P>(stdout) {
@@ -577,12 +581,14 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
 
                 // Kill and recover nodes according to the input schedule.
                 _ = faults_interval.tick() => {
-                    let  action = faults_schedule.update();
+                    let action = faults_schedule.update();
                     if !action.kill.is_empty() {
+                        killed_nodes.extend(action.kill.clone());
                         self.ssh_manager.kill(action.kill.clone(), "node").await?;
                     }
                     if !action.boot.is_empty() {
                         // Monitor not yet supported for this
+                        killed_nodes.retain(|instance| !action.boot.contains(instance));
                         let _: NodeMonitorHandle = self.boot_nodes(action.boot.clone(), parameters).await?;
                     }
                     if !action.kill.is_empty() || !action.boot.is_empty() {

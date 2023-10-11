@@ -159,7 +159,8 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                 .join(" ");
                 let tps = format!("export TPS={}", parameters.load / parameters.nodes);
                 let tx_size = format!("export TRANSACTION_SIZE={}", parameters.benchmark_type.transaction_size);
-                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &tps, &tx_size, &run].join("\\n");
+                let consensus_only = format!("export CONSENSUS_ONLY={}", 1);
+                let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &tps, &tx_size, &consensus_only, &run].join("\\n");
                 let command = format!("echo -e '{command}' > mysticeti-start.sh && chmod +x mysticeti-start.sh && ./mysticeti-start.sh");
 
                 (instance, command)

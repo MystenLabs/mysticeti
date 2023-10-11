@@ -14,7 +14,7 @@ pub type Stake = u64;
 pub type KeyPair = u64;
 pub type PublicKey = crate::crypto::PublicKey;
 
-use crate::committee::Committee;
+use crate::committee::{Committee, VoteRangeBuilder};
 use crate::crypto::{AsBytes, CryptoHash, SignatureBytes, Signer};
 use crate::data::Data;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
@@ -195,6 +195,26 @@ impl StatementBlock {
         &self.statements
     }
 
+    // Todo - we should change the block so that it has all shared transactions in one vec
+    // This way this function will always return single TransactionLocatorRange instead of a vec
+    pub fn shared_ranges(&self) -> Vec<TransactionLocatorRange> {
+        let mut ranges = Vec::new();
+        let mut vote_range_builder = VoteRangeBuilder::default();
+        for (offset, statement) in self.statements.iter().enumerate() {
+            if let BaseStatement::Share(_) = statement {
+                if let Some(range) = vote_range_builder.add(offset as u64) {
+                    let range = TransactionLocatorRange::new(self.reference, range);
+                    ranges.push(range);
+                }
+            }
+        }
+        if let Some(range) = vote_range_builder.finish() {
+            let range = TransactionLocatorRange::new(self.reference, range);
+            ranges.push(range);
+        }
+        ranges
+    }
+
     pub fn shared_transactions(&self) -> impl Iterator<Item = (TransactionLocator, &Transaction)> {
         let reference = *self.reference();
         self.statements
@@ -342,6 +362,14 @@ impl TransactionLocatorRange {
         }
     }
 
+    pub fn one(locator: TransactionLocator) -> Self {
+        Self {
+            block: locator.block,
+            offset_start_inclusive: locator.offset,
+            offset_end_exclusive: locator.offset + 1,
+        }
+    }
+
     pub fn locators(&self) -> impl Iterator<Item = TransactionLocator> + '_ {
         self.range()
             .map(|offset| TransactionLocator::new(self.block, offset))
@@ -373,8 +401,12 @@ impl TransactionLocatorRange {
         Ok(())
     }
 
-    fn range(&self) -> Range<u64> {
+    pub fn range(&self) -> Range<u64> {
         self.offset_start_inclusive..self.offset_end_exclusive
+    }
+
+    pub fn block(&self) -> &BlockReference {
+        &self.block
     }
 }
 

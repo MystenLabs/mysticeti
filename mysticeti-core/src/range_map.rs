@@ -29,6 +29,7 @@ impl<K: Ord + Copy + PartialEq, V: Clone> RangeMap<K, V> {
     /// If mutation function sets value to None, the entry is deleted.
     ///
     /// Mutation function may be invoked multiple times if multiple ranges overlap with the given range.
+    #[allow(clippy::comparison_chain)]
     pub fn mutate_range<F>(&mut self, mut range: Range<K>, mut f: F)
     where
         F: FnMut(Range<K>, &mut Option<V>),

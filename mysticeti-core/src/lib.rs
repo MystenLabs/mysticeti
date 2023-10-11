@@ -23,6 +23,7 @@ pub mod metrics;
 pub mod net_sync;
 pub mod network;
 pub mod prometheus;
+mod range_map;
 mod runtime;
 mod serde;
 #[cfg(test)]

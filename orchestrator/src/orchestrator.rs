@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use futures::future::select_all;
+// use futures::future::select_all;
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self},
@@ -13,7 +13,7 @@ use tokio::select;
 
 use tokio::time::{self, Instant};
 
-use crate::error::SshError;
+// use crate::error::SshError;
 use crate::monitor::{Monitor, NodeMonitorHandle};
 use crate::{
     benchmark::{BenchmarkParameters, BenchmarkParametersGenerator, BenchmarkType},
@@ -250,7 +250,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             let monitor = Self::run_monitor(ssh_manager, targets);
             select! {
                 _ = monitor => {
-                    unreachable!()
+                    // unreachable!()
                 }
                 _ = receiver.recv() => {
                     // do nothing
@@ -260,21 +260,22 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         Ok(handle)
     }
 
-    async fn run_monitor(ssh_manager: SshConnectionManager, targets: Vec<(Instance, String)>) {
-        loop {
-            let r = ssh_manager.run_per_instance(targets.clone(), CommandContext::new());
-            let (output, i, _) = select_all(r).await;
-            let output = output.unwrap();
-            let (instance, result) = match output {
-                Ok(output) => output,
-                Err(SshError::SessionError { .. } | SshError::ConnectionError { .. }) => continue, // Retry session error(likely timeout)
-                Err(SshError::NonZeroExitCode { code, .. }) => {
-                    panic!("Monitor command on {} failed with code: {}", i, code)
-                }
-            };
-            eprintln!("Node {} failed:\n{}", instance, result);
-            std::process::exit(1);
-        }
+    async fn run_monitor(_ssh_manager: SshConnectionManager, _targets: Vec<(Instance, String)>) {
+        // todo - does not play well with crashed nodes
+        // loop {
+        //     let r = ssh_manager.run_per_instance(targets.clone(), CommandContext::new());
+        //     let (output, i, _) = select_all(r).await;
+        //     let output = output.unwrap();
+        //     let (instance, result) = match output {
+        //         Ok(output) => output,
+        //         Err(SshError::SessionError { .. } | SshError::ConnectionError { .. }) => continue, // Retry session error(likely timeout)
+        //         Err(SshError::NonZeroExitCode { code, .. }) => {
+        //             panic!("Monitor command on {} failed with code: {}", i, code)
+        //         }
+        //     };
+        //     eprintln!("Node {} failed:\n{}", instance, result);
+        //     std::process::exit(1);
+        // }
     }
 
     /// Install the codebase and its dependencies on the testbed.

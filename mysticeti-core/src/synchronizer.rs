@@ -12,7 +12,7 @@ use crate::{
     metrics::Metrics,
     net_sync::{self, NetworkSyncerInner},
     network::NetworkMessage,
-    runtime::{sleep, Handle, JoinHandle},
+    runtime::{sleep, timestamp_utc, Handle, JoinHandle},
     syncer::CommitObserver,
     types::{AuthorityIndex, BlockReference, RoundNumber},
 };
@@ -27,6 +27,8 @@ pub struct SynchronizerParameters {
     pub batch_size: usize,
     /// The sampling precision with which to re-evaluate the sync strategy.
     pub sample_precision: Duration,
+    /// The grace period ofter which to eagerly sync missing blocks.
+    pub grace_period: Duration,
     /// The interval at which to send stream blocks authored by other nodes.
     pub stream_interval: Duration,
     /// Threshold number of missing block from an authority to open a new stream.
@@ -40,6 +42,7 @@ impl Default for SynchronizerParameters {
             maximum_helpers_per_authority: 2,
             batch_size: 10,
             sample_precision: Duration::from_secs(5),
+            grace_period: Duration::from_secs(30),
             stream_interval: Duration::from_secs(1),
             new_stream_threshold: 10,
         }
@@ -249,6 +252,8 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
     senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
     parameters: SynchronizerParameters,
     metrics: Arc<Metrics>,
+    /// Hold a timestamp of when blocks were first considered missing.
+    missing: HashMap<BlockReference, Duration>,
     enable: bool,
 }
 
@@ -271,6 +276,7 @@ where
             senders: Default::default(),
             parameters: Default::default(),
             metrics,
+            missing: Default::default(),
             enable,
         }
     }
@@ -295,10 +301,12 @@ where
     }
 
     /// A simple and naive strategy that requests missing blocks from random peers.
-    async fn sync_strategy(&self) {
+    async fn sync_strategy(&mut self) {
         if self.enable {
             return;
         }
+
+        let now = timestamp_utc();
         let mut to_request = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {
@@ -307,13 +315,33 @@ where
                 .with_label_values(&[&authority.to_string()])
                 .set(missing.len() as i64);
 
-            // TODO: If we are missing many blocks from the same authority
-            // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
-            // we have a network partition. We should try to find an other peer from which
-            // to (temporarily) sync the blocks from that authority.
-
-            to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
+            for reference in missing {
+                let time = self.missing.entry(reference).or_insert(now);
+                if now.checked_sub(*time).unwrap_or_default() >= self.parameters.grace_period {
+                    to_request.push(reference);
+                    self.missing.remove(&reference); // todo - ensure we receive the block
+                }
+            }
         }
+
+        // TODO: If we are missing many blocks from the same authority
+        // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
+        // we have a network partition. We should try to find an other peer from which
+        // to (temporarily) sync the blocks from that authority.
+
+        // for (authority, missing) in missing_blocks.into_iter().enumerate() {
+        //     self.metrics
+        //         .missing_blocks
+        //         .with_label_values(&[&authority.to_string()])
+        //         .set(missing.len() as i64);
+
+        //     // TODO: If we are missing many blocks from the same authority
+        //     // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
+        //     // we have a network partition. We should try to find an other peer from which
+        //     // to (temporarily) sync the blocks from that authority.
+
+        //     to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
+        // }
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
             let Some((peer, permit)) = self.sample_peer(&[self.id]) else {

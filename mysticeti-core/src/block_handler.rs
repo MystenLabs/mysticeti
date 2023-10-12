@@ -64,6 +64,7 @@ pub struct RealBlockHandler {
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
     pending_transactions: usize,
+    start_time: TimeInstant,
     consensus_only: bool,
 }
 
@@ -93,6 +94,7 @@ impl RealBlockHandler {
             metrics,
             receiver,
             pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
+            start_time: TimeInstant::now(),
             consensus_only,
         };
         (this, sender)
@@ -126,6 +128,12 @@ impl RealBlockHandler {
                 .inter_block_latency_s
                 .with_label_values(&["owned"])
                 .observe(latency.as_secs_f64());
+        }
+
+        // Do not record metrics during the first two minutes of the benchmark.
+        // todo - this is very ugly
+        if self.start_time.elapsed() <= Duration::from_secs(120) {
+            return;
         }
 
         // Record end-to-end latency.
@@ -398,8 +406,14 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
                 .observe(latency.as_secs_f64());
         }
 
+        // Do not record metrics during the first two minutes of the benchmark.
+        // todo - this is very ugly
+        if self.start_time.elapsed() <= Duration::from_secs(120) {
+            return;
+        }
+
         // Record benchmark start time.
-        let time_from_start = self.start_time.elapsed();
+        let time_from_start = self.start_time.elapsed() - Duration::from_secs(120); // todo - very ugly
         let benchmark_duration = self.metrics.benchmark_duration.get();
         if let Some(delta) = time_from_start.as_secs().checked_sub(benchmark_duration) {
             self.metrics.benchmark_duration.inc_by(delta);

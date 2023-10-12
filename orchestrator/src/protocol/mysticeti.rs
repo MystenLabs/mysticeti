@@ -68,8 +68,8 @@ impl FromStr for MysticetiBenchmarkType {
 
         let parameters = s.split("-").collect::<Vec<_>>();
         Ok(Self {
-            transaction_size: parameters[0].parse::<usize>().map_err(|e| s.to_string())?,
-            consensus_only: parameters[1].parse::<bool>().map_err(|e| s.to_string())?,
+            transaction_size: parameters[0].parse::<usize>().map_err(|e| e.to_string())?,
+            consensus_only: parameters[1].parse::<bool>().map_err(|e| e.to_string())?,
         })
     }
 }

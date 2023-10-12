@@ -27,6 +27,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tracing::info;
 
 pub trait BlockHandler: Send + Sync {
     fn handle_blocks(
@@ -115,7 +116,7 @@ impl RealBlockHandler {
     fn update_metrics(
         &self,
         block_creation: Option<&TimeInstant>,
-        transaction: &Transaction,
+        transaction: Option<&Transaction>,
         current_timestamp: &Duration,
     ) {
         // Record inter-block latency.
@@ -129,17 +130,19 @@ impl RealBlockHandler {
         }
 
         // Record end-to-end latency.
-        let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
-        let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
-        let square_latency = latency.as_secs_f64().powf(2.0);
-        self.metrics
-            .latency_s
-            .with_label_values(&["owned"])
-            .observe(latency.as_secs_f64());
-        self.metrics
-            .latency_squared_s
-            .with_label_values(&["owned"])
-            .inc_by(square_latency);
+        let tx_submission_timestamp = transaction.map(|t| TransactionGenerator::extract_timestamp(t));
+        if let Some(tx_submission_timestamp) = tx_submission_timestamp {
+            let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
+            let square_latency = latency.as_secs_f64().powf(2.0);
+            self.metrics
+                .latency_s
+                .with_label_values(&["owned"])
+                .observe(latency.as_secs_f64());
+            self.metrics
+                .latency_squared_s
+                .with_label_values(&["owned"])
+                .inc_by(square_latency);
+        }
     }
 }
 
@@ -173,13 +176,14 @@ impl BlockHandler for RealBlockHandler {
                 let processed =
                     self.transaction_votes
                         .process_block(block, response_option, &self.committee);
+                self.metrics.processed_locators.inc_by(processed.len() as u64);
                 for processed_locator in processed {
                     let block_creation = transaction_time.get(&processed_locator);
-                    let transaction = self
-                        .block_store
-                        .get_transaction(&processed_locator)
-                        .expect("Failed to get certified transaction");
-                    self.update_metrics(block_creation, &transaction, &current_timestamp);
+                    // let transaction = self
+                    //     .block_store
+                    //     .get_transaction(&processed_locator)
+                    //     .expect("Failed to get certified transaction");
+                    self.update_metrics(block_creation, None, &current_timestamp);
                 }
             }
         }

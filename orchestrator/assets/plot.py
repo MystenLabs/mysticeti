@@ -448,7 +448,7 @@ if __name__ == "__main__":
         help='The size of each transaction in the benchmark'
     )
     parser.add_argument(
-        '--workload', nargs='+', type=int, default=["owned", "shared"],
+        '--workload', nargs='+', type=str, default=["owned", "shared"],
         help='The type of object transaction (owned or shared)'
     )
     parser.add_argument(

@@ -64,7 +64,6 @@ pub struct RealBlockHandler {
     metrics: Arc<Metrics>,
     receiver: mpsc::Receiver<Vec<Transaction>>,
     pending_transactions: usize,
-    start_time: TimeInstant,
     consensus_only: bool,
 }
 
@@ -94,7 +93,6 @@ impl RealBlockHandler {
             metrics,
             receiver,
             pending_transactions: 0, // todo - need to initialize correctly when loaded from disk
-            start_time: TimeInstant::now(),
             consensus_only,
         };
         (this, sender)

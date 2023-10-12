@@ -130,12 +130,6 @@ impl RealBlockHandler {
                 .observe(latency.as_secs_f64());
         }
 
-        // Do not record metrics during the first two minutes of the benchmark.
-        // todo - this is very ugly
-        if self.start_time.elapsed() <= Duration::from_secs(120) {
-            return;
-        }
-
         // Record end-to-end latency.
         let tx_submission_timestamp = TransactionGenerator::extract_timestamp(transaction);
         let latency = current_timestamp.saturating_sub(tx_submission_timestamp);
@@ -404,12 +398,6 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
                 .inter_block_latency_s
                 .with_label_values(&["shared"])
                 .observe(latency.as_secs_f64());
-        }
-
-        // Do not record metrics during the first two minutes of the benchmark.
-        // todo - this is very ugly
-        if self.start_time.elapsed() <= Duration::from_secs(120) {
-            return;
         }
 
         // Record benchmark start time.

@@ -397,7 +397,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         }
 
         // Record benchmark start time.
-        let time_from_start = self.start_time.elapsed() - Duration::from_secs(120); // todo - very ugly
+        let time_from_start = self.start_time.elapsed();
         let benchmark_duration = self.metrics.benchmark_duration.get();
         if let Some(delta) = time_from_start.as_secs().checked_sub(benchmark_duration) {
             self.metrics.benchmark_duration.inc_by(delta);

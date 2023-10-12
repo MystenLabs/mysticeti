@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::crypto::{dummy_public_key, PublicKey};
+use crate::range_map::RangeMap;
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, Stake, StatementBlock, TransactionLocator,
-    TransactionLocatorRange, Vote,
+    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, Stake, StatementBlock,
+    TransactionLocator, TransactionLocatorRange, Vote,
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::Hash;
@@ -165,13 +165,13 @@ impl Authority {
 
 impl Print for Committee {}
 
-pub trait CommitteeThreshold {
+pub trait CommitteeThreshold: Clone {
     fn is_threshold(committee: &Committee, amount: Stake) -> bool;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct QuorumThreshold;
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ValidityThreshold;
 
 impl CommitteeThreshold for QuorumThreshold {
@@ -186,7 +186,7 @@ impl CommitteeThreshold for ValidityThreshold {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct StakeAggregator<TH> {
     votes: AuthoritySet,
     stake: Stake,
@@ -194,8 +194,8 @@ pub struct StakeAggregator<TH> {
 }
 
 /// Tracks votes for pending transactions and outputs certified transactions to a handler
-pub struct TransactionAggregator<K: TransactionAggregatorKey, TH, H = HashSet<K>> {
-    pending: HashMap<K, StakeAggregator<TH>>,
+pub struct TransactionAggregator<TH, H = HashSet<TransactionLocator>> {
+    pending: HashMap<BlockReference, RangeMap<u64, StakeAggregator<TH>>>,
     // todo - need to figure out serialization story with this
     // Currently we skip serialization for test handler,
     // but it also means some invariants wrt unknown_transaction might be potentially broken in some tests
@@ -262,11 +262,8 @@ impl<TH: CommitteeThreshold> StakeAggregator<TH> {
     }
 }
 
-impl<
-        K: TransactionAggregatorKey,
-        TH: CommitteeThreshold,
-        H: ProcessedTransactionHandler<K> + Default,
-    > TransactionAggregator<K, TH, H>
+impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator> + Default>
+    TransactionAggregator<TH, H>
 {
     pub fn new() -> Self {
         Self {
@@ -276,8 +273,8 @@ impl<
     }
 }
 
-impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactionHandler<K>>
-    TransactionAggregator<K, TH, H>
+impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
+    TransactionAggregator<TH, H>
 {
     pub fn with_handler(handler: H) -> Self {
         Self {
@@ -299,29 +296,66 @@ impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactio
 
     /// Returns Ok(()) if this is first time we see transaction and Err otherwise
     /// When Err is returned transaction is ignored
-    pub fn register(&mut self, k: K, vote: AuthorityIndex, committee: &Committee) {
-        match self.pending.entry(k) {
-            Entry::Occupied(_) => {
-                self.handler.duplicate_transaction(k, vote);
-            }
-            Entry::Vacant(va) => {
+    pub fn register(
+        &mut self,
+        locator_range: TransactionLocatorRange,
+        vote: AuthorityIndex,
+        committee: &Committee,
+    ) {
+        let range_map = self.pending.entry(*locator_range.block()).or_default();
+        range_map.mutate_range(locator_range.range(), |range, aggregator_opt| {
+            if aggregator_opt.is_some() {
+                for l in range {
+                    let k = TransactionLocator::new(*locator_range.block(), l);
+                    // todo - make duplicate_transaction take TransactionLocatorRange instead
+                    self.handler.duplicate_transaction(k, vote);
+                }
+            } else {
                 let mut aggregator = StakeAggregator::<TH>::new();
                 aggregator.add(vote, committee);
-                va.insert(aggregator);
+                *aggregator_opt = Some(aggregator);
             }
-        }
+        });
     }
 
-    fn vote(&mut self, k: K, vote: AuthorityIndex, committee: &Committee, processed: &mut Vec<K>) {
-        if let Some(aggregator) = self.pending.get_mut(&k) {
-            if aggregator.add(vote, committee) {
-                // todo - reuse entry and remove Copy constraint when "entry_insert" is stable
-                self.pending.remove(&k).unwrap();
-                self.handler.transaction_processed(k);
-                processed.push(k);
+    fn vote(
+        &mut self,
+        locator_range: TransactionLocatorRange,
+        vote: AuthorityIndex,
+        committee: &Committee,
+        processed: &mut Vec<TransactionLocator>,
+    ) {
+        if let Some(range_map) = self.pending.get_mut(locator_range.block()) {
+            range_map.mutate_range(locator_range.range(), |range, aggregator_opt| {
+                match aggregator_opt {
+                    None => {
+                        for l in range {
+                            let k = TransactionLocator::new(*locator_range.block(), l);
+                            // todo - make unknown_transaction take TransactionLocatorRange instead
+                            self.handler.unknown_transaction(k, vote);
+                        }
+                    }
+                    Some(aggregator) => {
+                        if aggregator.add(vote, committee) {
+                            for l in range {
+                                let k = TransactionLocator::new(*locator_range.block(), l);
+                                // todo - make transaction_processed take TransactionLocatorRange instead
+                                self.handler.transaction_processed(k);
+                                processed.push(k);
+                            }
+                            *aggregator_opt = None;
+                        }
+                    }
+                }
+            });
+            if range_map.is_empty() {
+                self.pending.remove(locator_range.block());
             }
         } else {
-            self.handler.unknown_transaction(k, vote);
+            for l in locator_range.locators() {
+                // todo - make unknown_transaction take TransactionLocatorRange instead
+                self.handler.unknown_transaction(l, vote);
+            }
         }
     }
 
@@ -334,8 +368,8 @@ impl<K: TransactionAggregatorKey, TH: CommitteeThreshold, H: ProcessedTransactio
     }
 }
 
-impl<K: TransactionAggregatorKey, TH: CommitteeThreshold> TransactionAggregator<K, TH> {
-    pub fn is_processed(&self, k: &K) -> bool {
+impl<TH: CommitteeThreshold> TransactionAggregator<TH> {
+    pub fn is_processed(&self, k: &TransactionLocator) -> bool {
         self.handler.contains(k)
     }
 }
@@ -346,7 +380,7 @@ pub enum TransactionVoteResult {
 }
 
 impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
-    TransactionAggregator<TransactionLocator, TH, H>
+    TransactionAggregator<TH, H>
 {
     pub fn process_block(
         &mut self,
@@ -355,38 +389,27 @@ impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
         committee: &Committee,
     ) -> Vec<TransactionLocator> {
         let mut processed = vec![];
-        let mut vote_range_builder = VoteRangeBuilder::default();
-        for (offset, statement) in block.statements().iter().enumerate() {
+        for range in block.shared_ranges() {
+            self.register(range, block.author(), committee);
+            if let Some(ref mut response) = response {
+                response.push(BaseStatement::VoteRange(range));
+            }
+        }
+        for statement in block.statements() {
             match statement {
-                BaseStatement::Share(_transaction) => {
-                    let locator = TransactionLocator::new(*block.reference(), offset as u64);
-                    self.register(locator, block.author(), committee);
-                    if let Some(ref mut response) = response {
-                        if let Some(range) = vote_range_builder.add(locator.offset()) {
-                            response.push(BaseStatement::VoteRange(TransactionLocatorRange::new(
-                                *block.reference(),
-                                range,
-                            )));
-                        }
-                    }
-                }
+                BaseStatement::Share(_transaction) => {}
                 BaseStatement::Vote(locator, vote) => match vote {
-                    Vote::Accept => self.vote(*locator, block.author(), committee, &mut processed),
+                    Vote::Accept => self.vote(
+                        TransactionLocatorRange::one(*locator),
+                        block.author(),
+                        committee,
+                        &mut processed,
+                    ),
                     Vote::Reject(_) => unimplemented!(),
                 },
                 BaseStatement::VoteRange(range) => {
-                    for locator in range.locators() {
-                        self.vote(locator, block.author(), committee, &mut processed);
-                    }
+                    self.vote(*range, block.author(), committee, &mut processed);
                 }
-            }
-        }
-        if let Some(ref mut response) = response {
-            if let Some(range) = vote_range_builder.finish() {
-                response.push(BaseStatement::VoteRange(TransactionLocatorRange::new(
-                    *block.reference(),
-                    range,
-                )));
             }
         }
         processed
@@ -399,11 +422,8 @@ impl<TH: CommitteeThreshold> Default for StakeAggregator<TH> {
     }
 }
 
-impl<
-        K: TransactionAggregatorKey,
-        TH: CommitteeThreshold,
-        H: ProcessedTransactionHandler<K> + Default,
-    > Default for TransactionAggregator<K, TH, H>
+impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator> + Default> Default
+    for TransactionAggregator<TH, H>
 {
     fn default() -> Self {
         Self::new()
@@ -411,7 +431,7 @@ impl<
 }
 
 #[derive(Default)]
-struct VoteRangeBuilder {
+pub struct VoteRangeBuilder {
     range: Option<Range<u64>>,
 }
 

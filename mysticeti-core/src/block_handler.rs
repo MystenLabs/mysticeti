@@ -56,7 +56,7 @@ const fn assert_constants() {
 }
 
 pub struct RealBlockHandler {
-    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, TransactionLog>,
+    transaction_votes: TransactionAggregator<QuorumThreshold, TransactionLog>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
@@ -195,9 +195,11 @@ impl BlockHandler for RealBlockHandler {
         let mut transaction_time = self.transaction_time.lock();
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
-            if !self.consensus_only {
+        }
+        if !self.consensus_only {
+            for range in block.shared_ranges() {
                 self.transaction_votes
-                    .register(locator, self.authority, &self.committee);
+                    .register(range, self.authority, &self.committee);
             }
         }
     }
@@ -221,7 +223,7 @@ impl BlockHandler for RealBlockHandler {
 // Immediately votes and generates new transactions
 pub struct TestBlockHandler {
     last_transaction: u64,
-    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold>,
+    transaction_votes: TransactionAggregator<QuorumThreshold>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
@@ -308,8 +310,10 @@ impl BlockHandler for TestBlockHandler {
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
             self.proposed.push(locator);
+        }
+        for range in block.shared_ranges() {
             self.transaction_votes
-                .register(locator, self.authority, &self.committee);
+                .register(range, self.authority, &self.committee);
         }
     }
 
@@ -330,7 +334,7 @@ impl BlockHandler for TestBlockHandler {
 
 pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
     commit_interpreter: Linearizer,
-    transaction_votes: TransactionAggregator<TransactionLocator, QuorumThreshold, H>,
+    transaction_votes: TransactionAggregator<QuorumThreshold, H>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
     // committed_dags: Vec<CommittedSubDag>,

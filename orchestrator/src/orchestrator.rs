@@ -555,7 +555,7 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
                     display::status(format!("{elapsed}s"));
 
                     let mut instances = metrics_commands.clone();
-                    instances.retain(|(instance, _)| !killed_nodes.contains(&instance));
+                    instances.retain(|(instance, _)| !killed_nodes.contains(instance));
 
                     let stdio = self
                         .ssh_manager

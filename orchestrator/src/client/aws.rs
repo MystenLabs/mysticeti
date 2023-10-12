@@ -384,7 +384,7 @@ impl ServerProviderClient for AwsClient {
     }
 
     async fn instance_setup_commands(&self) -> CloudProviderResult<Vec<String>> {
-        if self.settings.use_nvme && self.check_nvme_support().await? {
+        if self.settings.nvme && self.check_nvme_support().await? {
             Ok(self.nvme_mount_command())
         } else {
             Ok(Vec::new())

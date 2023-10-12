@@ -79,6 +79,8 @@ pub struct Settings {
     /// The directory (on the local machine) where to download logs files from the instances.
     #[serde(default = "default_logs_dir")]
     pub logs_dir: PathBuf,
+    #[serde(default = "default_use_nvme")]
+    pub nvme: bool,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -91,6 +93,10 @@ fn default_results_dir() -> PathBuf {
 
 fn default_logs_dir() -> PathBuf {
     ["./", "logs"].iter().collect()
+}
+
+fn default_use_nvme() -> bool {
+    true
 }
 
 impl Settings {
@@ -195,6 +201,7 @@ impl Settings {
             working_dir: "/path/to/working_dir".into(),
             results_dir: "results".into(),
             logs_dir: "logs".into(),
+            nvme: true,
         }
     }
 }

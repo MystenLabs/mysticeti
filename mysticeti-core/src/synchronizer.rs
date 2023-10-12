@@ -324,6 +324,9 @@ where
                 }
             }
         }
+        self.missing.retain(|_, time| {
+            now.checked_sub(*time).unwrap_or_default() < self.parameters.grace_period
+        });
 
         // TODO: If we are missing many blocks from the same authority
         // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that

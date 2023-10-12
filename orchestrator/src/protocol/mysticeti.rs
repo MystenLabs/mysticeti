@@ -29,10 +29,21 @@ const RUST_FLAGS: &str = "RUSTFLAGS=-C\\ target-cpu=native";
 
 /// The type of benchmarks supported by Mysticeti.
 /// Note that all transactions are interpreted as both owned and shared.
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MysticetiBenchmarkType {
     /// The transaction size in bytes.
     transaction_size: usize,
+    /// Consensus only mode.
+    consensus_only: bool,
+}
+
+impl Default for MysticetiBenchmarkType {
+    fn default() -> Self {
+        Self {
+            transaction_size: 512,
+            consensus_only: false,
+        }
+    }
 }
 
 impl Debug for MysticetiBenchmarkType {
@@ -48,11 +59,17 @@ impl Display for MysticetiBenchmarkType {
 }
 
 impl FromStr for MysticetiBenchmarkType {
-    type Err = std::num::ParseIntError;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let parameters = s.split("-").collect::<Vec<_>>();
         Ok(Self {
-            transaction_size: s.parse::<usize>()?,
+            transaction_size: parameters[0].parse::<usize>().map_err(|e| s.to_string())?,
+            consensus_only: parameters[1].parse::<bool>().map_err(|e| s.to_string())?,
         })
     }
 }
@@ -159,7 +176,11 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
                 .join(" ");
                 let tps = format!("export TPS={}", parameters.load / parameters.nodes);
                 let tx_size = format!("export TRANSACTION_SIZE={}", parameters.benchmark_type.transaction_size);
-                let consensus_only = format!("export CONSENSUS_ONLY={}", 1);
+                let consensus_only = if parameters.benchmark_type.consensus_only {
+                    format!("export CONSENSUS_ONLY={}", 1)
+                } else {
+                    "".to_string()
+                };
                 let syncer = format!("export USE_SYNCER={}", 1);
                 let command = ["#!/bin/bash -e", "source $HOME/.cargo/env", &tps, &tx_size, &consensus_only, &syncer, &run].join("\\n");
                 let command = format!("echo -e '{command}' > mysticeti-start.sh && chmod +x mysticeti-start.sh && ./mysticeti-start.sh");

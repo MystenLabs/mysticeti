@@ -72,6 +72,7 @@ where
     pub fn new(
         sender: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
+        parameters: SynchronizerParameters,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
@@ -79,7 +80,7 @@ where
             inner,
             own_blocks: None,
             other_blocks: Vec::new(),
-            parameters: SynchronizerParameters::default(),
+            parameters,
             metrics,
         }
     }
@@ -328,20 +329,6 @@ where
         // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
         // we have a network partition. We should try to find an other peer from which
         // to (temporarily) sync the blocks from that authority.
-
-        // for (authority, missing) in missing_blocks.into_iter().enumerate() {
-        //     self.metrics
-        //         .missing_blocks
-        //         .with_label_values(&[&authority.to_string()])
-        //         .set(missing.len() as i64);
-
-        //     // TODO: If we are missing many blocks from the same authority
-        //     // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that
-        //     // we have a network partition. We should try to find an other peer from which
-        //     // to (temporarily) sync the blocks from that authority.
-
-        //     to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
-        // }
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
             let Some((peer, permit)) = self.sample_peer(&[self.id]) else {

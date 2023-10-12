@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_handler::BlockHandler;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
+use crate::{block_handler::BlockHandler, types::AuthorityIndex};
 use crate::{data::Data, types::BlockReference};
 use std::sync::Arc;
 use std::{collections::HashSet, thread};
@@ -27,6 +27,10 @@ enum CoreThreadCommand {
     Cleanup(oneshot::Sender<()>),
     /// Request missing blocks that need to be synched.
     GetMissing(oneshot::Sender<Vec<HashSet<BlockReference>>>),
+    /// Indicate that a connection to an authority was established.
+    ConnectionEstablished(AuthorityIndex, oneshot::Sender<()>),
+    /// Indicate that a connection to an authority was dropped.
+    ConnectionDropped(AuthorityIndex, oneshot::Sender<()>),
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -78,6 +82,19 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         receiver.await.expect("core thread is not expected to stop")
     }
 
+    /// Update the syncer with the connection status of an authority. This function must be called
+    /// whenever a connection to an authority is established or dropped.
+    pub async fn authority_connection(&self, authority: AuthorityIndex, connected: bool) {
+        let (sender, receiver) = oneshot::channel();
+        let status = if connected {
+            CoreThreadCommand::ConnectionEstablished(authority, sender)
+        } else {
+            CoreThreadCommand::ConnectionDropped(authority, sender)
+        };
+        self.send(status).await;
+        receiver.await.expect("core thread is not expected to stop")
+    }
+
     async fn send(&self, command: CoreThreadCommand) {
         self.metrics.core_lock_enqueued.inc();
         if self.sender.send(command).await.is_err() {
@@ -109,6 +126,14 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
                 CoreThreadCommand::GetMissing(sender) => {
                     let missing = self.syncer.core().block_manager().missing_blocks();
                     sender.send(missing.to_vec()).ok();
+                }
+                CoreThreadCommand::ConnectionEstablished(authority, sender) => {
+                    self.syncer.connected_authorities.insert(authority);
+                    sender.send(()).ok();
+                }
+                CoreThreadCommand::ConnectionDropped(authority, sender) => {
+                    self.syncer.connected_authorities.remove(&authority);
+                    sender.send(()).ok();
                 }
             }
         }

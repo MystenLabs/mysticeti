@@ -206,7 +206,7 @@ class Plotter:
             )
 
         if plot_type == PlotType.L_GRAPH:
-            legend_anchor, legend_location = (0, 1), 'upper left'
+            legend_anchor, legend_location = (0.5, 1), 'lower center'
             plot_name = f'latency-{self.parameters.transaction_size}'
         elif plot_type == PlotType.HEALTH:
             legend_anchor, legend_location = (0, 1), 'upper left'

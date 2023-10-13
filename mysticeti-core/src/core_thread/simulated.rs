@@ -7,7 +7,7 @@ use crate::block_handler::BlockHandler;
 use crate::data::Data;
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::BlockReference;
-use crate::types::{RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use parking_lot::Mutex;
 
 pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -46,5 +46,14 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .block_manager()
             .missing_blocks()
             .to_vec()
+    }
+
+    pub async fn authority_connection(&self, authority_index: AuthorityIndex, connected: bool) {
+        let mut lock = self.syncer.lock();
+        if connected {
+            lock.connected_authorities.insert(authority_index);
+        } else {
+            lock.connected_authorities.remove(&authority_index);
+        }
     }
 }

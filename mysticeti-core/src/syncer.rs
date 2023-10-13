@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
 use crate::consensus::linearizer::CommittedSubDag;
 use crate::core::Core;
 use crate::data::Data;
@@ -9,6 +8,7 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use crate::{block_store::BlockStore, types::AuthorityIndex};
 use minibytes::Bytes;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     commit_period: u64,
     signals: S,
     commit_observer: C,
+    pub(crate) connected_authorities: HashSet<AuthorityIndex>,
     metrics: Arc<Metrics>,
 }
 
@@ -46,12 +47,14 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
+        let committee_size = core.committee().len();
         Self {
             core,
             force_new_block: false,
             commit_period,
             signals,
             commit_observer,
+            connected_authorities: HashSet::with_capacity(committee_size),
             metrics,
         }
     }
@@ -81,7 +84,11 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::try_new_block");
-        if self.force_new_block || self.core.ready_new_block(self.commit_period) {
+        if self.force_new_block
+            || self
+                .core
+                .ready_new_block(self.commit_period, &self.connected_authorities)
+        {
             if self.core.try_new_block().is_none() {
                 return;
             }

@@ -189,7 +189,7 @@ impl Grafana {
     /// The default grafana port.
     pub const DEFAULT_PORT: u16 = 3000;
 
-    /// The commands to install prometheus.
+    /// The commands to install grafana.
     pub fn install_commands() -> Vec<&'static str> {
         vec![
             "sudo apt-get install -y apt-transport-https software-properties-common wget",

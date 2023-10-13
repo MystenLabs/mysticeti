@@ -190,6 +190,11 @@ impl AwsClient {
         ]
     }
 
+    fn nvme_unmount_command(&self) -> Vec<String> {
+        let directory = self.settings.working_dir.display();
+        vec![format!("(sudo umount {directory} || true)")]
+    }
+
     /// Check whether the instance type specified in the settings supports NVMe drives.
     async fn check_nvme_support(&self) -> CloudProviderResult<bool> {
         // Get the client for the first region. A given instance type should either have NVMe support
@@ -384,10 +389,10 @@ impl ServerProviderClient for AwsClient {
     }
 
     async fn instance_setup_commands(&self) -> CloudProviderResult<Vec<String>> {
-        if self.check_nvme_support().await? {
+        if self.settings.nvme && self.check_nvme_support().await? {
             Ok(self.nvme_mount_command())
         } else {
-            Ok(Vec::new())
+            Ok(self.nvme_unmount_command())
         }
     }
 }

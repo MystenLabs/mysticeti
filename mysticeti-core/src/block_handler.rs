@@ -110,8 +110,6 @@ impl RealBlockHandler {
     }
 
     /// Expose a metric for certified transactions.
-    /// TODO: This function is currently unused.
-    #[allow(dead_code)]
     fn update_metrics(
         &self,
         block_creation: Option<&TimeInstant>,

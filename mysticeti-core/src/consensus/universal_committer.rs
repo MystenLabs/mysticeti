@@ -28,7 +28,6 @@ impl UniversalCommitter {
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
-        // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round = last_decided.round();
         let last_decided_round_authority = (last_decided.round(), last_decided.authority);
 

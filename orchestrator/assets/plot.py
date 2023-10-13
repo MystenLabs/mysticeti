@@ -15,49 +15,68 @@ from itertools import cycle
 # A simple python script to plot measurements results. This script requires
 # the following dependencies: `pip install matplotlib`.
 
+def ramp_up(scraper, ramp_up_threshold=120):
+    ramp_up_duration, ramp_up_count = 0, 0
+    ramp_up_sum, ramp_up_square_sum = 0, 0
+    for data in scraper:
+        duration = float(data['timestamp']['secs'])
+        if duration > ramp_up_threshold:
+            ramp_up_duration = duration
+            ramp_up_count = float(data['count'])
+            ramp_up_sum = float(data['sum']['secs'])
+            ramp_up_square_sum = float(data['squared_sum']['secs'])
+            break
+    return ramp_up_duration, ramp_up_count, ramp_up_sum, ramp_up_square_sum
 
-def aggregate_tps(measurement, workload, i=-1):
+def aggregate_tps(measurement, workload):
     if workload not in measurement['data']:
         return 0
     
     max_duration = 0
     for data in measurement['data'][workload].values():
-        duration = float(data[i]['timestamp']['secs'])
+        ramp_up_duration, _, _, _ = ramp_up(data)
+        duration = float(data[-1]['timestamp']['secs']) - ramp_up_duration
         max_duration = max(duration, max_duration)
 
     tps = []
     for data in measurement['data'][workload].values():
-        count = float(data[i]['count'])
+        _, ramp_up_count, _, _ = ramp_up(data)
+        count = float(data[-1]['count']) - ramp_up_count
         tps += [(count / max_duration) if max_duration != 0 else 0]
     return max(tps)
 
 
-def aggregate_average_latency(measurement, workload, i=-1):
+def aggregate_average_latency(measurement, workload):
     if workload not in measurement['data']:
         return 0
      
     latency = []
     for data in measurement['data'][workload].values():
-        last = data[i]
-        count = float(last['count'])
-        total = float(last['sum']['secs'])
+        _, ramp_up_count, ramp_up_sum, _ = ramp_up(data)
+        last = data[-1]
+        count = float(last['count']) - ramp_up_count
+        total = float(last['sum']['secs']) - ramp_up_sum
         latency += [total / count if count != 0 else 0]
     return sum(latency) / len(latency) if latency else 0
 
 
-def aggregate_stdev_latency(measurement, workload, i=-1):
+def aggregate_stdev_latency(measurement, workload):
     if workload not in measurement['data']:
         return 0
      
     stdev = []
     for data in measurement['data'][workload].values():
-        last = data[i]
-        count = float(last['count'])
+        _, ramp_up_count, ramp_up_sum, ramp_up_square_sum = ramp_up(data)
+        last = data[-1]
+        count = float(last['count']) - ramp_up_count
         if count == 0:
             stdev += [0]
         else:
-            first_term = float(last['squared_sum']['secs']) / count
-            second_term = (float(last['sum']['secs']) / count)**2
+            latency_sum = float(last['sum']['secs']) - ramp_up_sum
+            latency_square_sum = float(last['squared_sum']['secs']) - ramp_up_square_sum
+
+            first_term = latency_square_sum / count
+            second_term = (latency_sum / count)**2
             stdev += [math.sqrt(first_term - second_term)]
     return max(stdev)
 

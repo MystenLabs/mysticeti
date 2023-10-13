@@ -1,4 +1,3 @@
-use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
@@ -11,6 +10,7 @@ use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
+use crate::{core::Core, synchronizer::SynchronizerParameters};
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -176,10 +176,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .await
             .ok()?;
 
-        let mut disseminator =
-            BlockDisseminator::new(connection.sender.clone(), inner.clone(), metrics.clone());
+        let mut disseminator = BlockDisseminator::new(
+            connection.sender.clone(),
+            inner.clone(),
+            SynchronizerParameters::default(),
+            metrics.clone(),
+        );
 
-        let peer = format_authority_index(connection.peer_id as AuthorityIndex);
+        let id = connection.peer_id as AuthorityIndex;
+        inner.syncer.authority_connection(id, true).await;
+
+        let peer = format_authority_index(id);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
@@ -194,7 +201,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                             peer,
                             e
                         );
-                        // Terminate connection on receiving incorrect block
+                        // Terminate connection upon receiving incorrect block.
                         break;
                     }
                     inner.syncer.add_blocks(vec![block]).await;
@@ -218,8 +225,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
             }
         }
+        inner.syncer.authority_connection(id, false).await;
         disseminator.shutdown().await;
-        let id = connection.peer_id as AuthorityIndex;
         block_fetcher.remove_authority(id).await;
         None
     }

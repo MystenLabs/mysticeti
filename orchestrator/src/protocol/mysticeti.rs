@@ -54,7 +54,12 @@ impl Debug for MysticetiBenchmarkType {
 
 impl Display for MysticetiBenchmarkType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}B transactions", self.transaction_size)
+        let consensus_only = if self.consensus_only {
+            " (consensus-only)"
+        } else {
+            ""
+        };
+        write!(f, "{}B transactions{consensus_only}", self.transaction_size)
     }
 }
 

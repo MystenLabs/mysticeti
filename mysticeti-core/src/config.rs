@@ -72,7 +72,7 @@ impl Parameters {
     pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 3_600_000;
     pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
-    pub const DEFAULT_NUMBER_OF_LEADERS: usize = 5;
+    pub const DEFAULT_NUMBER_OF_LEADERS: usize = 2;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

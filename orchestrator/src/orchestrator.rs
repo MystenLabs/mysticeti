@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // use futures::future::select_all;
+use rand::seq::SliceRandom;
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self},
@@ -199,6 +200,7 @@ impl<P, T> Orchestrator<P, T> {
                 }
             }
         }
+        // nodes_instances.shuffle(&mut rand::thread_rng());
 
         // Spawn a load generate collocated with each node if there are no instances dedicated
         // to excursively run load generators.

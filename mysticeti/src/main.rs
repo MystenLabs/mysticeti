@@ -40,8 +40,8 @@ enum Operation {
         #[clap(long, value_name = "FILE", default_value = "genesis")]
         working_directory: PathBuf,
         /// Whether to enable pipelining within the universal committer.
-        #[clap(long, action, default_value = "true")]
-        enable_pipeline: bool,
+        #[clap(long, action, default_value = "false")]
+        disable_pipeline: bool,
         /// The number of leaders to use.
         #[clap(long, default_value = "2")]
         number_of_leaders: usize,
@@ -92,9 +92,9 @@ async fn main() -> Result<()> {
         Operation::BenchmarkGenesis {
             ips,
             working_directory,
-            enable_pipeline,
+            disable_pipeline,
             number_of_leaders,
-        } => benchmark_genesis(ips, working_directory, enable_pipeline, number_of_leaders)?,
+        } => benchmark_genesis(ips, working_directory, disable_pipeline, number_of_leaders)?,
         Operation::Run {
             authority,
             committee_path,
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
 fn benchmark_genesis(
     ips: Vec<IpAddr>,
     working_directory: PathBuf,
-    enable_pipelining: bool,
+    disable_pipeline: bool,
     number_of_leaders: usize,
 ) -> Result<()> {
     tracing::info!("Generating benchmark genesis files");
@@ -143,7 +143,7 @@ fn benchmark_genesis(
     let mut parameters_path = working_directory.clone();
     parameters_path.push(Parameters::DEFAULT_FILENAME);
     Parameters::new_for_benchmarks(ips)
-        .with_pipeline(enable_pipelining)
+        .with_pipeline(disable_pipeline)
         .with_number_of_leaders(number_of_leaders)
         .print(&parameters_path)
         .wrap_err("Failed to print parameters file")?;

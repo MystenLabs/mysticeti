@@ -123,10 +123,15 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         let working_directory = self.working_dir.display();
 
         let enable_pipeline = if parameters.benchmark_type.pipelined {
-            "--enable-pipelining"
+            "--disable-pipelining"
         } else {
             ""
         };
+        println!(
+            "parameters: num leaders: {:?}",
+            parameters.benchmark_type.number_of_leaders
+        );
+        println!("enable_pipeline: {}", enable_pipeline);
         let number_of_leaders = parameters.benchmark_type.number_of_leaders;
 
         let genesis = [

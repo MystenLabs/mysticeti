@@ -122,6 +122,7 @@ impl<H: BlockHandler> Core<H> {
                 .with_number_of_leaders(parameters.number_of_leaders)
                 .with_pipeline(parameters.enable_pipelining)
                 .build();
+        tracing::warn!("pipeline: {}", parameters.enable_pipelining);
 
         let mut this = Self {
             block_manager,

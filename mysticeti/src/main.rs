@@ -132,8 +132,6 @@ fn benchmark_genesis(
         working_directory.display()
     ))?;
 
-    tracing::warn!("pipeline: {enable_pipelining}");
-
     let committee_size = ips.len();
     let mut committee_path = working_directory.clone();
     committee_path.push(Committee::DEFAULT_FILENAME);

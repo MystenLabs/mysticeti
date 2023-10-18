@@ -23,7 +23,7 @@ pub trait ProtocolCommands<T: BenchmarkType> {
 
     /// The command to generate the genesis and all configuration files. This command
     /// is run on each remote machine.
-    fn genesis_command<'a, I>(&self, instances: I) -> String
+    fn genesis_command<'a, I>(&self, instances: I, parameters: &BenchmarkParameters<T>) -> String
     where
         I: Iterator<Item = &'a Instance>;
 

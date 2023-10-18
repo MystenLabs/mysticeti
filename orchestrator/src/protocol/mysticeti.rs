@@ -35,6 +35,10 @@ pub struct MysticetiBenchmarkType {
     transaction_size: usize,
     /// Consensus only mode.
     consensus_only: bool,
+    /// Whether to enable pipeline within the universal committer.
+    pipelined: bool,
+    /// The number of leaders to use.
+    number_of_leaders: usize,
 }
 
 impl Default for MysticetiBenchmarkType {
@@ -42,6 +46,8 @@ impl Default for MysticetiBenchmarkType {
         Self {
             transaction_size: 512,
             consensus_only: false,
+            pipelined: true,
+            number_of_leaders: 2,
         }
     }
 }
@@ -75,6 +81,8 @@ impl FromStr for MysticetiBenchmarkType {
         Ok(Self {
             transaction_size: parameters[0].parse::<usize>().map_err(|e| e.to_string())?,
             consensus_only: parameters[1].parse::<bool>().map_err(|e| e.to_string())?,
+            pipelined: parameters[2].parse::<bool>().map_err(|e| e.to_string())?,
+            number_of_leaders: parameters[3].parse::<usize>().map_err(|e| e.to_string())?,
         })
     }
 }
@@ -100,7 +108,11 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         vec!["killall mysticeti".to_string()]
     }
 
-    fn genesis_command<'a, I>(&self, instances: I) -> String
+    fn genesis_command<'a, I>(
+        &self,
+        instances: I,
+        parameters: &BenchmarkParameters<MysticetiBenchmarkType>,
+    ) -> String
     where
         I: Iterator<Item = &'a Instance>,
     {
@@ -110,10 +122,17 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
             .join(" ");
         let working_directory = self.working_dir.display();
 
+        let enable_pipeline = if parameters.benchmark_type.pipelined {
+            "--enable-pipelining"
+        } else {
+            ""
+        };
+        let number_of_leaders = parameters.benchmark_type.number_of_leaders;
+
         let genesis = [
             &format!("{RUST_FLAGS} cargo run {CARGO_FLAGS} --bin mysticeti --"),
             "benchmark-genesis",
-            &format!("--ips {ips} --working-directory {working_directory}"),
+            &format!("--ips {ips} --working-directory {working_directory} {enable_pipeline} --number-of-leaders {number_of_leaders}"),
         ]
         .join(" ");
 

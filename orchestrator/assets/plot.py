@@ -77,7 +77,10 @@ def aggregate_stdev_latency(measurement, workload):
 
             first_term = latency_square_sum / count
             second_term = (latency_sum / count)**2
-            stdev += [math.sqrt(first_term - second_term)]
+            if round(first_term - second_term) != 0:
+                stdev += [math.sqrt(first_term - second_term)]
+            else:
+                stdev += [0]
     return max(stdev)
 
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // use futures::future::select_all;
-use rand::seq::SliceRandom;
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self},
@@ -442,7 +441,9 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Generate the genesis configuration file and the keystore allowing access to gas objects.
-        let command = self.protocol_commands.genesis_command(nodes.iter());
+        let command = self
+            .protocol_commands
+            .genesis_command(nodes.iter(), parameters);
         let repo_name = self.settings.repository_name();
         let context = CommandContext::new().with_execute_from_path(repo_name.into());
         let all = clients.into_iter().chain(nodes);

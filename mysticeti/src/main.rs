@@ -39,6 +39,12 @@ enum Operation {
         /// The working directory where the files will be generated.
         #[clap(long, value_name = "FILE", default_value = "genesis")]
         working_directory: PathBuf,
+        /// Whether to enable pipelining within the universal committer.
+        #[clap(long, default_value = "true")]
+        enable_pipeline: bool,
+        /// The number of leaders to use.
+        #[clap(long, default_value = "2")]
+        number_of_leaders: usize,
     },
     /// Run a validator node.
     Run {
@@ -86,7 +92,9 @@ async fn main() -> Result<()> {
         Operation::BenchmarkGenesis {
             ips,
             working_directory,
-        } => benchmark_genesis(ips, working_directory)?,
+            enable_pipeline,
+            number_of_leaders,
+        } => benchmark_genesis(ips, working_directory, enable_pipeline, number_of_leaders)?,
         Operation::Run {
             authority,
             committee_path,
@@ -112,7 +120,12 @@ async fn main() -> Result<()> {
 }
 
 /// Generate all the genesis files required for benchmarks.
-fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()> {
+fn benchmark_genesis(
+    ips: Vec<IpAddr>,
+    working_directory: PathBuf,
+    enable_pipelining: bool,
+    number_of_leaders: usize,
+) -> Result<()> {
     tracing::info!("Generating benchmark genesis files");
     fs::create_dir_all(&working_directory).wrap_err(format!(
         "Failed to create directory '{}'",
@@ -130,6 +143,8 @@ fn benchmark_genesis(ips: Vec<IpAddr>, working_directory: PathBuf) -> Result<()>
     let mut parameters_path = working_directory.clone();
     parameters_path.push(Parameters::DEFAULT_FILENAME);
     Parameters::new_for_benchmarks(ips)
+        .with_pipeline(enable_pipelining)
+        .with_number_of_leaders(number_of_leaders)
         .print(&parameters_path)
         .wrap_err("Failed to print parameters file")?;
     tracing::info!(

@@ -143,7 +143,7 @@ fn benchmark_genesis(
     let mut parameters_path = working_directory.clone();
     parameters_path.push(Parameters::DEFAULT_FILENAME);
     Parameters::new_for_benchmarks(ips)
-        .with_pipeline(disable_pipeline)
+        .with_pipeline(!disable_pipeline)
         .with_number_of_leaders(number_of_leaders)
         .print(&parameters_path)
         .wrap_err("Failed to print parameters file")?;

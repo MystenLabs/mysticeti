@@ -123,7 +123,7 @@ impl ProtocolCommands<MysticetiBenchmarkType> for MysticetiProtocol {
         let working_directory = self.working_dir.display();
 
         let enable_pipeline = if parameters.benchmark_type.disable_pipeline {
-            "--disable-pipelining"
+            "--disable-pipeline"
         } else {
             ""
         };

@@ -40,7 +40,7 @@ enum Operation {
         #[clap(long, value_name = "FILE", default_value = "genesis")]
         working_directory: PathBuf,
         /// Whether to enable pipelining within the universal committer.
-        #[clap(long, default_value = "true")]
+        #[clap(long, action, default_value = "true")]
         enable_pipeline: bool,
         /// The number of leaders to use.
         #[clap(long, default_value = "2")]
@@ -131,6 +131,8 @@ fn benchmark_genesis(
         "Failed to create directory '{}'",
         working_directory.display()
     ))?;
+
+    tracing::warn!("pipeline: {enable_pipelining}");
 
     let committee_size = ips.len();
     let mut committee_path = working_directory.clone();

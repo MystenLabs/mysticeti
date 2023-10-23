@@ -1,10 +1,10 @@
-// TODO: other sections of readme
+# Mysticeti
 
-# Cross-compilation
+[![rustc](https://img.shields.io/badge/rustc-1.72+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![license](https://img.shields.io/badge/license-Apache-blue.svg?style=flat-square)](LICENSE)
 
-Setup:
- * rustup target add x86_64-unknown-linux-gnu
- * brew install SergioBenitez/osxct/x86_64-unknown-linux-gnu
+The code in this branch is a prototype of Mysticeti. It supplements the paper [Mysticeti: Low-Latency DAG Consensus
+with Fast Commit Path]() enabling reproducible results. There are no plans to maintain this branch.
 
-Build:
- * TARGET_CC=x86_64-unknown-linux-gnu cargo build --release --target x86_64-unknown-linux-gnu -p mysticeti-main
+## License
+This software is licensed as [Apache 2.0](LICENSE).

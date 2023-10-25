@@ -67,7 +67,10 @@ pub struct BenchmarkFastPathBlockHandler {
     consensus_only: bool,
 }
 
-const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
+// BenchmarkFastPathBlockHandler can push up to 2x of SOFT_MAX_PROPOSED_PER_BLOCK into block
+// So the value here should be chosen so that 2*SOFT_MAX_PROPOSED_PER_BLOCK*TRANSACTION_SIZE
+// is lower then the maximum allowed block size in the system
+const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 10 * 1000;
 
 impl BenchmarkFastPathBlockHandler {
     pub fn new(

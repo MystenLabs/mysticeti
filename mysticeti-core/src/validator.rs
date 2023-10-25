@@ -13,7 +13,7 @@ use eyre::{eyre, Context, Result};
 
 use crate::wal::walf;
 use crate::{
-    block_handler::{RealBlockHandler, TestCommitHandler},
+    block_handler::{BenchmarkFastPathBlockHandler, TestCommitHandler},
     committee::Committee,
     config::{Parameters, PrivateConfig},
     core::Core,
@@ -29,7 +29,8 @@ use crate::{block_store::BlockStore, log::TransactionLog};
 use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 
 pub struct Validator {
-    network_synchronizer: NetworkSyncer<RealBlockHandler, TestCommitHandler<TransactionLog>>,
+    network_synchronizer:
+        NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitHandler<TransactionLog>>,
     metrics_handle: JoinHandle<Result<(), hyper::Error>>,
 }
 
@@ -75,7 +76,7 @@ impl Validator {
         );
 
         // Boot the validator node.
-        let (block_handler, block_sender) = RealBlockHandler::new(
+        let (block_handler, block_sender) = BenchmarkFastPathBlockHandler::new(
             committee.clone(),
             authority,
             config.storage(),

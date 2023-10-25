@@ -55,7 +55,7 @@ const fn assert_constants() {
     }
 }
 
-pub struct RealBlockHandler {
+pub struct BenchmarkFastPathBlockHandler {
     transaction_votes: TransactionAggregator<QuorumThreshold, TransactionLog>,
     pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
     committee: Arc<Committee>,
@@ -69,7 +69,7 @@ pub struct RealBlockHandler {
 
 const SOFT_MAX_PROPOSED_PER_BLOCK: usize = 20 * 1000;
 
-impl RealBlockHandler {
+impl BenchmarkFastPathBlockHandler {
     pub fn new(
         committee: Arc<Committee>,
         authority: AuthorityIndex,
@@ -97,7 +97,7 @@ impl RealBlockHandler {
     }
 }
 
-impl RealBlockHandler {
+impl BenchmarkFastPathBlockHandler {
     fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
         if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
             return None;
@@ -141,7 +141,7 @@ impl RealBlockHandler {
     }
 }
 
-impl BlockHandler for RealBlockHandler {
+impl BlockHandler for BenchmarkFastPathBlockHandler {
     fn handle_blocks(
         &mut self,
         blocks: &[Data<StatementBlock>],

@@ -193,9 +193,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
-                    if let Err(e) = block.verify(&inner.committee, &statement_block_validator) {
+                    // Verify blocks baesd on consensus rules
+                    if let Err(e) = block.verify(&inner.committee) {
                         tracing::warn!(
-                            "Rejected incorrect block {} from {}: {:?}",
+                            "Rejected incorrect block {} based on consensus rules from {}: {:?}",
                             block.reference(),
                             peer,
                             e
@@ -203,6 +204,22 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
+                    // Verify blocks based on customized validation rules
+                    if let Err(e) = statement_block_validator
+                        .verify(&block)
+                        .await
+                        .map_err(|e| eyre::eyre!("Invalid StatementBlock content: {e}"))
+                    {
+                        tracing::warn!(
+                            "Rejected incorret block {} based on validation rules from {}: {:?}",
+                            block.reference(),
+                            peer,
+                            e
+                        );
+                        // Terminate connection on receiving incorrect block
+                        break;
+                    }
+
                     inner.syncer.add_blocks(vec![block]).await;
                 }
                 NetworkMessage::RequestBlocks(references) => {

@@ -10,7 +10,7 @@ use crate::types::StatementBlock;
 pub trait StatementBlockValidator: Clone + Send + Sync + 'static {
     type Error: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static;
     /// Determines if a statement block's content is valid.
-    fn verify(&self, b: &StatementBlock) -> Result<(), Self::Error>;
+    async fn verify(&self, b: &StatementBlock) -> Result<(), Self::Error>;
 }
 
 /// Simple validator that accepts all transactions and batches.
@@ -21,7 +21,7 @@ pub struct AcceptAllValidator;
 impl StatementBlockValidator for AcceptAllValidator {
     type Error = eyre::Report;
 
-    fn verify(&self, _b: &StatementBlock) -> Result<(), Self::Error> {
+    async fn verify(&self, _b: &StatementBlock) -> Result<(), Self::Error> {
         Ok(())
     }
 }

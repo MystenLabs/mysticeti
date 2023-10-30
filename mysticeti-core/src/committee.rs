@@ -41,6 +41,7 @@ impl Committee {
 
         // Ensure all stakes are positive
         assert!(authorities.iter().all(|a| a.stake() > 0));
+        assert!(authorities.len() <= AuthoritySet::MAX_SIZE);
 
         let mut total_stake: Stake = 0;
         for a in authorities.iter() {

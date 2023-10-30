@@ -23,6 +23,7 @@ use eyre::{bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::mem::size_of;
 use std::ops::Range;
 use std::time::Duration;
 #[cfg(test)]
@@ -91,8 +92,19 @@ pub struct StatementBlock {
     signature: SignatureBytes,
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
-pub struct AuthoritySet(u128); // todo - support more then 128 authorities
+type AuthoritySetElement = u32;
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct AuthoritySet(Vec<AuthoritySetElement>);
+
+impl Default for AuthoritySet {
+    fn default() -> Self {
+        // Represents 128 validators by default.
+        // It is able to grow automatically if needed to deal with unplanned committee growth.
+        // In general, if we know roughly how big our committee is, we should always set a capacity
+        // here so that we don't need to allocate extra memory at runtime.
+        Self(vec![0; 4])
+    }
+}
 
 pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
@@ -459,23 +471,38 @@ impl fmt::Display for BlockReference {
 }
 
 impl AuthoritySet {
+    const ELEMENT_BITS: u64 = size_of::<AuthoritySetElement>() as u64 * 8;
+
     #[inline]
-    pub fn insert(&mut self, v: AuthorityIndex) -> bool {
-        let bit = 1u128 << v;
-        if self.0 & bit == bit {
-            return false;
+    pub fn insert(&mut self, index: AuthorityIndex) -> bool {
+        let byte_index = (index / Self::ELEMENT_BITS) as usize;
+        let bit_index = index % Self::ELEMENT_BITS;
+
+        // Grow the vector if it's not large enough.
+        while self.0.len() <= byte_index {
+            self.0.push(0);
         }
-        self.0 |= bit;
-        true
+
+        let bit = 1 << bit_index;
+        if (self.0[byte_index] & bit) != 0 {
+            false
+        } else {
+            self.0[byte_index] |= bit;
+            true
+        }
     }
 
     pub fn present(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
-        (0..128).filter(|bit| (self.0 & 1 << bit) != 0)
+        self.0.iter().enumerate().flat_map(|(byte_index, byte)| {
+            (0..Self::ELEMENT_BITS)
+                .filter(move |bit_index| (byte & (1 << bit_index)) != 0)
+                .map(move |bit_index| byte_index as AuthorityIndex * Self::ELEMENT_BITS + bit_index)
+        })
     }
 
     #[inline]
     pub fn clear(&mut self) {
-        self.0 = 0;
+        self.0.fill(0);
     }
 }
 
@@ -782,5 +809,25 @@ mod test {
             a.insert(*x);
         }
         assert_eq!(present, a.present().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn large_authority_set_test() {
+        let mut a = AuthoritySet::default();
+        assert!(a.insert(128));
+        assert!(!a.insert(128));
+        assert!(a.insert(234));
+        assert!(a.insert(567));
+        assert!(!a.insert(567));
+        assert!(a.insert(1025));
+        assert!(!a.insert(1025));
+        assert!(a.insert(5000));
+        assert!(!a.insert(5000));
+        assert_eq!(
+            a.present().collect::<Vec<_>>(),
+            vec![128, 234, 567, 1025, 5000]
+        );
+        a.clear();
+        assert!(a.present().collect::<Vec<_>>().is_empty());
     }
 }

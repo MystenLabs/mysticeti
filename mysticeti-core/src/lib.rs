@@ -35,6 +35,7 @@ mod simulator;
 mod simulator_tracing;
 mod stat;
 mod state;
+pub mod statement_block_validator;
 mod syncer;
 mod synchronizer;
 #[cfg(test)]

@@ -17,6 +17,7 @@ clap = { version = "4.3.3", features = ["derive"] }
 tracing = "0.1.37"
 tempfile = "3.6.0"
 reqwest = { version = "0.11.18", features = ["json"] }
+async-trait = "0.1.61"
 
 [profile.release]
 panic = "abort"

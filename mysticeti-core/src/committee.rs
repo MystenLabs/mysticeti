@@ -26,6 +26,7 @@ pub struct Committee {
     quorum_threshold: Stake,   // The minimum stake required for quorum
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl Committee {
     pub const DEFAULT_FILENAME: &'static str = "committee.yaml";
 
@@ -294,8 +295,6 @@ impl<TH: CommitteeThreshold, H: ProcessedTransactionHandler<TransactionLocator>>
         self.pending = bincode::deserialize(state).expect("Deserialization failed");
     }
 
-    /// Returns Ok(()) if this is first time we see transaction and Err otherwise
-    /// When Err is returned transaction is ignored
     pub fn register(
         &mut self,
         locator_range: TransactionLocatorRange,

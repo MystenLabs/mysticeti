@@ -4,6 +4,7 @@ use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
+use crate::statement_block_validator::StatementBlockValidator;
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::AuthorityIndex;
@@ -47,6 +48,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         commit_period: u64,
         mut commit_observer: C,
         shutdown_grace_period: Duration,
+        validator: impl StatementBlockValidator,
         metrics: Arc<Metrics>,
     ) -> Self {
         let authority_index = core.authority();
@@ -92,6 +94,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             epoch_receiver,
             shutdown_grace_period,
             block_fetcher,
+            Arc::new(validator),
             metrics.clone(),
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
@@ -120,6 +123,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
         block_fetcher: Arc<BlockFetcher>,
+        validator: Arc<impl StatementBlockValidator>,
         metrics: Arc<Metrics>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
@@ -145,6 +149,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 connection,
                 inner.clone(),
                 block_fetcher.clone(),
+                validator.clone(),
                 metrics.clone(),
             ));
             connections.insert(peer_id, task);
@@ -165,6 +170,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
+        statement_block_validator: Arc<impl StatementBlockValidator>,
         metrics: Arc<Metrics>,
     ) -> Option<()> {
         let last_seen = inner
@@ -187,9 +193,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
+                    // Verify blocks baesd on consensus rules
                     if let Err(e) = block.verify(&inner.committee) {
                         tracing::warn!(
-                            "Rejected incorrect block {} from {}: {:?}",
+                            "Rejected incorrect block {} based on consensus rules from {}: {:?}",
                             block.reference(),
                             peer,
                             e
@@ -197,6 +204,22 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
+                    // Verify blocks based on customized validation rules
+                    if let Err(e) = statement_block_validator
+                        .verify(&block)
+                        .await
+                        .map_err(|e| eyre::eyre!("Invalid StatementBlock content: {e}"))
+                    {
+                        tracing::warn!(
+                            "Rejected incorret block {} based on validation rules from {}: {:?}",
+                            block.reference(),
+                            peer,
+                            e
+                        );
+                        // Terminate connection on receiving incorrect block
+                        break;
+                    }
+
                     inner.syncer.add_blocks(vec![block]).await;
                 }
                 NetworkMessage::RequestBlocks(references) => {

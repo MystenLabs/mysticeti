@@ -379,6 +379,10 @@ impl TransactionLocatorRange {
         (self.offset_end_exclusive - self.offset_start_inclusive) as usize
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn verify(&self) -> eyre::Result<()> {
         ensure!(
             self.offset_end_exclusive >= self.offset_start_inclusive,

@@ -17,6 +17,7 @@ pub type PublicKey = crate::crypto::PublicKey;
 use crate::committee::{Committee, VoteRangeBuilder};
 use crate::crypto::{AsBytes, CryptoHash, SignatureBytes, Signer};
 use crate::data::Data;
+use crate::statement_block_validator::StatementBlockValidator;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
 use digest::Digest;
 use eyre::{bail, ensure};
@@ -265,7 +266,11 @@ impl StatementBlock {
         Duration::new(secs as u64, nanos as u32)
     }
 
-    pub fn verify(&self, committee: &Committee) -> eyre::Result<()> {
+    pub fn verify(
+        &self,
+        committee: &Committee,
+        validator: &std::sync::Arc<impl StatementBlockValidator>,
+    ) -> eyre::Result<()> {
         let round = self.round();
         let digest = BlockDigest::new(
             self.author(),
@@ -318,7 +323,10 @@ impl StatementBlock {
             threshold_clock_valid_non_genesis(self, committee),
             "Threshold clock is not valid"
         );
-        Ok(())
+
+        validator
+            .verify(self)
+            .map_err(|e| eyre::eyre!("Invalid StatementBlock content: {e}"))
     }
 
     pub fn detailed(&self) -> Detailed {
@@ -377,6 +385,10 @@ impl TransactionLocatorRange {
 
     pub fn len(&self) -> usize {
         (self.offset_end_exclusive - self.offset_start_inclusive) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn verify(&self) -> eyre::Result<()> {

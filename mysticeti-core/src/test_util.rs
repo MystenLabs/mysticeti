@@ -14,6 +14,7 @@ use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
+use crate::statement_block_validator::AcceptAllValidator;
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,
@@ -206,6 +207,7 @@ pub fn simulated_network_syncers_with_epoch_duration(
             3,
             commit_handler,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            AcceptAllValidator,
             test_metrics(),
         );
         drop(node_context);
@@ -238,6 +240,7 @@ pub async fn network_syncers_with_epoch_duration(
             3,
             commit_handler,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            AcceptAllValidator,
             test_metrics(),
         );
         network_syncers.push(network_syncer);

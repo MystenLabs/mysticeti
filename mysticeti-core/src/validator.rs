@@ -11,6 +11,7 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
+use crate::statement_block_validator::AcceptAllValidator;
 use crate::wal::walf;
 use crate::{
     block_handler::{BenchmarkFastPathBlockHandler, TestCommitHandler},
@@ -141,6 +142,7 @@ impl Validator {
             parameters.wave_length(),
             commit_handler,
             parameters.shutdown_grace_period(),
+            AcceptAllValidator,
             metrics,
         );
 

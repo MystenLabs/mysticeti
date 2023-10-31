@@ -11,7 +11,7 @@ use std::{
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
-use crate::statement_block_validator::AcceptAllValidator;
+use crate::block_validator::AcceptAllValidator;
 use crate::wal::walf;
 use crate::{
     block_handler::{BenchmarkFastPathBlockHandler, TestCommitHandler},

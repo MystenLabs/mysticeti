@@ -1,10 +1,10 @@
+use crate::block_validator::BlockValidator;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
-use crate::statement_block_validator::StatementBlockValidator;
 use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::AuthorityIndex;
@@ -48,7 +48,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         commit_period: u64,
         mut commit_observer: C,
         shutdown_grace_period: Duration,
-        validator: impl StatementBlockValidator,
+        validator: impl BlockValidator,
         metrics: Arc<Metrics>,
     ) -> Self {
         let authority_index = core.authority();
@@ -123,7 +123,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
         block_fetcher: Arc<BlockFetcher>,
-        validator: Arc<impl StatementBlockValidator>,
+        validator: Arc<impl BlockValidator>,
         metrics: Arc<Metrics>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
@@ -170,7 +170,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
-        statement_block_validator: Arc<impl StatementBlockValidator>,
+        statement_block_validator: Arc<impl BlockValidator>,
         metrics: Arc<Metrics>,
     ) -> Option<()> {
         let last_seen = inner

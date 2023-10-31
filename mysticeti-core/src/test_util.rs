@@ -3,6 +3,7 @@
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
+use crate::block_validator::AcceptAllValidator;
 use crate::committee::Committee;
 use crate::config::Parameters;
 use crate::core::{Core, CoreOptions};
@@ -14,7 +15,6 @@ use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
-use crate::statement_block_validator::AcceptAllValidator;
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,

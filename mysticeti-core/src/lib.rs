@@ -4,6 +4,7 @@
 pub mod block_handler;
 mod block_manager;
 mod block_store;
+pub mod block_validator;
 pub mod committee;
 pub mod config;
 pub mod consensus;
@@ -35,7 +36,6 @@ mod simulator;
 mod simulator_tracing;
 mod stat;
 mod state;
-pub mod statement_block_validator;
 mod syncer;
 mod synchronizer;
 #[cfg(test)]

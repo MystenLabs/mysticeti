@@ -12,6 +12,7 @@ use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
 use crate::block_validator::AcceptAllValidator;
+use crate::runtime::Handle;
 use crate::wal::walf;
 use crate::{
     block_handler::{BenchmarkFastPathBlockHandler, TestCommitHandler},
@@ -41,6 +42,7 @@ impl Validator {
         committee: Arc<Committee>,
         parameters: &Parameters,
         config: PrivateConfig,
+        registry: Option<Registry>,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -49,20 +51,30 @@ impl Validator {
         let mut binding_network_address = network_address;
         binding_network_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
-        let metrics_address = parameters
-            .metrics_address(authority)
-            .ok_or(eyre!("No metrics address for authority {authority}"))
-            .wrap_err("Unknown authority")?;
-        let mut binding_metrics_address = metrics_address;
-        binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        // Boot the prometheus server only when a registry is not passed in. If a registry is passed in
+        // we assume that an upstream component is responsible for exposing the metrics.
+        let (registry, metrics_handle) = if let Some(registry) = registry {
+            (registry, Handle::current().spawn(async { Ok(()) }))
+        } else {
+            let registry = Registry::new();
 
-        // Boot the prometheus server.
-        let registry = Registry::new();
+            let metrics_address = parameters
+                .metrics_address(authority)
+                .ok_or(eyre!("No metrics address for authority {authority}"))
+                .wrap_err("Unknown authority")?;
+            let mut binding_metrics_address = metrics_address;
+            binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+
+            let metrics_handle =
+                prometheus::start_prometheus_server(binding_metrics_address, &registry);
+
+            tracing::info!("Validator {authority} exposing metrics on {metrics_address}");
+
+            (registry, metrics_handle)
+        };
+
         let (metrics, reporter) = Metrics::new(&registry, Some(&committee));
         reporter.start();
-
-        let metrics_handle =
-            prometheus::start_prometheus_server(binding_metrics_address, &registry);
 
         // Open the block store.
         let wal_file =
@@ -147,7 +159,6 @@ impl Validator {
         );
 
         tracing::info!("Validator {authority} listening on {network_address}");
-        tracing::info!("Validator {authority} exposing metrics on {metrics_address}");
 
         Ok(Self {
             network_synchronizer,
@@ -228,9 +239,10 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator = Validator::start(authority, committee.clone(), &parameters, private)
-                .await
-                .unwrap();
+            let validator =
+                Validator::start(authority, committee.clone(), &parameters, private, None)
+                    .await
+                    .unwrap();
             handles.push(validator.await_completion());
         }
 
@@ -263,9 +275,10 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator = Validator::start(authority, committee.clone(), &parameters, private)
-                .await
-                .unwrap();
+            let validator =
+                Validator::start(authority, committee.clone(), &parameters, private, None)
+                    .await
+                    .unwrap();
             handles.push(validator.await_completion());
         }
 
@@ -284,7 +297,7 @@ mod smoke_tests {
         // Boot the last validator.
         let authority = 0 as AuthorityIndex;
         let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
-        let validator = Validator::start(authority, committee.clone(), &parameters, private)
+        let validator = Validator::start(authority, committee.clone(), &parameters, private, None)
             .await
             .unwrap();
         handles.push(validator.await_completion());
@@ -317,9 +330,10 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator = Validator::start(authority, committee.clone(), &parameters, private)
-                .await
-                .unwrap();
+            let validator =
+                Validator::start(authority, committee.clone(), &parameters, private, None)
+                    .await
+                    .unwrap();
             handles.push(validator.await_completion());
         }
 

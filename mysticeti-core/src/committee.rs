@@ -42,7 +42,7 @@ impl Committee {
 
         // Ensure all stakes are positive
         assert!(authorities.iter().all(|a| a.stake() > 0));
-        assert!(authorities.len() <= 128); // For now AuthoritySet only supports up to 128 authorities
+        assert!(authorities.len() <= AuthoritySet::MAX_SIZE);
 
         let mut total_stake: Stake = 0;
         for a in authorities.iter() {
@@ -84,7 +84,7 @@ impl Committee {
     }
 
     pub fn authorities(&self) -> Range<AuthorityIndex> {
-        0u64..(self.authorities.len() as AuthorityIndex)
+        0..(self.authorities.len() as AuthorityIndex)
     }
 
     /// Return own genesis block and other genesis blocks

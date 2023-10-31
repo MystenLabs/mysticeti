@@ -91,8 +91,12 @@ pub struct StatementBlock {
     signature: SignatureBytes,
 }
 
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
-pub struct AuthoritySet(u128); // todo - support more then 128 authorities
+type AuthoritySetElementType = u64;
+const ELEMENT_BITS: usize = AuthoritySetElementType::BITS as usize;
+const AUTH_SET_ELEMENT_COUNT: usize = 8;
+// With 8 elements each of 64 bits, we can have up to 512 authorities.
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+pub struct AuthoritySet([AuthoritySetElementType; AUTH_SET_ELEMENT_COUNT]);
 
 pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
@@ -463,23 +467,34 @@ impl fmt::Display for BlockReference {
 }
 
 impl AuthoritySet {
+    pub const MAX_SIZE: usize = ELEMENT_BITS * AUTH_SET_ELEMENT_COUNT;
+
     #[inline]
-    pub fn insert(&mut self, v: AuthorityIndex) -> bool {
-        let bit = 1u128 << v;
-        if self.0 & bit == bit {
-            return false;
+    pub fn insert(&mut self, index: AuthorityIndex) -> bool {
+        let index = index as usize;
+        let byte_index = index / ELEMENT_BITS;
+        let bit_index = index % ELEMENT_BITS;
+
+        let bit = 1 << bit_index;
+        if (self.0[byte_index] & bit) != 0 {
+            false
+        } else {
+            self.0[byte_index] |= bit;
+            true
         }
-        self.0 |= bit;
-        true
     }
 
     pub fn present(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
-        (0..128).filter(|bit| (self.0 & 1 << bit) != 0)
+        self.0.iter().enumerate().flat_map(|(byte_index, byte)| {
+            (0..ELEMENT_BITS)
+                .filter(move |bit_index| (byte & (1 << bit_index)) != 0)
+                .map(move |bit_index| (byte_index * ELEMENT_BITS + bit_index) as AuthorityIndex)
+        })
     }
 
     #[inline]
     pub fn clear(&mut self) {
-        self.0 = 0;
+        self.0.fill(0);
     }
 }
 
@@ -786,5 +801,19 @@ mod test {
             a.insert(*x);
         }
         assert_eq!(present, a.present().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn large_authority_set_test() {
+        let mut a = AuthoritySet::default();
+        assert!(a.insert(128));
+        assert!(!a.insert(128));
+        assert!(a.insert(234));
+        // 511 is the max authority index we could use since we currently only support 512 validators.
+        assert!(a.insert(511));
+        assert!(!a.insert(511));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![128, 234, 511]);
+        a.clear();
+        assert!(a.present().collect::<Vec<_>>().is_empty());
     }
 }

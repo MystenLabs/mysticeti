@@ -226,6 +226,7 @@ impl Worker {
             } else {
                 TcpSocket::new_v6().unwrap()
             };
+            #[cfg(unix)]
             socket.set_reuseport(true).unwrap();
             socket.bind(self.bind_addr).unwrap();
             match socket.connect(peer).await {

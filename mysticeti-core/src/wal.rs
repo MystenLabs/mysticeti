@@ -9,7 +9,6 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{IoSlice, Seek, SeekFrom, Write};
-use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::{fmt, io};
 
@@ -19,7 +18,7 @@ pub struct WalWriter {
 }
 
 pub struct WalReader {
-    fd: RawFd,
+    file: File,
     maps: Mutex<BTreeMap<u64, Bytes>>,
 }
 
@@ -83,13 +82,8 @@ pub fn wal(path: impl AsRef<Path>) -> io::Result<(WalWriter, WalReader)> {
 }
 
 fn make_wal(file: File) -> io::Result<(WalWriter, WalReader)> {
-    // todo - replace dup with File::try_clone()
-    let fd = unsafe { libc::dup(file.as_raw_fd()) };
-    if fd <= 0 {
-        return Err(io::Error::last_os_error());
-    }
     let reader = WalReader {
-        fd,
+        file: file.try_clone().expect("Failed to clone fd"),
         maps: Default::default(),
     };
     let writer = WalWriter {
@@ -287,7 +281,7 @@ impl WalReader {
                     MmapOptions::new()
                         .offset(offset)
                         .len(MAP_SIZE as usize)
-                        .map(self.fd)?
+                        .map(&self.file)?
                 };
                 va.insert(mmap.into())
             }
@@ -363,17 +357,6 @@ impl WalPosition {
 
     fn first_in_map(&self) -> bool {
         self.start == offset(self.start)
-    }
-}
-
-impl Drop for WalReader {
-    fn drop(&mut self) {
-        unsafe {
-            if libc::close(self.fd) != 0 {
-                #[allow(clippy::unnecessary_literal_unwrap)]
-                Err::<(), _>(io::Error::last_os_error()).expect("Failed to close wal fd");
-            }
-        }
     }
 }
 

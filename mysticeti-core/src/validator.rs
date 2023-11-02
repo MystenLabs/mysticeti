@@ -12,6 +12,7 @@ use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
 use crate::block_validator::AcceptAllValidator;
+use crate::crypto::Signer;
 use crate::runtime::Handle;
 use crate::wal::walf;
 use crate::{
@@ -43,6 +44,7 @@ impl Validator {
         parameters: &Parameters,
         config: PrivateConfig,
         registry: Option<Registry>,
+        signer: Signer,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -140,6 +142,7 @@ impl Validator {
             recovered,
             wal_writer,
             CoreOptions::default(),
+            signer,
         );
         let network = Network::load(
             parameters,
@@ -194,6 +197,7 @@ mod smoke_tests {
 
     use tokio::time;
 
+    use crate::crypto::dummy_signer;
     use crate::{
         committee::Committee,
         config::{Parameters, PrivateConfig},
@@ -239,10 +243,16 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator =
-                Validator::start(authority, committee.clone(), &parameters, private, None)
-                    .await
-                    .unwrap();
+            let validator = Validator::start(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                None,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
             handles.push(validator.await_completion());
         }
 
@@ -275,10 +285,16 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator =
-                Validator::start(authority, committee.clone(), &parameters, private, None)
-                    .await
-                    .unwrap();
+            let validator = Validator::start(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                None,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
             handles.push(validator.await_completion());
         }
 
@@ -297,9 +313,16 @@ mod smoke_tests {
         // Boot the last validator.
         let authority = 0 as AuthorityIndex;
         let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
-        let validator = Validator::start(authority, committee.clone(), &parameters, private, None)
-            .await
-            .unwrap();
+        let validator = Validator::start(
+            authority,
+            committee.clone(),
+            &parameters,
+            private,
+            None,
+            dummy_signer(),
+        )
+        .await
+        .unwrap();
         handles.push(validator.await_completion());
 
         // Ensure the last validator commits.
@@ -330,10 +353,16 @@ mod smoke_tests {
             let authority = i as AuthorityIndex;
             let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
 
-            let validator =
-                Validator::start(authority, committee.clone(), &parameters, private, None)
-                    .await
-                    .unwrap();
+            let validator = Validator::start(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                None,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
             handles.push(validator.await_completion());
         }
 

@@ -1,5 +1,5 @@
 use crate::committee::Committee;
-use crate::crypto::{dummy_signer, Signer};
+use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
 use crate::metrics::UtilizationTimerVecExt;
@@ -68,6 +68,7 @@ impl<H: BlockHandler> Core<H> {
         recovered: RecoveredState,
         mut wal_writer: WalWriter,
         options: CoreOptions,
+        signer: Signer,
     ) -> Self {
         let RecoveredState {
             block_store,
@@ -136,7 +137,7 @@ impl<H: BlockHandler> Core<H> {
             block_store,
             metrics,
             options,
-            signer: dummy_signer(), // todo - load from config
+            signer,
             recovered_committed_blocks: Some((committed_blocks, committed_state)),
             epoch_manager,
             rounds_in_epoch: parameters.rounds_in_epoch(),

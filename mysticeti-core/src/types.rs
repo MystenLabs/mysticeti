@@ -11,7 +11,6 @@ pub struct Transaction {
 pub type RoundNumber = u64;
 pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
-pub type KeyPair = u64;
 pub type PublicKey = crate::crypto::PublicKey;
 
 use crate::committee::{Committee, VoteRangeBuilder};

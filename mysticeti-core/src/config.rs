@@ -11,7 +11,7 @@ use std::{
 use crate::crypto::dummy_public_key;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{AuthorityIndex, KeyPair, PublicKey, RoundNumber};
+use crate::types::{AuthorityIndex, PublicKey, RoundNumber};
 
 pub trait Print: Serialize + DeserializeOwned {
     fn print<P: AsRef<Path>>(&self, path: P) -> Result<(), io::Error> {
@@ -155,7 +155,6 @@ impl Print for Parameters {}
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PrivateConfig {
     authority_index: AuthorityIndex,
-    keypair: KeyPair,
     storage_path: StorageDir,
 }
 
@@ -166,10 +165,9 @@ pub struct StorageDir {
 }
 
 impl PrivateConfig {
-    pub fn new(path: PathBuf, keypair: KeyPair, authority_index: AuthorityIndex) -> Self {
+    pub fn new(path: PathBuf, authority_index: AuthorityIndex) -> Self {
         Self {
             authority_index,
-            keypair,
             storage_path: StorageDir { path },
         }
     }
@@ -180,7 +178,6 @@ impl PrivateConfig {
         fs::create_dir_all(&path).expect("Failed to create validator storage directory");
         Self {
             authority_index,
-            keypair: 0,
             storage_path: StorageDir { path },
         }
     }

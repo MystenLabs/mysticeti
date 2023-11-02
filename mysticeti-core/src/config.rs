@@ -166,6 +166,13 @@ pub struct StorageDir {
 }
 
 impl PrivateConfig {
+    pub fn new(path: PathBuf, keypair: KeyPair, authority_index: AuthorityIndex) -> Self {
+        Self {
+            authority_index,
+            keypair,
+            storage_path: StorageDir { path },
+        }
+    }
     pub fn new_for_benchmarks(dir: &Path, authority_index: AuthorityIndex) -> Self {
         // TODO: Once we have a crypto library, generate a keypair from a fixed seed.
         tracing::warn!("Generating a predictable keypair for benchmarking");

@@ -152,14 +152,14 @@ impl Parameters {
 
 impl Print for Parameters {}
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PrivateConfig {
     authority_index: AuthorityIndex,
     keypair: KeyPair,
     storage_path: StorageDir,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(transparent)]
 pub struct StorageDir {
     path: PathBuf,

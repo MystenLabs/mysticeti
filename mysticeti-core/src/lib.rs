@@ -48,3 +48,4 @@ mod wal;
 
 // re-export
 pub use minibytes;
+pub use crate::crypto::PublicKey;

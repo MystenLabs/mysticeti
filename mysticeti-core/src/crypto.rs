@@ -22,7 +22,7 @@ pub const BLOCK_DIGEST_SIZE: usize = 32;
 pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
-pub struct PublicKey(ed25519_consensus::VerificationKey);
+pub struct PublicKey(pub ed25519_consensus::VerificationKey);
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct SignatureBytes([u8; SIGNATURE_SIZE]);

@@ -11,7 +11,7 @@ pub mod consensus;
 pub mod core;
 mod core_thread;
 mod crypto;
-mod data;
+pub mod data;
 mod epoch_close;
 mod finalization_interpreter;
 #[cfg(test)]
@@ -45,3 +45,6 @@ mod transactions_generator;
 pub mod types;
 pub mod validator;
 mod wal;
+
+// re-export
+pub use minibytes;

@@ -7,6 +7,7 @@ use crate::block_validator::AcceptAllValidator;
 use crate::committee::Committee;
 use crate::config::Parameters;
 use crate::core::{Core, CoreOptions};
+use crate::crypto::dummy_signer;
 use crate::data::Data;
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
@@ -119,6 +120,7 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 recovered,
                 wal_writer,
                 CoreOptions::test(),
+                dummy_signer(),
             );
             (core, reporter)
         })

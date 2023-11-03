@@ -148,6 +148,10 @@ pub struct Authority {
 }
 
 impl Authority {
+    pub fn new(stake: Stake, public_key: PublicKey) -> Self {
+        Self { stake, public_key }
+    }
+
     pub fn test_from_stake(stake: Stake) -> Self {
         Self {
             stake,

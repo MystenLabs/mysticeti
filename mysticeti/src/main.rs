@@ -190,15 +190,9 @@ async fn run(
     binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
     // Boot the validator node.
-    let validator = Validator::start(
-        authority,
-        committee,
-        &parameters,
-        private,
-        None,
-        dummy_signer(),
-    )
-    .await?;
+    let validator =
+        Validator::start_benchmarking(authority, committee, &parameters, private, dummy_signer())
+            .await?;
     let (network_result, _metrics_result) = validator.await_completion().await;
     network_result.expect("Validator failed");
     Ok(())
@@ -231,12 +225,11 @@ async fn testbed(committee_size: usize) -> Result<()> {
         let authority = i as AuthorityIndex;
         let private = PrivateConfig::new_for_benchmarks(&dir, authority);
 
-        let validator = Validator::start(
+        let validator = Validator::start_benchmarking(
             authority,
             committee.clone(),
             &parameters,
             private,
-            None,
             dummy_signer(),
         )
         .await?;
@@ -272,12 +265,11 @@ async fn dryrun(authority: AuthorityIndex, committee_size: usize) -> Result<()> 
     }
 
     let private = PrivateConfig::new_for_benchmarks(&dir, authority);
-    Validator::start(
+    Validator::start_benchmarking(
         authority,
         committee.clone(),
         &parameters,
         private,
-        None,
         dummy_signer(),
     )
     .await?

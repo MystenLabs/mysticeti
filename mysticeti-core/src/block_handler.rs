@@ -11,14 +11,13 @@ use crate::transactions_generator::TransactionGenerator;
 use crate::types::{
     AuthorityIndex, BaseStatement, StatementBlock, Transaction, TransactionLocator,
 };
+use crate::validator::TransactionTimeMap;
 use crate::{block_store::BlockStore, metrics::Metrics};
 use crate::{
     committee::{Committee, QuorumThreshold, TransactionAggregator},
     runtime,
 };
 use minibytes::Bytes;
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,7 +52,7 @@ const fn assert_constants() {
 
 pub struct BenchmarkFastPathBlockHandler {
     transaction_votes: TransactionAggregator<QuorumThreshold, TransactionLog>,
-    pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
+    pub transaction_time: TransactionTimeMap,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     block_store: BlockStore,
@@ -75,6 +74,7 @@ impl BenchmarkFastPathBlockHandler {
         config: &StorageDir,
         block_store: BlockStore,
         metrics: Arc<Metrics>,
+        transaction_time: TransactionTimeMap,
     ) -> (Self, mpsc::Sender<Vec<Transaction>>) {
         let (sender, receiver) = mpsc::channel(1024);
         let transaction_log = TransactionLog::start(config.certified_transactions_log())
@@ -83,7 +83,7 @@ impl BenchmarkFastPathBlockHandler {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         let this = Self {
             transaction_votes: TransactionAggregator::with_handler(transaction_log),
-            transaction_time: Default::default(),
+            transaction_time,
             committee,
             authority,
             block_store,
@@ -221,7 +221,7 @@ impl BlockHandler for BenchmarkFastPathBlockHandler {
 pub struct TestBlockHandler {
     last_transaction: u64,
     transaction_votes: TransactionAggregator<QuorumThreshold>,
-    pub transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
+    pub transaction_time: TransactionTimeMap,
     committee: Arc<Committee>,
     authority: AuthorityIndex,
     pub proposed: Vec<TransactionLocator>,
@@ -327,4 +327,66 @@ impl BlockHandler for TestBlockHandler {
         self.transaction_votes.with_state(&transaction_votes);
         self.last_transaction = last_transaction;
     }
+}
+
+pub struct SimpleBlockHandler {
+    receiver: mpsc::Receiver<(Vec<u8>, tokio::sync::oneshot::Sender<()>)>,
+}
+
+const MAX_PROPOSED_PER_BLOCK: usize = 10000;
+const CHANNEL_SIZE: usize = 1024;
+
+impl SimpleBlockHandler {
+    #[allow(clippy::type_complexity)]
+    pub fn new() -> (
+        Self,
+        mpsc::Sender<(Vec<u8>, tokio::sync::oneshot::Sender<()>)>,
+    ) {
+        let (sender, receiver) = mpsc::channel(CHANNEL_SIZE);
+
+        let this = Self { receiver };
+        (this, sender)
+    }
+}
+
+impl BlockHandler for SimpleBlockHandler {
+    fn handle_blocks(
+        &mut self,
+        _blocks: &[Data<StatementBlock>],
+        require_response: bool,
+    ) -> Vec<BaseStatement> {
+        if !require_response {
+            return vec![];
+        }
+
+        // Returns transactions to be sequenced so that they will be
+        // proposed to DAG shortly.
+        let mut response = vec![];
+
+        while let Ok((tx_bytes, notify_when_done)) = self.receiver.try_recv() {
+            response.push(BaseStatement::Share(
+                // tx_bytes is bcs-serialized bytes of ConsensusTransaction
+                Transaction::new(tx_bytes),
+            ));
+            // We don't mind if the receiver is dropped.
+            notify_when_done.send(()).ok();
+
+            if response.len() >= MAX_PROPOSED_PER_BLOCK {
+                break;
+            }
+        }
+        response
+    }
+
+    fn handle_proposal(&mut self, _block: &Data<StatementBlock>) {}
+
+    // No crash recovery at the moment.
+    fn state(&self) -> Bytes {
+        Bytes::new()
+    }
+
+    // No crash recovery at the moment.
+    fn recover_state(&mut self, _state: &Bytes) {}
+
+    fn cleanup(&self) {}
 }

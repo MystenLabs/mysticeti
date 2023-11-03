@@ -199,6 +199,10 @@ impl StatementBlock {
         &self.statements
     }
 
+    pub fn into_statements(self) -> Vec<BaseStatement> {
+        self.statements
+    }
+
     // Todo - we should change the block so that it has all shared transactions in one vec
     // This way this function will always return single TransactionLocatorRange instead of a vec
     pub fn shared_ranges(&self) -> Vec<TransactionLocatorRange> {

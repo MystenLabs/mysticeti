@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
-use std::fmt;
-
 use crate::block_store::BlockStore;
 use crate::{
     data::Data,
     types::{BlockReference, StatementBlock},
 };
+use std::collections::HashSet;
+use std::fmt;
+use std::fmt::{Display, Formatter};
 
 /// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
 /// sort the blocks within each sub-dag (but using a deterministic algorithm).
@@ -28,6 +28,19 @@ impl CommittedSubDag {
     /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
     pub fn sort(&mut self) {
         self.blocks.sort_by_key(|x| x.round());
+    }
+}
+
+impl Display for CommittedSubDag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "CommittedSubDag(anchor={}, blocks=[", self.anchor.digest)?;
+        for (idx, block) in self.blocks.iter().enumerate() {
+            if idx > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", block.digest())?;
+        }
+        write!(f, "])")
     }
 }
 

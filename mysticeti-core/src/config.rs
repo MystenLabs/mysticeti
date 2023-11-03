@@ -166,6 +166,7 @@ pub struct StorageDir {
 
 impl PrivateConfig {
     pub fn new(path: PathBuf, authority_index: AuthorityIndex) -> Self {
+        fs::create_dir_all(&path).expect("Failed to create validator storage directory");
         Self {
             authority_index,
             storage_path: StorageDir { path },

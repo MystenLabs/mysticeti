@@ -47,5 +47,5 @@ pub mod validator;
 mod wal;
 
 // re-export
-pub use minibytes;
 pub use crate::crypto::{dummy_signer, PublicKey, Signer};
+pub use minibytes;

@@ -12,6 +12,7 @@ use std::fmt::{Display, Formatter};
 
 /// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
 /// sort the blocks within each sub-dag (but using a deterministic algorithm).
+#[derive(Clone)]
 pub struct CommittedSubDag {
     /// A reference to the anchor of the sub-dag
     pub anchor: BlockReference,

@@ -180,3 +180,50 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         self.commit_interpreter.committed = committed;
     }
 }
+
+pub struct SimpleCommitObserver {
+    commit_interpreter: Linearizer,
+    /// A channel to send committed sub-dags to the consumer of consensus output.
+    /// TODO: We will need to figure out a solution to handle back pressure.
+    sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>,
+}
+
+impl SimpleCommitObserver {
+    pub fn new(sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>) -> Self {
+        Self {
+            commit_interpreter: Linearizer::new(),
+            sender,
+        }
+    }
+}
+
+impl CommitObserver for SimpleCommitObserver {
+    fn handle_commit(
+        &mut self,
+        block_store: &BlockStore,
+        committed_leaders: Vec<Data<StatementBlock>>,
+    ) -> Vec<CommittedSubDag> {
+        let committed = self
+            .commit_interpreter
+            .handle_commit(block_store, committed_leaders);
+        for commit in &committed {
+            // TODO: Could we get rid of this clone latter?
+            if let Err(err) = self.sender.send(commit.clone()) {
+                tracing::error!("Failed to send committed sub-dag: {:?}", err);
+            }
+        }
+        committed
+    }
+
+    fn aggregator_state(&self) -> Bytes {
+        Bytes::new()
+    }
+
+    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
+        // The committed state is set only when we care about fast path aggregation. It must be
+        // empty for the simple observer right now.
+        assert!(state.map(|s| s.is_empty()).unwrap_or(true));
+        assert!(self.commit_interpreter.committed.is_empty());
+        self.commit_interpreter.committed = committed;
+    }
+}

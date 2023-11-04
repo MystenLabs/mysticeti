@@ -237,6 +237,7 @@ impl BlockFetcher {
     }
 
     pub async fn shutdown(self) {
+        println!("Synchronizer shutting down...");
         self.handle.abort();
         self.handle.await.ok();
     }

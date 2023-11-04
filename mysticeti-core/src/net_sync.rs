@@ -165,6 +165,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .unwrap_or_else(|_| panic!("Failed to drop all connections"))
             .shutdown()
             .await;
+        network.shutdown().await;
     }
 
     async fn connection_task(

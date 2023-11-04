@@ -4,6 +4,7 @@
 use crate::committee::Committee;
 use crate::data::{IN_MEMORY_BLOCKS, IN_MEMORY_BLOCKS_BYTES};
 use crate::runtime;
+use crate::runtime::JoinHandle;
 use crate::stat::{histogram, DivUsize, HistogramSender, PreciseHistogram};
 use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
@@ -18,6 +19,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tabled::{Table, Tabled};
+use tokio::sync::mpsc::Sender;
 use tokio::time::Instant;
 
 const LATENCY_SEC_BUCKETS: &[f64] = &[
@@ -428,9 +430,24 @@ impl AsPrometheusMetric for usize {
     }
 }
 
+pub struct MetricReporterHandle {
+    handle: JoinHandle<()>,
+    stop: Sender<()>,
+}
+
+impl MetricReporterHandle {
+    pub async fn shutdown(self) {
+        let _ = self.stop.send(()).await;
+        let _ = self.handle.await;
+    }
+}
+
 impl MetricReporter {
-    pub fn start(self) {
-        runtime::Handle::current().spawn(self.run());
+    pub fn start(self) -> MetricReporterHandle {
+        let (stop, rx_stop) = tokio::sync::mpsc::channel(1);
+        let handle = runtime::Handle::current().spawn(self.run(rx_stop));
+
+        MetricReporterHandle { handle, stop }
     }
 
     pub fn clear_receive_all(&mut self) {
@@ -446,13 +463,26 @@ impl MetricReporter {
     }
 
     // todo - this task never stops
-    async fn run(mut self) {
+    async fn run(mut self, mut stop: tokio::sync::mpsc::Receiver<()>) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(60);
         let mut deadline = Instant::now();
+
+        let timer = tokio::time::sleep(REPORT_INTERVAL);
+        tokio::pin!(timer);
+
         loop {
-            deadline += REPORT_INTERVAL;
-            tokio::time::sleep_until(deadline).await;
-            self.run_report().await;
+            tokio::select! {
+                () = &mut timer => {
+                    self.run_report().await;
+
+                    deadline += REPORT_INTERVAL;
+                    timer.as_mut().reset(deadline);
+                },
+                _ = stop.recv() => {
+                    tracing::info!("Shutting down metrics reporter");
+                    return;
+                }
+            }
         }
     }
 

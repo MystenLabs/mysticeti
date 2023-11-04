@@ -34,7 +34,7 @@ they are poorly coordinated and compete with each other for resources.
 - The choice of which validator places a certificate into consensus has become complex, due 
 to the longer delay between expecting a transaction and seeing it, as well as the fact that all
 validators are given the certificate in Sui. A model by which one validator is responsible for
-puting a transaction into the system, with a very short delay to observe correct inclusion is 
+putting a transaction into the system, with a very short delay to observe correct inclusion is 
 simpler and better.
 
 The DAG creation and invariants:
@@ -56,7 +56,7 @@ any included blocks (transitivelly).
 DAG processing: Certification
 
 As a node receives blocks it processesed them in causal order ensuring included references
-are processed before each block refering to them. A the base statements of each block are 
+are processed before each block referring to them. A the base statements of each block are 
 processed by accumulating votes, positive and negative, for each seen transaction. When >2/3
 positive votes are seen the transaction is considered certififed; A correct node can also 
 reject a transaction with an optional conflicting transaction. Correct nodes never change 
@@ -111,7 +111,7 @@ All communications
 are done as a request / response (there is no push as in Sui/NW) and we try to unify the 
 sync and common paths as much as possible. In the common case all nodes send a request to all
 other nodes for their blocks after a certain round number, and may request any block
-on a need by need basis that is inlcuded in a block from the party that created it or included it.
+on a need by need basis that is included in a block from the party that created it or included it.
 
 We follow a 2-level sync protocol. Each commit of the consensus makes a commit
 set of blocks, and we can request to sync up to a commit set by round number. Commit 
@@ -121,7 +121,7 @@ allow another node to send the missing blocks, or request more blocks.
 
 TODO Things we need to co-design:
 - sync recovery
-- persistance points
+- persistence points
 - safe close
 - high perf interface to other parts
 - network design

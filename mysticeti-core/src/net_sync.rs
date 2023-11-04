@@ -1,11 +1,12 @@
 use crate::block_validator::BlockValidator;
+use crate::commit_observer::CommitObserver;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
-use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::format_authority_index;
 use crate::types::AuthorityIndex;
 use crate::wal::WalSyncer;
@@ -211,7 +212,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         .map_err(|e| eyre::eyre!("Invalid StatementBlock content: {e}"))
                     {
                         tracing::warn!(
-                            "Rejected incorret block {} based on validation rules from {}: {:?}",
+                            "Rejected incorrect block {} based on validation rules from {}: {:?}",
                             block.reference(),
                             peer,
                             e
@@ -438,7 +439,8 @@ mod tests {
 #[cfg(feature = "simulator")]
 mod sim_tests {
     use super::NetworkSyncer;
-    use crate::block_handler::{TestBlockHandler, TestCommitHandler};
+    use crate::block_handler::TestBlockHandler;
+    use crate::commit_observer::TestCommitObserver;
     use crate::config::Parameters;
     use crate::finalization_interpreter::FinalizationInterpreter;
     use crate::future_simulator::SimulatedExecutorState;
@@ -476,8 +478,8 @@ mod sim_tests {
     }
 
     async fn wait_for_epoch_to_close(
-        network_syncers: Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>>,
-    ) -> Vec<Syncer<TestBlockHandler, Arc<Notify>, TestCommitHandler>> {
+        network_syncers: Vec<NetworkSyncer<TestBlockHandler, TestCommitObserver>>,
+    ) -> Vec<Syncer<TestBlockHandler, Arc<Notify>, TestCommitObserver>> {
         let mut any_closed = false;
         while !any_closed {
             for net_sync in network_syncers.iter() {

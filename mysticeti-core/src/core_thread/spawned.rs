@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::block_handler::BlockHandler;
+use crate::commit_observer::CommitObserver;
 use crate::metrics::{Metrics, UtilizationTimerExt};
-use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{RoundNumber, StatementBlock};
 use crate::{data::Data, types::BlockReference};
 use std::sync::Arc;

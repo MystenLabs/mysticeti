@@ -5,6 +5,7 @@ pub mod block_handler;
 mod block_manager;
 mod block_store;
 pub mod block_validator;
+pub mod commit_observer;
 pub mod committee;
 pub mod config;
 pub mod consensus;

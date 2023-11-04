@@ -4,8 +4,9 @@
 use std::collections::HashSet;
 
 use crate::block_handler::BlockHandler;
+use crate::commit_observer::CommitObserver;
 use crate::data::Data;
-use crate::syncer::{CommitObserver, Syncer, SyncerSignals};
+use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::BlockReference;
 use crate::types::{RoundNumber, StatementBlock};
 use parking_lot::Mutex;

@@ -12,11 +12,12 @@ use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
 use crate::block_validator::AcceptAllValidator;
+use crate::commit_observer::TestCommitObserver;
 use crate::crypto::Signer;
 use crate::runtime::Handle;
 use crate::wal::walf;
 use crate::{
-    block_handler::{BenchmarkFastPathBlockHandler, TestCommitHandler},
+    block_handler::BenchmarkFastPathBlockHandler,
     committee::Committee,
     config::{Parameters, PrivateConfig},
     core::Core,
@@ -33,7 +34,7 @@ use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 
 pub struct Validator {
     network_synchronizer:
-        NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitHandler<TransactionLog>>,
+        NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>>,
     metrics_handle: JoinHandle<Result<(), hyper::Error>>,
 }
 
@@ -127,7 +128,7 @@ impl Validator {
         let committed_transaction_log =
             TransactionLog::start(config.storage().committed_transactions_log())
                 .expect("Failed to open committed transaction log for write");
-        let commit_handler = TestCommitHandler::new_with_handler(
+        let commit_handler = TestCommitObserver::new_with_handler(
             committee.clone(),
             block_handler.transaction_time.clone(),
             metrics.clone(),

@@ -387,4 +387,44 @@ mod smoke_tests {
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
     }
+
+    #[tokio::test]
+    async fn validator_shutdown_and_start() {
+        let committee_size = 1;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips).with_port_offset(300);
+
+        let tempdir = TempDir::new("validator_commit").unwrap();
+
+        let authority = 0 as AuthorityIndex;
+        let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+        let validator = Validator::start(
+            authority,
+            committee.clone(),
+            &parameters,
+            private.clone(),
+            None,
+            dummy_signer(),
+        )
+        .await
+        .unwrap();
+
+        // now shutdown the validator
+        validator.stop().await;
+
+        // now start again - no error should arise
+        let _validator = Validator::start(
+            authority,
+            committee.clone(),
+            &parameters,
+            private,
+            None,
+            dummy_signer(),
+        )
+        .await
+        .unwrap();
+    }
 }

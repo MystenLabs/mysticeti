@@ -7,13 +7,13 @@ use futures::future::join_all;
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::mpsc;
 
+use crate::commit_observer::CommitObserver;
 use crate::{
     block_handler::BlockHandler,
     metrics::Metrics,
     net_sync::{self, NetworkSyncerInner},
     network::NetworkMessage,
     runtime::{sleep, Handle, JoinHandle},
-    syncer::CommitObserver,
     types::{AuthorityIndex, BlockReference, RoundNumber},
 };
 

@@ -1,16 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
-use crate::consensus::linearizer::CommittedSubDag;
+use crate::commit_observer::CommitObserver;
 use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::types::{BlockReference, RoundNumber, StatementBlock};
+use crate::types::{RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
-use minibytes::Bytes;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -24,18 +21,6 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
 
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
-}
-
-pub trait CommitObserver: Send + Sync {
-    fn handle_commit(
-        &mut self,
-        block_store: &BlockStore,
-        committed_leaders: Vec<Data<StatementBlock>>,
-    ) -> Vec<CommittedSubDag>;
-
-    fn aggregator_state(&self) -> Bytes;
-
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
 }
 
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
@@ -139,7 +124,8 @@ impl SyncerSignals for bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_handler::{TestBlockHandler, TestCommitHandler};
+    use crate::block_handler::TestBlockHandler;
+    use crate::commit_observer::TestCommitObserver;
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
     use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed};
@@ -155,7 +141,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, TestCommitHandler> {
+    impl SimulatorState for Syncer<TestBlockHandler, bool, TestCommitObserver> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {

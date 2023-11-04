@@ -17,12 +17,22 @@ pub struct CommittedSubDag {
     pub anchor: BlockReference,
     /// All the committed blocks that are part of this sub-dag
     pub blocks: Vec<Data<StatementBlock>>,
+    /// The timestamp of the commit, obtained from the timestamp of the anchor block.
+    pub timestamp_ms: u64,
 }
 
 impl CommittedSubDag {
     /// Create new (empty) sub-dag.
-    pub fn new(anchor: BlockReference, blocks: Vec<Data<StatementBlock>>) -> Self {
-        Self { anchor, blocks }
+    pub fn new(
+        anchor: BlockReference,
+        blocks: Vec<Data<StatementBlock>>,
+        timestamp_ms: u64,
+    ) -> Self {
+        Self {
+            anchor,
+            blocks,
+            timestamp_ms,
+        }
     }
 
     /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
@@ -65,6 +75,8 @@ impl Linearizer {
     ) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
+        // TODO: Verify that this can never overflow.
+        let timestamp_ms = (leader_block.meta_creation_time_ns() / 1000) as u64;
         let leader_block_ref = *leader_block.reference();
         let mut buffer = vec![leader_block];
         assert!(self.committed.insert(leader_block_ref));
@@ -83,7 +95,7 @@ impl Linearizer {
                 }
             }
         }
-        CommittedSubDag::new(leader_block_ref, to_commit)
+        CommittedSubDag::new(leader_block_ref, to_commit, timestamp_ms)
     }
 
     pub fn handle_commit(

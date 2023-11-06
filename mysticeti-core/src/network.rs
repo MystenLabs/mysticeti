@@ -164,7 +164,7 @@ impl Server {
                     }
                 }
                 _ = stop.recv() => {
-                    println!("Shutting down network");
+                    tracing::info!("Shutting down network");
                     return;
                 }
             }

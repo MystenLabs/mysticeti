@@ -91,9 +91,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
             }
-            let committed_subdag = self
-                .commit_observer
-                .handle_commit(self.core.block_store(), newly_committed);
+            let committed_subdag = self.commit_observer.handle_commit(newly_committed);
             self.core.handle_committed_subdag(
                 committed_subdag,
                 &self.commit_observer.aggregator_state(),

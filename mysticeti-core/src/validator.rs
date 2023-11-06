@@ -129,6 +129,7 @@ impl Validator {
             TransactionLog::start(config.storage().committed_transactions_log())
                 .expect("Failed to open committed transaction log for write");
         let commit_handler = TestCommitObserver::new_with_handler(
+            recovered.block_store.clone(),
             committee.clone(),
             block_handler.transaction_time.clone(),
             metrics.clone(),

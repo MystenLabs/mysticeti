@@ -147,6 +147,7 @@ pub fn committee_and_syncers(
             .into_iter()
             .map(|core| {
                 let commit_handler = TestCommitObserver::new(
+                    core.block_store().clone(),
                     committee.clone(),
                     core.block_handler().transaction_time.clone(),
                     test_metrics(),
@@ -199,6 +200,7 @@ pub fn simulated_network_syncers_with_epoch_duration(
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitObserver::new(
+            core.block_store().clone(),
             committee.clone(),
             core.block_handler().transaction_time.clone(),
             core.metrics.clone(),
@@ -233,6 +235,7 @@ pub async fn network_syncers_with_epoch_duration(
     let mut network_syncers = vec![];
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitObserver::new(
+            core.block_store().clone(),
             committee.clone(),
             core.block_handler().transaction_time.clone(),
             test_metrics(),

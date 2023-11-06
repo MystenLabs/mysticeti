@@ -24,7 +24,6 @@ pub trait CommitObserver: Send + Sync {
     /// handle_commit is called by the core every time commit(s) are observed.
     fn handle_commit(
         &mut self,
-        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag>;
 
@@ -61,16 +60,24 @@ pub struct TestCommitObserver<H = HashSet<TransactionLocator>> {
 
 impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitObserver<H> {
     pub fn new(
+        block_store: BlockStore,
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
     ) -> Self {
-        Self::new_with_handler(committee, transaction_time, metrics, Default::default())
+        Self::new_with_handler(
+            block_store,
+            committee,
+            transaction_time,
+            metrics,
+            Default::default(),
+        )
     }
 }
 
 impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
     pub fn new_with_handler(
+        block_store: BlockStore,
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
@@ -78,7 +85,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
     ) -> Self {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         Self {
-            commit_interpreter: Linearizer::new(),
+            commit_interpreter: Linearizer::new(block_store),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],
@@ -140,14 +147,11 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
 {
     fn handle_commit(
         &mut self,
-        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
         let current_timestamp = runtime::timestamp_utc();
 
-        let committed = self
-            .commit_interpreter
-            .handle_commit(block_store, committed_leaders);
+        let committed = self.commit_interpreter.handle_commit(committed_leaders);
         let transaction_time = self.transaction_time.lock();
         for commit in &committed {
             self.committed_leaders.push(commit.anchor);
@@ -199,6 +203,8 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
 }
 
 pub struct SimpleCommitObserver {
+    #[allow(dead_code)] // will be used later during replay
+    block_store: BlockStore,
     commit_interpreter: Linearizer,
     /// A channel to send committed sub-dags to the consumer of consensus output.
     /// TODO: We will need to figure out a solution to handle back pressure.
@@ -206,9 +212,13 @@ pub struct SimpleCommitObserver {
 }
 
 impl SimpleCommitObserver {
-    pub fn new(sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>) -> Self {
+    pub fn new(
+        block_store: BlockStore,
+        sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>,
+    ) -> Self {
         Self {
-            commit_interpreter: Linearizer::new(),
+            block_store: block_store.clone(),
+            commit_interpreter: Linearizer::new(block_store),
             sender,
         }
     }
@@ -217,12 +227,9 @@ impl SimpleCommitObserver {
 impl CommitObserver for SimpleCommitObserver {
     fn handle_commit(
         &mut self,
-        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
-        let committed = self
-            .commit_interpreter
-            .handle_commit(block_store, committed_leaders);
+        let committed = self.commit_interpreter.handle_commit(committed_leaders);
         for commit in &committed {
             // TODO: Could we get rid of this clone latter?
             if let Err(err) = self.sender.send(commit.clone()) {

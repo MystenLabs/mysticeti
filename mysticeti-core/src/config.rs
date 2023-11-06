@@ -68,8 +68,8 @@ impl Parameters {
 
     pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
 
-    // needs to be sufficiently long to run benchmarks
-    pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = 3_600_000;
+    // todo - we will need to rework how we trigger reconfiguration so it works with sui
+    pub const DEFAULT_ROUNDS_IN_EPOCH: u64 = u64::MAX;
     pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
     pub const DEFAULT_NUMBER_OF_LEADERS: usize = 1;

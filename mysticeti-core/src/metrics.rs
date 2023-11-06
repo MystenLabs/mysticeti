@@ -461,8 +461,6 @@ impl MetricReporter {
 
         self.connection_latency.clear_receive_all();
     }
-
-    // todo - this task never stops
     async fn run(mut self, mut stop: tokio::sync::mpsc::Receiver<()>) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(60);
         let mut deadline = Instant::now();

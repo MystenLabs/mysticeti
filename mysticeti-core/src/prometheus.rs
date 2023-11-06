@@ -23,8 +23,8 @@ impl PrometheusServerHandle {
         Self { stop, handle }
     }
     pub async fn shutdown(self) {
-        let _ = self.stop.send(());
-        let _ = self.handle.await;
+        self.stop.send(()).ok();
+        self.handle.await.ok();
     }
 }
 

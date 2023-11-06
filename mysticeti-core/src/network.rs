@@ -137,10 +137,10 @@ impl Network {
 
     pub async fn shutdown(mut self) {
         if let Some(stop) = self.stop.take() {
-            let _ = stop.send(()).await;
+            stop.send(()).await.ok();
         }
         if let Some(handle) = self.server_handle.take() {
-            let _ = handle.await;
+            handle.await.ok();
         }
     }
 }

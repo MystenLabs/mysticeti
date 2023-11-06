@@ -21,8 +21,8 @@ pub struct TransactionGeneratorHandle {
 
 impl TransactionGeneratorHandle {
     pub async fn shutdown(self) {
-        let _ = self.stop.send(()).await;
-        let _ = self.handle.await;
+        self.stop.send(()).await.ok();
+        self.handle.await.ok();
     }
 }
 

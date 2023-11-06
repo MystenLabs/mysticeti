@@ -65,8 +65,8 @@ impl Display for CommittedSubDag {
 }
 
 /// Expand a committed sequence of leader into a sequence of sub-dags.
-#[derive(Default)]
 pub struct Linearizer {
+    block_store: BlockStore,
     /// Keep track of all committed blocks to avoid committing the same block twice.
     committed: HashSet<BlockReference>,
     /// Keep track of the height of last linearized commit
@@ -74,8 +74,12 @@ pub struct Linearizer {
 }
 
 impl Linearizer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(block_store: BlockStore) -> Self {
+        Self {
+            block_store,
+            committed: Default::default(),
+            last_height: Default::default(),
+        }
     }
 
     pub fn recover_state(
@@ -91,11 +95,7 @@ impl Linearizer {
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
     /// have already been committed (within previous sub-dags).
-    fn collect_sub_dag(
-        &mut self,
-        block_store: &BlockStore,
-        leader_block: Data<StatementBlock>,
-    ) -> CommittedSubDag {
+    fn collect_sub_dag(&mut self, leader_block: Data<StatementBlock>) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
         // TODO: Verify that this can never overflow.
@@ -107,7 +107,8 @@ impl Linearizer {
             to_commit.push(x.clone());
             for reference in x.includes() {
                 // The block manager may have cleaned up blocks passed the latest committed rounds.
-                let block = block_store
+                let block = self
+                    .block_store
                     .get_block(*reference)
                     .expect("We should have the whole sub-dag by now");
 
@@ -124,13 +125,12 @@ impl Linearizer {
 
     pub fn handle_commit(
         &mut self,
-        block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
         let mut committed = vec![];
         for leader_block in committed_leaders {
             // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(block_store, leader_block);
+            let mut sub_dag = self.collect_sub_dag(leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();

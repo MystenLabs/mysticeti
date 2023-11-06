@@ -35,7 +35,8 @@ use crate::{block_store::BlockStore, log::TransactionLog};
 use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 
 pub struct Validator {
-    network_synchronizer: NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>>,
+    network_synchronizer:
+        NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>>,
     metrics_handle: PrometheusServerHandle,
     reporter_handle: MetricReporterHandle,
     transaction_generator_handle: TransactionGeneratorHandle,

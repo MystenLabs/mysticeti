@@ -19,16 +19,31 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// CommitObserver is called by core when it detects new commit.
 pub trait CommitObserver: Send + Sync {
+    /// handle_commit is called by the core every time commit(s) are observed.
     fn handle_commit(
         &mut self,
         block_store: &BlockStore,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag>;
 
+    /// If CommitObserver has an aggregator (such as TransactionAggregator for fast path), this method return serialized state of such aggregator to be persisted in wal.
     fn aggregator_state(&self) -> Bytes;
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
+    /// When core is restored from wal, it calls CommitObserver::recover_committed and passes the relevant information recovered from wal(see CommitObserverRecoveredState).
+    /// recover_committed is guaranteed to be called on CommitObserver before any other call(e.g. handle_commit or aggregator_state).
+    /// recover_committed is only called if core is recovered from wal, for newly created instance of the protocol recover_committed won't be called.
+    fn recover_committed(&mut self, state: CommitObserverRecoveredState);
+}
+
+pub struct CommitObserverRecoveredState {
+    /// set of references of all previously committed blocks
+    pub committed: HashSet<BlockReference>,
+    /// height of the last committed sub dag. This is 0 if no subdags were committed
+    pub last_committed_height: u64,
+    /// Last observed state of the commit observer returned by CommitObserver::aggregator_state
+    pub state: Option<Bytes>,
 }
 
 pub struct TestCommitObserver<H = HashSet<TransactionLocator>> {
@@ -170,14 +185,16 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
         self.transaction_votes.state()
     }
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
-        assert!(self.commit_interpreter.committed.is_empty());
-        if let Some(state) = state {
+    fn recover_committed(&mut self, recovered_state: CommitObserverRecoveredState) {
+        if let Some(state) = recovered_state.state {
             self.transaction_votes.with_state(&state);
         } else {
-            assert!(committed.is_empty());
+            assert!(recovered_state.committed.is_empty());
         }
-        self.commit_interpreter.committed = committed;
+        self.commit_interpreter.recover_state(
+            recovered_state.committed,
+            recovered_state.last_committed_height,
+        );
     }
 }
 
@@ -219,11 +236,13 @@ impl CommitObserver for SimpleCommitObserver {
         Bytes::new()
     }
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
+    fn recover_committed(&mut self, recovered_state: CommitObserverRecoveredState) {
         // The committed state is set only when we care about fast path aggregation. It must be
         // empty for the simple observer right now.
-        assert!(state.map(|s| s.is_empty()).unwrap_or(true));
-        assert!(self.commit_interpreter.committed.is_empty());
-        self.commit_interpreter.committed = committed;
+        assert!(recovered_state.state.map(|s| s.is_empty()).unwrap_or(true));
+        self.commit_interpreter.recover_state(
+            recovered_state.committed,
+            recovered_state.last_committed_height,
+        );
     }
 }

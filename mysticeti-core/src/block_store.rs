@@ -524,10 +524,15 @@ impl OwnBlockData {
 }
 
 #[derive(Serialize, Deserialize)]
+/// CommitData is a serializable version of the CommittedSubDag.
+/// Main difference is that CommittedSubDag has Data<Block> and can be used by downstream consensus handler.
+/// CommitData instead only stores BlockReference, and can be written to the wal.
 pub struct CommitData {
     pub leader: BlockReference,
     // All committed blocks, including the leader
     pub sub_dag: Vec<BlockReference>,
+    // Height of the commit, corresponds to CommittedSubDag::height
+    pub height: u64,
 }
 
 impl From<&CommittedSubDag> for CommitData {
@@ -536,6 +541,7 @@ impl From<&CommittedSubDag> for CommitData {
         Self {
             leader: value.anchor,
             sub_dag,
+            height: value.height,
         }
     }
 }

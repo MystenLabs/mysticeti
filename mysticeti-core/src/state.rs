@@ -15,6 +15,7 @@ pub struct RecoveredState {
 
     pub last_committed_leader: Option<BlockReference>,
     pub committed_blocks: HashSet<BlockReference>,
+    pub last_committed_height: u64,
     pub committed_state: Option<Bytes>,
 }
 
@@ -27,6 +28,7 @@ pub struct RecoveredStateBuilder {
 
     last_committed_leader: Option<BlockReference>,
     committed_blocks: HashSet<BlockReference>,
+    last_committed_height: u64,
     committed_state: Option<Bytes>,
 }
 
@@ -62,6 +64,8 @@ impl RecoveredStateBuilder {
             self.last_committed_leader = Some(commit_data.leader);
             self.committed_blocks
                 .extend(commit_data.sub_dag.into_iter());
+            assert!(commit_data.height > self.last_committed_height);
+            self.last_committed_height = commit_data.height;
         }
         self.committed_state = Some(committed_state);
     }
@@ -81,6 +85,7 @@ impl RecoveredStateBuilder {
             last_committed_leader: self.last_committed_leader,
             committed_blocks: self.committed_blocks,
             committed_state: self.committed_state,
+            last_committed_height: self.last_committed_height,
         }
     }
 }

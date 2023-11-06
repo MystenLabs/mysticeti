@@ -20,6 +20,9 @@ pub struct CommittedSubDag {
     pub blocks: Vec<Data<StatementBlock>>,
     /// The timestamp of the commit, obtained from the timestamp of the anchor block.
     pub timestamp_ms: u64,
+    /// Height of the commit.
+    /// First commit after genesis has a height of 1, then every next commit has a height incremented by 1.
+    pub height: u64,
 }
 
 impl CommittedSubDag {
@@ -28,11 +31,13 @@ impl CommittedSubDag {
         anchor: BlockReference,
         blocks: Vec<Data<StatementBlock>>,
         timestamp_ms: u64,
+        height: u64,
     ) -> Self {
         Self {
             anchor,
             blocks,
             timestamp_ms,
+            height,
         }
     }
 
@@ -44,7 +49,11 @@ impl CommittedSubDag {
 
 impl Display for CommittedSubDag {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "CommittedSubDag(anchor={}, blocks=[", self.anchor.digest)?;
+        write!(
+            f,
+            "CommittedSubDag(anchor={}, height={}, blocks=[",
+            self.anchor.digest, self.height
+        )?;
         for (idx, block) in self.blocks.iter().enumerate() {
             if idx > 0 {
                 write!(f, ", ")?;
@@ -59,12 +68,25 @@ impl Display for CommittedSubDag {
 #[derive(Default)]
 pub struct Linearizer {
     /// Keep track of all committed blocks to avoid committing the same block twice.
-    pub committed: HashSet<BlockReference>,
+    committed: HashSet<BlockReference>,
+    /// Keep track of the height of last linearized commit
+    last_height: u64,
 }
 
 impl Linearizer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn recover_state(
+        &mut self,
+        committed: HashSet<BlockReference>,
+        last_committed_height: u64,
+    ) {
+        assert!(self.committed.is_empty());
+        assert_eq!(self.last_height, 0);
+        self.committed = committed;
+        self.last_height = last_committed_height;
     }
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
@@ -96,7 +118,8 @@ impl Linearizer {
                 }
             }
         }
-        CommittedSubDag::new(leader_block_ref, to_commit, timestamp_ms)
+        self.last_height += 1;
+        CommittedSubDag::new(leader_block_ref, to_commit, timestamp_ms, self.last_height)
     }
 
     pub fn handle_commit(
@@ -119,7 +142,7 @@ impl Linearizer {
 
 impl fmt::Debug for CommittedSubDag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}(", self.anchor)?;
+        write!(f, "{}@{}(", self.anchor, self.height)?;
         for block in &self.blocks {
             write!(f, "{}, ", block.reference())?;
         }

@@ -1,3 +1,4 @@
+use crate::commit_observer::CommitObserverRecoveredState;
 use crate::committee::Committee;
 use crate::crypto::Signer;
 use crate::data::Data;
@@ -41,7 +42,7 @@ pub struct Core<H: BlockHandler> {
     options: CoreOptions,
     signer: Signer,
     // todo - ugly, probably need to merge syncer and core
-    recovered_committed_blocks: Option<(HashSet<BlockReference>, Option<Bytes>)>,
+    recovered_committed_state: Option<CommitObserverRecoveredState>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: UniversalCommitter,
@@ -79,6 +80,7 @@ impl<H: BlockHandler> Core<H> {
             last_committed_leader,
             committed_blocks,
             committed_state,
+            last_committed_height,
         } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
@@ -124,6 +126,12 @@ impl<H: BlockHandler> Core<H> {
                 .with_pipeline(parameters.enable_pipelining)
                 .build();
 
+        let recovered_committed_state = CommitObserverRecoveredState {
+            committed: committed_blocks,
+            last_committed_height,
+            state: committed_state,
+        };
+
         let mut this = Self {
             block_manager,
             pending,
@@ -138,7 +146,7 @@ impl<H: BlockHandler> Core<H> {
             metrics,
             options,
             signer,
-            recovered_committed_blocks: Some((committed_blocks, committed_state)),
+            recovered_committed_state: Some(recovered_committed_state),
             epoch_manager,
             rounds_in_epoch: parameters.rounds_in_epoch(),
             committer,
@@ -416,8 +424,8 @@ impl<H: BlockHandler> Core<H> {
             .expect("Write to wal has failed");
     }
 
-    pub fn take_recovered_committed_blocks(&mut self) -> (HashSet<BlockReference>, Option<Bytes>) {
-        self.recovered_committed_blocks
+    pub fn take_recovered_committed_blocks(&mut self) -> CommitObserverRecoveredState {
+        self.recovered_committed_state
             .take()
             .expect("take_recovered_committed_blocks called twice")
     }

@@ -91,7 +91,7 @@ Period, Leader rounds & Decision rounds
 The period (p > 1) is the number of rounds between leaders. Rounds with leaders are 
 p * k (for k = 1, 2, 3, ...)  ie non-zero rounds divisible by the period. During these 
 rounds a validator is deterministically chosen by all nodes to act as a leader. The 
-round preceeding the leader round (ie p*(k+1) -1, for k = 1, 2, 3, 4) are called 
+round preceding the leader round (ie p*(k+1) -1, for k = 1, 2, 3, 4) are called 
 decision rounds, since we decide based on blocks on these rounds whether to commit 
 a leader (retrospectively for round p*k) or not. We call these the leader for k and
 the decision round for k.

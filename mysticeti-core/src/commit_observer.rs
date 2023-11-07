@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, CommitData};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
@@ -29,18 +29,12 @@ pub trait CommitObserver: Send + Sync {
 
     /// If CommitObserver has an aggregator (such as TransactionAggregator for fast path), this method return serialized state of such aggregator to be persisted in wal.
     fn aggregator_state(&self) -> Bytes;
-
-    /// When core is restored from wal, it calls CommitObserver::recover_committed and passes the relevant information recovered from wal(see CommitObserverRecoveredState).
-    /// recover_committed is guaranteed to be called on CommitObserver before any other call(e.g. handle_commit or aggregator_state).
-    /// recover_committed is only called if core is recovered from wal, for newly created instance of the protocol recover_committed won't be called.
-    fn recover_committed(&mut self, state: CommitObserverRecoveredState);
 }
 
+#[derive(Default)]
 pub struct CommitObserverRecoveredState {
-    /// set of references of all previously committed blocks
-    pub committed: HashSet<BlockReference>,
-    /// height of the last committed sub dag. This is 0 if no subdags were committed
-    pub last_committed_height: u64,
+    /// All previously committed subdags.
+    pub sub_dags: Vec<CommitData>,
     /// Last observed state of the commit observer returned by CommitObserver::aggregator_state
     pub state: Option<Bytes>,
 }
@@ -59,32 +53,34 @@ pub struct TestCommitObserver<H = HashSet<TransactionLocator>> {
 }
 
 impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitObserver<H> {
-    pub fn new(
+    pub fn new_for_testing(
         block_store: BlockStore,
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
     ) -> Self {
-        Self::new_with_handler(
+        Self::new(
             block_store,
             committee,
             transaction_time,
             metrics,
+            Default::default(),
             Default::default(),
         )
     }
 }
 
 impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
-    pub fn new_with_handler(
+    pub fn new(
         block_store: BlockStore,
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
         handler: H,
+        recovered_state: CommitObserverRecoveredState,
     ) -> Self {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
-        Self {
+        let mut observer = Self {
             commit_interpreter: Linearizer::new(block_store),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
@@ -95,7 +91,9 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
 
             metrics,
             consensus_only,
-        }
+        };
+        observer.recover_committed(recovered_state);
+        observer
     }
 
     pub fn committed_leaders(&self) -> &Vec<BlockReference> {
@@ -139,6 +137,15 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
             .latency_squared_s
             .with_label_values(&["shared"])
             .inc_by(square_latency);
+    }
+
+    fn recover_committed(&mut self, recovered_state: CommitObserverRecoveredState) {
+        if let Some(state) = &recovered_state.state {
+            self.transaction_votes.with_state(state);
+        } else {
+            assert!(recovered_state.sub_dags.is_empty());
+        }
+        self.commit_interpreter.recover_state(&recovered_state);
     }
 }
 
@@ -188,18 +195,6 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
     fn aggregator_state(&self) -> Bytes {
         self.transaction_votes.state()
     }
-
-    fn recover_committed(&mut self, recovered_state: CommitObserverRecoveredState) {
-        if let Some(state) = recovered_state.state {
-            self.transaction_votes.with_state(&state);
-        } else {
-            assert!(recovered_state.committed.is_empty());
-        }
-        self.commit_interpreter.recover_state(
-            recovered_state.committed,
-            recovered_state.last_committed_height,
-        );
-    }
 }
 
 pub struct SimpleCommitObserver {
@@ -216,15 +211,39 @@ impl SimpleCommitObserver {
         block_store: BlockStore,
         // Channel where core will send commits, application can read commits form the other end
         sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>,
-        // Last CommittedSubDag::height(excluded) that we need to replay commits from.
-        // First commit in the replayed sequence will have height replay_from_height+1.
-        // Set to 0 to replay from the start.
-        _replay_from_height: u64,
+        // Last CommittedSubDag::height that has been successfully sent to the output channel.
+        // First commit in the replayed sequence will have height last_sent_height + 1.
+        // Set to 0 to replay from the start (as normal sequence starts at height = 1).
+        last_sent_height: u64,
+        recover_state: CommitObserverRecoveredState,
     ) -> Self {
-        Self {
+        let mut observer = Self {
             block_store: block_store.clone(),
             commit_interpreter: Linearizer::new(block_store),
             sender,
+        };
+        observer.recover_committed(last_sent_height, recover_state);
+        observer
+    }
+
+    fn recover_committed(
+        &mut self,
+        last_sent_height: u64,
+        recovered_state: CommitObserverRecoveredState,
+    ) {
+        self.commit_interpreter.recover_state(&recovered_state);
+        for commit_data in recovered_state.sub_dags {
+            // Resend all the committed subdags to the consensus output channel for all the commits
+            // above the last sent height.
+            // TODO: Since commit data is ordered by height, we can optimize this by first doing
+            // a binary search and skip all the commits below the last sent height.
+            if commit_data.height > last_sent_height {
+                let committed_subdag =
+                    CommittedSubDag::new_from_commit_data(commit_data, &self.block_store);
+                if let Err(err) = self.sender.send(committed_subdag) {
+                    tracing::error!("Failed to send committed sub-dag: {:?}", err);
+                }
+            }
         }
     }
 }
@@ -246,15 +265,5 @@ impl CommitObserver for SimpleCommitObserver {
 
     fn aggregator_state(&self) -> Bytes {
         Bytes::new()
-    }
-
-    fn recover_committed(&mut self, recovered_state: CommitObserverRecoveredState) {
-        // The committed state is set only when we care about fast path aggregation. It must be
-        // empty for the simple observer right now.
-        assert!(recovered_state.state.map(|s| s.is_empty()).unwrap_or(true));
-        self.commit_interpreter.recover_state(
-            recovered_state.committed,
-            recovered_state.last_committed_height,
-        );
     }
 }

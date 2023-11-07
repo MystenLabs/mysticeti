@@ -1529,6 +1529,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1729,6 +1738,7 @@ dependencies = [
  "gettid",
  "hex",
  "hyper",
+ "itertools 0.11.0",
  "libc",
  "memmap2",
  "minibytes",
@@ -2193,7 +2203,7 @@ version = "0.2.3"
 source = "git+https://github.com/asonnino/prometheus-parser.git?rev=75334db#75334dbe2d286edf6d4424abba92a74643333096"
 dependencies = [
  "chrono",
- "itertools",
+ "itertools 0.10.5",
  "lazy_static",
  "regex",
 ]

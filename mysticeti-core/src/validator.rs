@@ -87,7 +87,7 @@ impl Validator {
         let wal_file =
             wal::open_file_for_wal(config.storage().wal()).expect("Failed to open wal file");
         let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-        let recovered = BlockStore::open(
+        let (core_recovered, commit_observer_recovered) = BlockStore::open(
             authority,
             Arc::new(wal_reader),
             &wal_writer,
@@ -100,7 +100,7 @@ impl Validator {
             committee.clone(),
             authority,
             config.storage(),
-            recovered.block_store.clone(),
+            core_recovered.block_store.clone(),
             metrics.clone(),
         );
         let tps = env::var("TPS");
@@ -132,12 +132,13 @@ impl Validator {
         let committed_transaction_log =
             TransactionLog::start(config.storage().committed_transactions_log())
                 .expect("Failed to open committed transaction log for write");
-        let commit_handler = TestCommitObserver::new_with_handler(
-            recovered.block_store.clone(),
+        let commit_observer = TestCommitObserver::new(
+            core_recovered.block_store.clone(),
             committee.clone(),
             block_handler.transaction_time.clone(),
             metrics.clone(),
             committed_transaction_log,
+            commit_observer_recovered,
         );
         let core = Core::open(
             block_handler,
@@ -145,11 +146,12 @@ impl Validator {
             committee.clone(),
             parameters,
             metrics.clone(),
-            recovered,
+            core_recovered,
             wal_writer,
             CoreOptions::default(),
             signer,
         );
+
         let network = Network::load(
             parameters,
             authority,
@@ -161,7 +163,7 @@ impl Validator {
             network,
             core,
             parameters.wave_length(),
-            commit_handler,
+            commit_observer,
             parameters.shutdown_grace_period(),
             AcceptAllValidator,
             metrics,

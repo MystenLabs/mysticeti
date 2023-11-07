@@ -1,8 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::commit_observer::CommitObserverRecoveredState;
 use crate::metrics::{Metrics, UtilizationTimerExt};
-use crate::state::{RecoveredState, RecoveredStateBuilder};
+use crate::state::{CoreRecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use crate::{committee::Committee, types::TransactionLocator};
@@ -52,7 +53,7 @@ impl BlockStore {
         wal_writer: &WalWriter,
         metrics: Arc<Metrics>,
         committee: &Committee,
-    ) -> RecoveredState {
+    ) -> (CoreRecoveredState, CommitObserverRecoveredState) {
         let last_seen_by_authority = committee.authorities().map(|_| 0).collect();
         let mut inner = BlockStoreInner {
             authority,

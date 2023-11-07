@@ -261,6 +261,11 @@ impl StatementBlock {
         self.meta_creation_time_ns
     }
 
+    pub fn meta_creation_time_ms(&self) -> u64 {
+        // TODO: Verify that this will never overflow.
+        (self.meta_creation_time_ns / 1000) as u64
+    }
+
     pub fn epoch_changed(&self) -> EpochStatus {
         self.epoch_marker
     }

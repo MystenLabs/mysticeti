@@ -1,11 +1,13 @@
-use crate::commit_observer::CommitObserverRecoveredState;
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::committee::Committee;
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::state::RecoveredState;
+use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{WalPosition, WalSyncer, WalWriter};
@@ -41,8 +43,6 @@ pub struct Core<H: BlockHandler> {
     pub(crate) metrics: Arc<Metrics>,
     options: CoreOptions,
     signer: Signer,
-    // todo - ugly, probably need to merge syncer and core
-    recovered_committed_state: Option<CommitObserverRecoveredState>,
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: UniversalCommitter,
@@ -66,21 +66,18 @@ impl<H: BlockHandler> Core<H> {
         committee: Arc<Committee>,
         parameters: &Parameters,
         metrics: Arc<Metrics>,
-        recovered: RecoveredState,
+        recovered: CoreRecoveredState,
         mut wal_writer: WalWriter,
         options: CoreOptions,
         signer: Signer,
     ) -> Self {
-        let RecoveredState {
+        let CoreRecoveredState {
             block_store,
             last_own_block,
             mut pending,
             state,
             unprocessed_blocks,
             last_committed_leader,
-            committed_blocks,
-            committed_state,
-            last_committed_height,
         } = recovered;
         let mut threshold_clock = ThresholdClockAggregator::new(0);
         let last_own_block = if let Some(own_block) = last_own_block {
@@ -126,12 +123,6 @@ impl<H: BlockHandler> Core<H> {
                 .with_pipeline(parameters.enable_pipelining)
                 .build();
 
-        let recovered_committed_state = CommitObserverRecoveredState {
-            committed: committed_blocks,
-            last_committed_height,
-            state: committed_state,
-        };
-
         let mut this = Self {
             block_manager,
             pending,
@@ -146,7 +137,6 @@ impl<H: BlockHandler> Core<H> {
             metrics,
             options,
             signer,
-            recovered_committed_state: Some(recovered_committed_state),
             epoch_manager,
             rounds_in_epoch: parameters.rounds_in_epoch(),
             committer,
@@ -424,12 +414,6 @@ impl<H: BlockHandler> Core<H> {
             .expect("Write to wal has failed");
     }
 
-    pub fn take_recovered_committed_blocks(&mut self) -> CommitObserverRecoveredState {
-        self.recovered_committed_state
-            .take()
-            .expect("take_recovered_committed_blocks called twice")
-    }
-
     pub fn block_store(&self) -> &BlockStore {
         &self.block_store
     }
@@ -502,7 +486,7 @@ mod test {
 
     #[test]
     fn test_core_simple_exchange() {
-        let (_committee, mut cores, _) = committee_and_cores(4);
+        let (_committee, mut cores, ..) = committee_and_cores(4);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -556,7 +540,7 @@ mod test {
     fn test_randomized_simple_exchange() {
         'l: for seed in 0..100 {
             let mut rng = StdRng::from_seed([seed; 32]);
-            let (committee, mut cores, _) = committee_and_cores(4);
+            let (committee, mut cores, ..) = committee_and_cores(4);
 
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();
@@ -639,7 +623,7 @@ mod test {
     #[test]
     fn test_core_recovery() {
         let tmp = tempdir::TempDir::new("test_core_recovery").unwrap();
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, ..) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
@@ -657,7 +641,7 @@ mod test {
         cores.iter_mut().for_each(Core::write_state);
         drop(cores);
 
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, ..) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         let more_blocks = blocks.split_off(2);
 
@@ -682,7 +666,7 @@ mod test {
 
         eprintln!("===");
 
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, ..) = committee_and_cores_persisted(4, Some(tmp.path()));
 
         for core in &mut cores {
             core.add_blocks(blocks_r2.clone());

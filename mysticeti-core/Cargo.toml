@@ -39,6 +39,7 @@ gettid = "0.1.2"
 crc32fast = "1.3.2"
 
 [dev-dependencies]
+itertools = "0.11.0"
 reqwest = { workspace = true }
 tracing-test = "0.2.4"
 tempdir = "0.3.7"

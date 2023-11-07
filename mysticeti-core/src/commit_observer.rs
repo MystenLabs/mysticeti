@@ -214,7 +214,12 @@ pub struct SimpleCommitObserver {
 impl SimpleCommitObserver {
     pub fn new(
         block_store: BlockStore,
+        // Channel where core will send commits, application can read commits form the other end
         sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>,
+        // Last CommittedSubDag::height(excluded) that we need to replay commits from.
+        // First commit in the replayed sequence will have height replay_from_height+1.
+        // Set to 0 to replay from the start.
+        _replay_from_height: u64,
     ) -> Self {
         Self {
             block_store: block_store.clone(),

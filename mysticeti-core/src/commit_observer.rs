@@ -235,6 +235,8 @@ impl SimpleCommitObserver {
         for commit_data in recovered_state.sub_dags {
             // Resend all the committed subdags to the consensus output channel for all the commits
             // above the last sent height.
+            // TODO: Since commit data is ordered by height, we can optimize this by first doing
+            // a binary search and skip all the commits below the last sent height.
             if commit_data.height > last_sent_height {
                 let committed_subdag =
                     CommittedSubDag::new_from_commit_data(commit_data, &self.block_store);

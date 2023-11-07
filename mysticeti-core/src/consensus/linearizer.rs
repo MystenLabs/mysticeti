@@ -60,7 +60,7 @@ impl CommittedSubDag {
             .collect::<Vec<_>>();
         let leader_block_idx = leader_block_idx.expect("Leader block must be in the sub-dag");
         let leader_block_ref = blocks[leader_block_idx].reference();
-        let timestamp_ms = (blocks[leader_block_idx].meta_creation_time_ns() / 1000) as u64;
+        let timestamp_ms = blocks[leader_block_idx].meta_creation_time_ms();
         CommittedSubDag::new(*leader_block_ref, blocks, timestamp_ms, commit_data.height)
     }
 
@@ -125,8 +125,7 @@ impl Linearizer {
     fn collect_sub_dag(&mut self, leader_block: Data<StatementBlock>) -> CommittedSubDag {
         let mut to_commit = Vec::new();
 
-        // TODO: Verify that this can never overflow.
-        let timestamp_ms = (leader_block.meta_creation_time_ns() / 1000) as u64;
+        let timestamp_ms = leader_block.meta_creation_time_ms();
         let leader_block_ref = *leader_block.reference();
         let mut buffer = vec![leader_block];
         assert!(self.committed.insert(leader_block_ref));

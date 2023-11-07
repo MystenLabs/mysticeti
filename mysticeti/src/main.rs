@@ -9,7 +9,7 @@ use std::{
 };
 
 use clap::{command, Parser};
-use eyre::{eyre, Context, Result};
+use eyre::{Context, Result};
 use futures::future;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -174,20 +174,6 @@ async fn run(
     ))?;
 
     let committee = Arc::new(committee);
-
-    let network_address = parameters
-        .network_address(authority)
-        .ok_or(eyre!("No network address for authority {authority}"))
-        .wrap_err("Unknown authority")?;
-    let mut binding_network_address = network_address;
-    binding_network_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-
-    let metrics_address = parameters
-        .metrics_address(authority)
-        .ok_or(eyre!("No metrics address for authority {authority}"))
-        .wrap_err("Unknown authority")?;
-    let mut binding_metrics_address = metrics_address;
-    binding_metrics_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 
     // Boot the validator node.
     let validator = Validator::start(

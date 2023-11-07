@@ -1,22 +1,22 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::block_store::{BlockStore, CommitData, OwnBlockData};
+use crate::commit_observer::CommitObserverRecoveredState;
 use crate::core::MetaStatement;
 use crate::data::Data;
 use crate::types::{BlockReference, StatementBlock};
 use crate::wal::WalPosition;
 use minibytes::Bytes;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
-pub struct RecoveredState {
+pub struct CoreRecoveredState {
     pub block_store: BlockStore,
     pub last_own_block: Option<OwnBlockData>,
     pub pending: VecDeque<(WalPosition, MetaStatement)>,
     pub state: Option<Bytes>,
     pub unprocessed_blocks: Vec<Data<StatementBlock>>,
-
     pub last_committed_leader: Option<BlockReference>,
-    pub committed_blocks: HashSet<BlockReference>,
-    pub last_committed_height: u64,
-    pub committed_state: Option<Bytes>,
 }
 
 #[derive(Default)]
@@ -27,8 +27,7 @@ pub struct RecoveredStateBuilder {
     unprocessed_blocks: Vec<Data<StatementBlock>>,
 
     last_committed_leader: Option<BlockReference>,
-    committed_blocks: HashSet<BlockReference>,
-    last_committed_height: u64,
+    committed_sub_dags: Vec<CommitData>,
     committed_state: Option<Bytes>,
 }
 
@@ -62,31 +61,36 @@ impl RecoveredStateBuilder {
     pub fn commit_data(&mut self, commits: Vec<CommitData>, committed_state: Bytes) {
         for commit_data in commits {
             self.last_committed_leader = Some(commit_data.leader);
-            self.committed_blocks
-                .extend(commit_data.sub_dag.into_iter());
-            assert!(commit_data.height > self.last_committed_height);
-            self.last_committed_height = commit_data.height;
+            if let Some(cur_last_commit) = self.committed_sub_dags.last() {
+                assert!(commit_data.height > cur_last_commit.height);
+            }
+            self.committed_sub_dags.push(commit_data);
         }
         self.committed_state = Some(committed_state);
     }
 
-    pub fn build(self, block_store: BlockStore) -> RecoveredState {
+    pub fn build(
+        self,
+        block_store: BlockStore,
+    ) -> (CoreRecoveredState, CommitObserverRecoveredState) {
         let pending = self
             .pending
             .into_iter()
             .map(|(pos, raw)| (pos, raw.into_meta_statement()))
             .collect();
-        RecoveredState {
+        let core_recovered = CoreRecoveredState {
             pending,
             last_own_block: self.last_own_block,
             block_store,
             state: self.state,
             unprocessed_blocks: self.unprocessed_blocks,
             last_committed_leader: self.last_committed_leader,
-            committed_blocks: self.committed_blocks,
-            committed_state: self.committed_state,
-            last_committed_height: self.last_committed_height,
-        }
+        };
+        let commit_observer_recovered = CommitObserverRecoveredState {
+            sub_dags: self.committed_sub_dags,
+            state: self.committed_state,
+        };
+        (core_recovered, commit_observer_recovered)
     }
 }
 

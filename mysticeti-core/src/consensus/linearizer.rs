@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, CommitData};
+use crate::commit_observer::CommitObserverRecoveredState;
 use crate::{
     data::Data,
     types::{BlockReference, StatementBlock},
@@ -39,6 +40,28 @@ impl CommittedSubDag {
             timestamp_ms,
             height,
         }
+    }
+
+    pub fn new_from_commit_data(commit_data: CommitData, block_store: &BlockStore) -> Self {
+        let mut leader_block_idx = None;
+        let blocks = commit_data
+            .sub_dag
+            .into_iter()
+            .enumerate()
+            .map(|(idx, block_ref)| {
+                let block = block_store
+                    .get_block(block_ref)
+                    .expect("We should have the block referenced in the commit data");
+                if block_ref == commit_data.leader {
+                    leader_block_idx = Some(idx);
+                }
+                block
+            })
+            .collect::<Vec<_>>();
+        let leader_block_idx = leader_block_idx.expect("Leader block must be in the sub-dag");
+        let leader_block_ref = blocks[leader_block_idx].reference();
+        let timestamp_ms = (blocks[leader_block_idx].meta_creation_time_ns() / 1000) as u64;
+        CommittedSubDag::new(*leader_block_ref, blocks, timestamp_ms, commit_data.height)
     }
 
     /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
@@ -82,15 +105,19 @@ impl Linearizer {
         }
     }
 
-    pub fn recover_state(
-        &mut self,
-        committed: HashSet<BlockReference>,
-        last_committed_height: u64,
-    ) {
+    pub fn recover_state(&mut self, recovered_state: &CommitObserverRecoveredState) {
         assert!(self.committed.is_empty());
         assert_eq!(self.last_height, 0);
-        self.committed = committed;
-        self.last_height = last_committed_height;
+        for commit in recovered_state.sub_dags.iter() {
+            assert!(commit.height > self.last_height);
+            self.last_height = commit.height;
+
+            for block in commit.sub_dag.iter() {
+                self.committed.insert(*block);
+            }
+            // Leader must be part of the subdag and hence should have been inserted in the loop above.
+            assert!(self.committed.contains(&commit.leader));
+        }
     }
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that

@@ -44,6 +44,7 @@ pub fn committee_and_cores(
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     committee_and_cores_persisted_epoch_duration(n, None, &Parameters::default())
@@ -55,6 +56,7 @@ pub fn committee_and_cores_epoch_duration(
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     let parameters = Parameters {
@@ -70,6 +72,7 @@ pub fn committee_and_cores_persisted(
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     committee_and_cores_persisted_epoch_duration(n, path, &Parameters::default())
@@ -82,6 +85,7 @@ pub fn committee_and_cores_persisted_epoch_duration(
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     let committee = committee(n);
@@ -103,7 +107,7 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 tempfile::tempfile().unwrap()
             };
             let (wal_writer, wal_reader) = walf(wal_file).expect("Failed to open wal");
-            let recovered = BlockStore::open(
+            let (core_recovered, commit_observer_recovered) = BlockStore::open(
                 authority,
                 Arc::new(wal_reader),
                 &wal_writer,
@@ -118,16 +122,24 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 committee.clone(),
                 parameters,
                 metrics,
-                recovered,
+                core_recovered,
                 wal_writer,
                 CoreOptions::test(),
                 dummy_signer(),
             );
-            (core, reporter)
+            let commit_observer = TestCommitObserver::new(
+                core.block_store().clone(),
+                committee.clone(),
+                core.block_handler().transaction_time.clone(),
+                test_metrics(),
+                Default::default(),
+                commit_observer_recovered,
+            );
+            (core, commit_observer, reporter)
         })
         .collect();
-    let (cores, reporters) = cores.into_iter().unzip();
-    (committee, cores, reporters)
+    let (cores, commit_observers, reporters) = itertools::multiunzip(cores);
+    (committee, cores, commit_observers, reporters)
 }
 
 fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
@@ -140,19 +152,14 @@ pub fn committee_and_syncers(
     Arc<Committee>,
     Vec<Syncer<TestBlockHandler, bool, TestCommitObserver>>,
 ) {
-    let (committee, cores, _) = committee_and_cores(n);
+    let (committee, cores, commit_observers, _) = committee_and_cores(n);
     (
         committee.clone(),
         cores
             .into_iter()
-            .map(|core| {
-                let commit_handler = TestCommitObserver::new(
-                    core.block_store().clone(),
-                    committee.clone(),
-                    core.block_handler().transaction_time.clone(),
-                    test_metrics(),
-                );
-                Syncer::new(core, 3, Default::default(), commit_handler, test_metrics())
+            .zip(commit_observers)
+            .map(|(core, commit_observer)| {
+                Syncer::new(core, 3, Default::default(), commit_observer, test_metrics())
             })
             .collect(),
     )
@@ -195,22 +202,18 @@ pub fn simulated_network_syncers_with_epoch_duration(
     Vec<NetworkSyncer<TestBlockHandler, TestCommitObserver>>,
     Vec<MetricReporter>,
 ) {
-    let (committee, cores, reporters) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
+    let (committee, cores, commit_observers, reporters) =
+        committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
-    for (network, core) in networks.into_iter().zip(cores.into_iter()) {
-        let commit_handler = TestCommitObserver::new(
-            core.block_store().clone(),
-            committee.clone(),
-            core.block_handler().transaction_time.clone(),
-            core.metrics.clone(),
-        );
+    for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
+    {
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
-            commit_handler,
+            commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             AcceptAllValidator,
             test_metrics(),
@@ -229,22 +232,17 @@ pub async fn network_syncers_with_epoch_duration(
     n: usize,
     rounds_in_epoch: RoundNumber,
 ) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitObserver>> {
-    let (committee, cores, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
+    let (_, cores, commit_observers, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
-    for (network, core) in networks.into_iter().zip(cores.into_iter()) {
-        let commit_handler = TestCommitObserver::new(
-            core.block_store().clone(),
-            committee.clone(),
-            core.block_handler().transaction_time.clone(),
-            test_metrics(),
-        );
+    for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
+    {
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
-            commit_handler,
+            commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             AcceptAllValidator,
             test_metrics(),
@@ -351,14 +349,14 @@ impl TestBlockWriter {
     pub fn new(committee: &Committee) -> Self {
         let file = tempfile::tempfile().unwrap();
         let (wal_writer, wal_reader) = walf(file).unwrap();
-        let state = BlockStore::open(
+        let (core_state, _commit_observer_state) = BlockStore::open(
             0,
             Arc::new(wal_reader),
             &wal_writer,
             test_metrics(),
             committee,
         );
-        let block_store = state.block_store;
+        let block_store = core_state.block_store;
         Self {
             block_store,
             wal_writer,

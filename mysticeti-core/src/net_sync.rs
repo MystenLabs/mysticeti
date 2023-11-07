@@ -45,9 +45,9 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
     pub fn start(
         network: Network,
-        mut core: Core<H>,
+        core: Core<H>,
         commit_period: u64,
-        mut commit_observer: C,
+        commit_observer: C,
         shutdown_grace_period: Duration,
         validator: impl BlockValidator,
         metrics: Arc<Metrics>,
@@ -55,9 +55,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let authority_index = core.authority();
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
-        // todo - ugly, probably need to merge syncer and core
-        let commit_observer_state = core.take_recovered_committed_blocks();
-        commit_observer.recover_committed(commit_observer_state);
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();

@@ -14,7 +14,9 @@ use eyre::{eyre, Context, Result};
 use crate::block_validator::AcceptAllValidator;
 use crate::commit_observer::TestCommitObserver;
 use crate::crypto::Signer;
-use crate::runtime::Handle;
+use crate::metrics::MetricReporterHandle;
+use crate::prometheus::PrometheusServerHandle;
+use crate::transactions_generator::TransactionGeneratorHandle;
 use crate::wal::walf;
 use crate::{
     block_handler::BenchmarkFastPathBlockHandler,
@@ -25,7 +27,7 @@ use crate::{
     net_sync::NetworkSyncer,
     network::Network,
     prometheus,
-    runtime::{JoinError, JoinHandle},
+    runtime::JoinError,
     types::AuthorityIndex,
     wal,
 };
@@ -35,7 +37,9 @@ use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 pub struct Validator {
     network_synchronizer:
         NetworkSyncer<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>>,
-    metrics_handle: JoinHandle<Result<(), hyper::Error>>,
+    metrics_handle: PrometheusServerHandle,
+    reporter_handle: MetricReporterHandle,
+    transaction_generator_handle: TransactionGeneratorHandle,
 }
 
 impl Validator {
@@ -57,7 +61,7 @@ impl Validator {
         // Boot the prometheus server only when a registry is not passed in. If a registry is passed in
         // we assume that an upstream component is responsible for exposing the metrics.
         let (registry, metrics_handle) = if let Some(registry) = registry {
-            (registry, Handle::current().spawn(async { Ok(()) }))
+            (registry, PrometheusServerHandle::noop())
         } else {
             let registry = Registry::new();
 
@@ -77,7 +81,7 @@ impl Validator {
         };
 
         let (metrics, reporter) = Metrics::new(&registry, Some(&committee));
-        reporter.start();
+        let reporter_handle = reporter.start();
 
         // Open the block store.
         let wal_file =
@@ -118,7 +122,7 @@ impl Validator {
 
         tracing::info!("Starting generator with {tps} transactions per second, initial delay {initial_delay} sec");
         let initial_delay = Duration::from_secs(initial_delay);
-        TransactionGenerator::start(
+        let transaction_generator_handle = TransactionGenerator::start(
             block_sender,
             authority,
             tps,
@@ -168,6 +172,8 @@ impl Validator {
         Ok(Self {
             network_synchronizer,
             metrics_handle,
+            reporter_handle,
+            transaction_generator_handle,
         })
     }
 
@@ -179,12 +185,15 @@ impl Validator {
     ) {
         tokio::join!(
             self.network_synchronizer.await_completion(),
-            self.metrics_handle
+            self.metrics_handle.handle
         )
     }
 
     pub async fn stop(self) {
         self.network_synchronizer.shutdown().await;
+        self.reporter_handle.shutdown().await;
+        self.metrics_handle.shutdown().await;
+        self.transaction_generator_handle.shutdown().await;
     }
 }
 
@@ -199,15 +208,15 @@ mod smoke_tests {
 
     use tokio::time;
 
+    use super::Validator;
     use crate::crypto::dummy_signer;
+    use crate::runtime::sleep;
     use crate::{
         committee::Committee,
         config::{Parameters, PrivateConfig},
         prometheus,
         types::AuthorityIndex,
     };
-
-    use super::Validator;
 
     /// Check whether the validator specified by its metrics address has committed at least once.
     async fn check_commit(address: &SocketAddr) -> Result<bool, reqwest::Error> {
@@ -378,6 +387,72 @@ mod smoke_tests {
         tokio::select! {
             _ = await_for_commits(addresses) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
+
+    #[tokio::test]
+    async fn validator_shutdown_and_start() {
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips).with_port_offset(300);
+
+        let tempdir = TempDir::new("validator_shutdown_and_start").unwrap();
+
+        let mut validators = Vec::new();
+        for i in 0..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                None,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
+            validators.push(validator);
+        }
+
+        // let the network communicate a bit
+        sleep(Duration::from_secs(2)).await;
+
+        // now shutdown all the validators
+        while let Some(validator) = validators.pop() {
+            validator.stop().await;
+        }
+
+        // TODO: to make the test pass for now I am making the validators start with a fresh storage.
+        // Otherwise I get a storage related error like:
+        //  panicked at 'range end index 16 out of range for slice of length 13', mysticeti-core/src/wal.rs:296:33
+        //
+        // when block store is restored during the `open` method.
+        //
+        // Switching to CoreOptions::production() to have a sync file on every block write the error goes away. This makes me
+        // believe that some partial writing is happening or something that makes the file perceived as corrupt while reloading it.
+        // Haven't investigated further but needs to look into it.
+        let tempdir = TempDir::new("validator_shutdown_and_start").unwrap();
+
+        // now start again the validators - no error (ex network port conflict) should arise
+        for i in 0..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.as_ref(), authority);
+
+            let validator = Validator::start(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                None,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
+            validators.push(validator);
         }
     }
 }

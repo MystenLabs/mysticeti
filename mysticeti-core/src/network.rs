@@ -25,6 +25,8 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::runtime::Handle;
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -41,6 +43,8 @@ pub enum NetworkMessage {
 
 pub struct Network {
     connection_receiver: mpsc::Receiver<Connection>,
+    stop: Option<mpsc::Sender<()>>,
+    server_handle: Option<JoinHandle<()>>,
 }
 
 pub struct Connection {
@@ -54,6 +58,8 @@ impl Network {
     pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
         Self {
             connection_receiver,
+            stop: None,
+            server_handle: None,
         }
     }
 
@@ -113,15 +119,28 @@ impl Network {
                 .run(receiver),
             );
         }
-        handle.spawn(
+        let (stop, rx_stop) = tokio::sync::mpsc::channel(1);
+        let server_handle = handle.spawn(async {
             Server {
                 server,
                 worker_senders,
             }
-            .run(),
-        );
+            .run(rx_stop)
+            .await
+        });
         Self {
             connection_receiver,
+            stop: Some(stop),
+            server_handle: Some(server_handle),
+        }
+    }
+
+    pub async fn shutdown(mut self) {
+        if let Some(stop) = self.stop.take() {
+            stop.send(()).await.ok();
+        }
+        if let Some(handle) = self.server_handle.take() {
+            handle.await.ok();
         }
     }
 }
@@ -132,14 +151,22 @@ struct Server {
 }
 
 impl Server {
-    async fn run(self) {
+    async fn run(self, mut stop: Receiver<()>) {
         loop {
-            let (socket, remote_peer) = self.server.accept().await.expect("Accept failed");
-            let remote_peer = remote_to_local_port(remote_peer);
-            if let Some(sender) = self.worker_senders.get(&remote_peer) {
-                sender.send(socket).ok();
-            } else {
-                tracing::warn!("Dropping connection from unknown peer {remote_peer}");
+            tokio::select! {
+                result = self.server.accept() => {
+                    let (socket, remote_peer) = result.expect("accept failed");
+                    let remote_peer = remote_to_local_port(remote_peer);
+                    if let Some(sender) = self.worker_senders.get(&remote_peer) {
+                        sender.send(socket).ok();
+                    } else {
+                        tracing::warn!("Dropping connection from unknown peer {remote_peer}");
+                    }
+                }
+                _ = stop.recv() => {
+                    tracing::info!("Shutting down network");
+                    return;
+                }
             }
         }
     }

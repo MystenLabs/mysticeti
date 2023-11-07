@@ -12,9 +12,9 @@ use crate::runtime;
 use crate::runtime::TimeInstant;
 use crate::transactions_generator::TransactionGenerator;
 use crate::types::{BlockReference, StatementBlock, Transaction, TransactionLocator};
+use crate::validator::TransactionTimeMap;
 use minibytes::Bytes;
-use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,7 +46,7 @@ pub struct TestCommitObserver<H = HashSet<TransactionLocator>> {
     committed_leaders: Vec<BlockReference>,
     // committed_dags: Vec<CommittedSubDag>,
     start_time: TimeInstant,
-    transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
+    transaction_time: TransactionTimeMap,
 
     metrics: Arc<Metrics>,
     consensus_only: bool,
@@ -56,7 +56,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitObs
     pub fn new_for_testing(
         block_store: BlockStore,
         committee: Arc<Committee>,
-        transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
+        transaction_time: TransactionTimeMap,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self::new(
@@ -74,7 +74,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
     pub fn new(
         block_store: BlockStore,
         committee: Arc<Committee>,
-        transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
+        transaction_time: TransactionTimeMap,
         metrics: Arc<Metrics>,
         handler: H,
         recovered_state: CommitObserverRecoveredState,

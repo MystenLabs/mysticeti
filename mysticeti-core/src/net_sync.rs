@@ -139,10 +139,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 task.await.ok();
             }
 
-            let sender = connection.sender.clone();
-            let authority = peer_id as AuthorityIndex;
-            block_fetcher.register_authority(authority, sender).await;
-
             let task = handle.spawn(Self::connection_task(
                 connection,
                 inner.clone(),
@@ -172,6 +168,35 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
     ) -> Option<()> {
+        // first step exchange current epoch - do not proceed if not have received that message first.
+        let epoch = inner.committee.epoch();
+        connection
+            .sender
+            .send(NetworkMessage::Epoch(epoch))
+            .await
+            .ok()?;
+        if let Some(NetworkMessage::Epoch(peer_epoch)) =
+            inner.recv_or_stopped(&mut connection.receiver).await
+        {
+            if epoch != peer_epoch {
+                tracing::warn!(
+                    "Our epoch {} is different that peer's epoch {}. Closing connection.",
+                    epoch,
+                    peer_epoch
+                );
+                return None;
+            }
+        } else {
+            return None;
+        }
+
+        block_fetcher
+            .register_authority(
+                connection.peer_id as AuthorityIndex,
+                connection.sender.clone(),
+            )
+            .await;
+
         let last_seen = inner
             .block_store
             .last_seen_by_authority(connection.peer_id as AuthorityIndex);
@@ -233,6 +258,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
+                }
+                NetworkMessage::Epoch(_peer_epoch) => {
+                    // TODO: ignore for now as we only expect to receive this in the beginning of the connection
                 }
             }
         }

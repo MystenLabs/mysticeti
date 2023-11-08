@@ -4,7 +4,7 @@
 use crate::crypto::{dummy_public_key, PublicKey};
 use crate::range_map::RangeMap;
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, Stake, StatementBlock,
+    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, Epoch, Stake, StatementBlock,
     TransactionLocator, TransactionLocatorRange, Vote,
 };
 use crate::{config::Print, data::Data};
@@ -22,6 +22,7 @@ use std::sync::Arc;
 #[derive(Serialize, Deserialize)]
 pub struct Committee {
     authorities: Vec<Authority>,
+    epoch: Epoch,
     validity_threshold: Stake, // The minimum stake required for validity
     quorum_threshold: Stake,   // The minimum stake required for quorum
 }
@@ -32,10 +33,10 @@ impl Committee {
 
     pub fn new_test(stake: Vec<Stake>) -> Arc<Self> {
         let authorities = stake.into_iter().map(Authority::test_from_stake).collect();
-        Self::new(authorities)
+        Self::new(authorities, 0)
     }
 
-    pub fn new(authorities: Vec<Authority>) -> Arc<Self> {
+    pub fn new(authorities: Vec<Authority>, epoch: Epoch) -> Arc<Self> {
         // todo - check duplicate public keys
         // Ensure the list is not empty
         assert!(!authorities.is_empty());
@@ -54,11 +55,15 @@ impl Committee {
         let quorum_threshold = 2 * total_stake / 3;
         Arc::new(Committee {
             authorities,
+            epoch,
             validity_threshold,
             quorum_threshold,
         })
     }
 
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
     pub fn get_stake(&self, authority: AuthorityIndex) -> Option<Stake> {
         self.authorities
             .get(authority as usize)

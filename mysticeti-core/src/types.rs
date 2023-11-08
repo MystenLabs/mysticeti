@@ -99,6 +99,7 @@ pub struct AuthoritySet([AuthoritySetElementType; AUTH_SET_ELEMENT_COUNT]);
 
 pub type TimestampNs = u128;
 const NANOS_IN_SEC: u128 = Duration::from_secs(1).as_nanos();
+const MILLIS_IN_NANO: u128 = Duration::from_millis(1).as_nanos();
 
 const GENESIS_ROUND: RoundNumber = 0;
 
@@ -263,7 +264,7 @@ impl StatementBlock {
 
     pub fn meta_creation_time_ms(&self) -> u64 {
         // TODO: Verify that this will never overflow.
-        (self.meta_creation_time_ns / 1000) as u64
+        self.meta_creation_time_ns.saturating_div(MILLIS_IN_NANO) as u64
     }
 
     pub fn epoch_changed(&self) -> EpochStatus {

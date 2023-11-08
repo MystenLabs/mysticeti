@@ -233,7 +233,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             .wrap_err("Unknown authority")?;
         let mut binding_network_address = network_address;
         binding_network_address.set_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-        tracing::info!("Binding to local address {}", binding_network_address);
+        tracing::warn!("Binding to local address {}", binding_network_address);
 
         let core = Core::open(
             block_handler,

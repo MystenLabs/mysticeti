@@ -513,7 +513,7 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
             address: address.to_string(),
         })
         .collect();
-    tracing::info!("Network address table:\n{}", Table::new(table));
+    tracing::warn!("Network address table:\n{}", Table::new(table));
 }
 
 pub trait UtilizationTimerExt {

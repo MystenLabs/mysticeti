@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::block_handler::{BlockHandler, SimpleBlockHandler};
-use crate::block_validator::AcceptAllBlockVerifier;
+use crate::block_validator::{AcceptAllBlockVerifier, BlockVerifier};
 use crate::commit_observer::{
     CommitObserver, CommitObserverRecoveredState, SimpleCommitObserver, TestCommitObserver,
 };
@@ -154,12 +154,14 @@ impl Validator<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>
             wal_writer,
             block_handler,
             commit_observer,
+            AcceptAllBlockVerifier,
         )
         .await
     }
 }
 
 impl Validator<SimpleBlockHandler> {
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_production(
         authority: AuthorityIndex,
         committee: Arc<Committee>,
@@ -168,6 +170,7 @@ impl Validator<SimpleBlockHandler> {
         registry: Registry,
         signer: Signer,
         consumer: CommitConsumer,
+        block_verifier: impl BlockVerifier,
     ) -> Result<(
         Validator<SimpleBlockHandler, SimpleCommitObserver>,
         tokio::sync::mpsc::Sender<(Vec<u8>, tokio::sync::oneshot::Sender<()>)>,
@@ -199,6 +202,7 @@ impl Validator<SimpleBlockHandler> {
             wal_writer,
             block_handler,
             commit_observer,
+            block_verifier,
         )
         .await?;
 
@@ -221,6 +225,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         wal_writer: WalWriter,
         block_handler: B,
         commit_observer: C,
+        block_verifier: impl BlockVerifier,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -254,7 +259,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             parameters.wave_length(),
             commit_observer,
             parameters.shutdown_grace_period(),
-            AcceptAllBlockVerifier,
+            block_verifier,
             metrics,
         );
 

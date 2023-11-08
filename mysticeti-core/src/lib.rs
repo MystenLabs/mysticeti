@@ -12,7 +12,7 @@ pub mod consensus;
 pub mod core;
 mod core_thread;
 mod crypto;
-pub mod data;
+mod data;
 mod epoch_close;
 mod finalization_interpreter;
 #[cfg(test)]
@@ -51,4 +51,3 @@ mod wal;
 pub use crate::block_handler::SimpleBlockHandler;
 pub use crate::crypto::{dummy_signer, PublicKey, Signer};
 pub use crate::validator::CommitConsumer;
-pub use minibytes;

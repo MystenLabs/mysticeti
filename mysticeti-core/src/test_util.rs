@@ -3,7 +3,7 @@
 
 use crate::block_handler::{BlockHandler, TestBlockHandler};
 use crate::block_store::{BlockStore, BlockWriter, OwnBlockData, WAL_ENTRY_BLOCK};
-use crate::block_validator::AcceptAllValidator;
+use crate::block_validator::AcceptAllBlockVerifier;
 use crate::commit_observer::TestCommitObserver;
 use crate::committee::Committee;
 use crate::config::Parameters;
@@ -215,7 +215,7 @@ pub fn simulated_network_syncers_with_epoch_duration(
             3,
             commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
-            AcceptAllValidator,
+            AcceptAllBlockVerifier,
             test_metrics(),
         );
         drop(node_context);
@@ -244,7 +244,7 @@ pub async fn network_syncers_with_epoch_duration(
             3,
             commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
-            AcceptAllValidator,
+            AcceptAllBlockVerifier,
             test_metrics(),
         );
         network_syncers.push(network_syncer);

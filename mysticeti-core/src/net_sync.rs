@@ -1,4 +1,4 @@
-use crate::block_validator::BlockValidator;
+use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
@@ -49,7 +49,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         commit_period: u64,
         commit_observer: C,
         shutdown_grace_period: Duration,
-        validator: impl BlockValidator,
+        block_verifier: impl BlockVerifier,
         metrics: Arc<Metrics>,
     ) -> Self {
         let authority_index = core.authority();
@@ -92,7 +92,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             epoch_receiver,
             shutdown_grace_period,
             block_fetcher,
-            Arc::new(validator),
+            Arc::new(block_verifier),
             metrics.clone(),
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
@@ -121,7 +121,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
         block_fetcher: Arc<BlockFetcher>,
-        validator: Arc<impl BlockValidator>,
+        block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
@@ -147,7 +147,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 connection,
                 inner.clone(),
                 block_fetcher.clone(),
-                validator.clone(),
+                block_verifier.clone(),
                 metrics.clone(),
             ));
             connections.insert(peer_id, task);
@@ -169,7 +169,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
-        statement_block_validator: Arc<impl BlockValidator>,
+        block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
     ) -> Option<()> {
         let last_seen = inner
@@ -204,11 +204,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         break;
                     }
                     // Verify blocks based on customized validation rules
-                    if let Err(e) = statement_block_validator
-                        .verify(&block)
-                        .await
-                        .map_err(|e| eyre::eyre!("Invalid StatementBlock content: {e}"))
-                    {
+                    if let Err(e) = block_verifier.verify(&block).await {
                         tracing::warn!(
                             "Rejected incorrect block {} based on validation rules from {}: {:?}",
                             block.reference(),

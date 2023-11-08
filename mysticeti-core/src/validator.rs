@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::block_handler::{BlockHandler, SimpleBlockHandler};
-use crate::block_validator::AcceptAllValidator;
+use crate::block_validator::AcceptAllBlockVerifier;
 use crate::commit_observer::{
     CommitObserver, CommitObserverRecoveredState, SimpleCommitObserver, TestCommitObserver,
 };
@@ -254,7 +254,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             parameters.wave_length(),
             commit_observer,
             parameters.shutdown_grace_period(),
-            AcceptAllValidator,
+            AcceptAllBlockVerifier,
             metrics,
         );
 

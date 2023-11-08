@@ -13,7 +13,7 @@ use futures::FutureExt;
 use rand::prelude::ThreadRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Range;
@@ -97,13 +97,16 @@ impl Network {
             HashMap::default();
         let handle = Handle::current();
         let (connection_sender, connection_receiver) = mpsc::channel(16);
+        let translation_mode = source_address_translation_mode(addresses);
         for (id, address) in addresses.iter().enumerate() {
             if id == our_id {
                 continue;
             }
             let (sender, receiver) = mpsc::unbounded_channel();
             assert!(
-                worker_senders.insert(*address, sender).is_none(),
+                worker_senders
+                    .insert(translation_mode.translate_source_address(*address), sender)
+                    .is_none(),
                 "Duplicated address {} in list",
                 address
             );
@@ -124,6 +127,7 @@ impl Network {
             Server {
                 server,
                 worker_senders,
+                translation_mode,
             }
             .run(rx_stop)
             .await
@@ -148,6 +152,7 @@ impl Network {
 struct Server {
     server: TcpListener,
     worker_senders: HashMap<SocketAddr, mpsc::UnboundedSender<TcpStream>>,
+    translation_mode: SourceAddressTranslationMode,
 }
 
 impl Server {
@@ -157,6 +162,7 @@ impl Server {
                 result = self.server.accept() => {
                     let (socket, original_remote_peer) = result.expect("accept failed");
                     let remote_peer = remote_to_local_port(original_remote_peer);
+                    let remote_peer = self.translation_mode.translate_source_address(remote_peer);
                     if let Some(sender) = self.worker_senders.get(&remote_peer) {
                         sender.send(socket).ok();
                     } else {
@@ -444,6 +450,34 @@ impl Worker {
             peer_id: self.peer_id,
             latency_sender: self.latency_sender.clone(),
         })
+    }
+}
+
+// This is a bit ugly, but luckily it should go away when we use noise/tls authentication instead of network addresses
+enum SourceAddressTranslationMode {
+    IpAndPort,
+    IpOnly,
+}
+
+impl SourceAddressTranslationMode {
+    pub fn translate_source_address(&self, mut addr: SocketAddr) -> SocketAddr {
+        match self {
+            SourceAddressTranslationMode::IpAndPort => addr,
+            SourceAddressTranslationMode::IpOnly => {
+                addr.set_port(0);
+                addr
+            }
+        }
+    }
+}
+
+// Check if all addresses in the list has unique IPs and use IP address only to match peers in that case
+fn source_address_translation_mode(addresses: &[SocketAddr]) -> SourceAddressTranslationMode {
+    let ips = addresses.iter().map(SocketAddr::ip).collect::<HashSet<_>>();
+    if ips.len() == addresses.len() {
+        SourceAddressTranslationMode::IpOnly
+    } else {
+        SourceAddressTranslationMode::IpAndPort
     }
 }
 

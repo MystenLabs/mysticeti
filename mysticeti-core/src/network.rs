@@ -115,7 +115,7 @@ impl Network {
                     peer: *address,
                     peer_id: id,
                     connection_sender: connection_sender.clone(),
-                    bind_addr: bind_addr(local_addr),
+                    bind_addr: translation_mode.bind_addr(local_addr),
                     active_immediately: id < our_id,
                     latency_sender: metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone()
                 }
@@ -161,7 +161,7 @@ impl Server {
             tokio::select! {
                 result = self.server.accept() => {
                     let (socket, original_remote_peer) = result.expect("accept failed");
-                    let remote_peer = remote_to_local_port(original_remote_peer);
+                    let remote_peer = self.translation_mode.remote_to_local_port(original_remote_peer);
                     let remote_peer = self.translation_mode.translate_source_address(remote_peer);
                     if let Some(sender) = self.worker_senders.get(&remote_peer) {
                         sender.send(socket).ok();
@@ -178,36 +178,11 @@ impl Server {
     }
 }
 
-// just ignore these two functions for now :)
-fn remote_to_local_port(mut remote_peer: SocketAddr) -> SocketAddr {
-    match &mut remote_peer {
-        SocketAddr::V4(v4) => {
-            v4.set_port(v4.port() / 10);
-        }
-        SocketAddr::V6(v6) => {
-            v6.set_port(v6.port() / 10);
-        }
-    }
-    remote_peer
-}
-
-fn bind_addr(mut local_peer: SocketAddr) -> SocketAddr {
-    match &mut local_peer {
-        SocketAddr::V4(v4) => {
-            v4.set_port(v4.port() * 10);
-        }
-        SocketAddr::V6(v6) => {
-            v6.set_port(v6.port() * 10);
-        }
-    }
-    local_peer
-}
-
 struct Worker {
     peer: SocketAddr,
     peer_id: usize,
     connection_sender: mpsc::Sender<Connection>,
-    bind_addr: SocketAddr,
+    bind_addr: Option<SocketAddr>,
     active_immediately: bool,
     latency_sender: HistogramSender<Duration>,
 }
@@ -254,14 +229,16 @@ impl Worker {
         // this is critical to avoid race between active and passive connections
         runtime::sleep(delay).await;
         let mut stream = loop {
-            let socket = if self.bind_addr.is_ipv4() {
+            let socket = if self.peer.is_ipv4() {
                 TcpSocket::new_v4().unwrap()
             } else {
                 TcpSocket::new_v6().unwrap()
             };
             #[cfg(unix)]
             socket.set_reuseport(true).unwrap();
-            socket.bind(self.bind_addr).unwrap();
+            if let Some(bind_addr) = self.bind_addr {
+                socket.bind(bind_addr).unwrap();
+            }
             match socket.connect(peer).await {
                 Ok(stream) => break stream,
                 Err(_err) => {
@@ -466,6 +443,52 @@ impl SourceAddressTranslationMode {
             SourceAddressTranslationMode::IpOnly => {
                 addr.set_port(0);
                 addr
+            }
+        }
+    }
+
+    // just ignore these two functions for now :)
+    fn remote_to_local_port(&self, mut remote_peer: SocketAddr) -> SocketAddr {
+        match self {
+            SourceAddressTranslationMode::IpAndPort => match &mut remote_peer {
+                SocketAddr::V4(v4) => {
+                    v4.set_port(v4.port() / 10);
+                }
+                SocketAddr::V6(v6) => {
+                    v6.set_port(v6.port() / 10);
+                }
+            },
+            SourceAddressTranslationMode::IpOnly => {
+                // do nothing
+            }
+        }
+        remote_peer
+    }
+
+    fn bind_addr(&self, mut local_peer: SocketAddr) -> Option<SocketAddr> {
+        match self {
+            SourceAddressTranslationMode::IpAndPort => {
+                match &mut local_peer {
+                    SocketAddr::V4(v4) => {
+                        v4.set_port(
+                            v4.port()
+                                .checked_mul(10)
+                                .expect("local_peer port evaluation failed - select mysticeti port number below 6000"),
+                        );
+                    }
+                    SocketAddr::V6(v6) => {
+                        v6.set_port(
+                            v6.port()
+                                .checked_mul(10)
+                                .expect("local_peer port evaluation failed - select mysticeti port number below 6000"),
+                        );
+                    }
+                }
+                Some(local_peer)
+            }
+            SourceAddressTranslationMode::IpOnly => {
+                // do nothing
+                None
             }
         }
     }

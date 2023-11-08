@@ -155,12 +155,12 @@ impl Server {
         loop {
             tokio::select! {
                 result = self.server.accept() => {
-                    let (socket, remote_peer) = result.expect("accept failed");
-                    let remote_peer = remote_to_local_port(remote_peer);
+                    let (socket, original_remote_peer) = result.expect("accept failed");
+                    let remote_peer = remote_to_local_port(original_remote_peer);
                     if let Some(sender) = self.worker_senders.get(&remote_peer) {
                         sender.send(socket).ok();
                     } else {
-                        tracing::warn!("Dropping connection from unknown peer {remote_peer}");
+                        tracing::warn!("Dropping connection from unknown peer {remote_peer}(actual socket address {original_remote_peer})");
                     }
                 }
                 _ = stop.recv() => {

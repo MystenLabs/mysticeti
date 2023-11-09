@@ -501,6 +501,8 @@ impl MetricReporter {
         self.proposed_block_vote_count.clear_receive_all();
 
         self.connection_latency.clear_receive_all();
+        self.blocks_per_commit_count.clear_receive_all();
+        self.block_commit_latency.clear_receive_all();
     }
     async fn run(mut self, mut stop: tokio::sync::mpsc::Receiver<()>) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(60);

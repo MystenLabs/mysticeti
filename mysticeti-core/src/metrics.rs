@@ -76,6 +76,7 @@ pub struct Metrics {
     pub threshold_clock_round: IntGauge,
     pub commit_round: IntGauge,
     pub blocks_per_commit_count: HistogramSender<usize>,
+    pub sub_dags_per_commit_count: HistogramSender<usize>,
     pub block_commit_latency: HistogramSender<Duration>,
 }
 
@@ -97,6 +98,7 @@ pub struct MetricReporter {
 
     pub blocks_per_commit_count: HistogramReporter<usize>,
     pub block_commit_latency: HistogramReporter<Duration>,
+    pub sub_dags_per_commit_count: HistogramReporter<usize>,
 }
 
 pub struct HistogramReporter<T> {
@@ -120,6 +122,7 @@ impl Metrics {
         let (proposed_block_vote_count_hist, proposed_block_vote_count) = histogram();
         let (block_commit_latency_hist, block_commit_latency) = histogram();
         let (blocks_per_commit_count_hist, blocks_per_commit_count) = histogram();
+        let (sub_dags_per_commit_count_hist, sub_dags_per_commit_count) = histogram();
 
         let commitee_size = committee.map(Committee::len).unwrap_or_default();
         let (connection_latency_hist, connection_latency_sender) = (0..commitee_size)
@@ -182,6 +185,11 @@ impl Metrics {
                 blocks_per_commit_count_hist,
                 registry,
                 "blocks_per_commit_count",
+            ),
+            sub_dags_per_commit_count: HistogramReporter::new_in_registry(
+                sub_dags_per_commit_count_hist,
+                registry,
+                "sub_dags_per_commit_count",
             ),
 
             global_in_memory_blocks: register_int_gauge_with_registry!(
@@ -369,7 +377,8 @@ impl Metrics {
 
             connection_latency_sender,
             block_commit_latency,
-            blocks_per_commit_count
+            blocks_per_commit_count,
+            sub_dags_per_commit_count
         };
 
         (Arc::new(metrics), reporter)
@@ -503,6 +512,7 @@ impl MetricReporter {
         self.connection_latency.clear_receive_all();
         self.blocks_per_commit_count.clear_receive_all();
         self.block_commit_latency.clear_receive_all();
+        self.sub_dags_per_commit_count.clear_receive_all();
     }
     async fn run(mut self, mut stop: tokio::sync::mpsc::Receiver<()>) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(60);
@@ -547,6 +557,7 @@ impl MetricReporter {
 
         self.block_commit_latency.report();
         self.blocks_per_commit_count.report();
+        self.sub_dags_per_commit_count.report();
     }
 }
 

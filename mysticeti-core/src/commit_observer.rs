@@ -262,6 +262,9 @@ impl SimpleCommitObserver {
             self.metrics.block_commit_latency.observe(latency_ms);
         }
         self.metrics.blocks_per_commit_count.observe(total);
+        self.metrics
+            .sub_dags_per_commit_count
+            .observe(committed.len());
     }
 }
 

@@ -9,7 +9,7 @@ use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
 use crate::metrics::Metrics;
 use crate::runtime;
-use crate::runtime::TimeInstant;
+use crate::runtime::{timestamp_utc, TimeInstant};
 use crate::transactions_generator::TransactionGenerator;
 use crate::types::{BlockReference, StatementBlock, Transaction, TransactionLocator};
 use crate::validator::TransactionTimeMap;
@@ -204,6 +204,7 @@ pub struct SimpleCommitObserver {
     /// A channel to send committed sub-dags to the consumer of consensus output.
     /// TODO: We will need to figure out a solution to handle back pressure.
     sender: tokio::sync::mpsc::UnboundedSender<CommittedSubDag>,
+    metrics: Arc<Metrics>,
 }
 
 impl SimpleCommitObserver {
@@ -216,11 +217,13 @@ impl SimpleCommitObserver {
         // Set to 0 to replay from the start (as normal sequence starts at height = 1).
         last_sent_height: u64,
         recover_state: CommitObserverRecoveredState,
+        metrics: Arc<Metrics>,
     ) -> Self {
         let mut observer = Self {
             block_store: block_store.clone(),
             commit_interpreter: Linearizer::new(block_store),
             sender,
+            metrics,
         };
         observer.recover_committed(last_sent_height, recover_state);
         observer
@@ -246,6 +249,20 @@ impl SimpleCommitObserver {
             }
         }
     }
+
+    fn report_metrics(&self, committed: &[CommittedSubDag]) {
+        let utc_now = timestamp_utc();
+        let mut total = 0;
+        for block in committed.iter().flat_map(|dag| &dag.blocks) {
+            let latency_ms = utc_now
+                .checked_sub(block.meta_creation_time())
+                .unwrap_or_default();
+
+            total += 1;
+            self.metrics.block_commit_latency.observe(latency_ms);
+        }
+        self.metrics.blocks_per_commit_count.observe(total);
+    }
 }
 
 impl CommitObserver for SimpleCommitObserver {
@@ -260,6 +277,7 @@ impl CommitObserver for SimpleCommitObserver {
                 tracing::error!("Failed to send committed sub-dag: {:?}", err);
             }
         }
+        self.report_metrics(&committed);
         committed
     }
 

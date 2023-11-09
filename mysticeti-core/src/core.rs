@@ -177,6 +177,10 @@ impl<H: BlockHandler> Core<H> {
                 .push_back((position, MetaStatement::Include(*processed.reference())));
             result.push(processed);
         }
+
+        self.metrics
+            .threshold_clock_round
+            .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
         result
     }
@@ -336,6 +340,7 @@ impl<H: BlockHandler> Core<H> {
 
         if let Some(last) = sequence.last() {
             self.last_commit_leader = *last.reference();
+            self.metrics.commit_round.set(last.round() as i64);
         }
 
         // todo: should ideally come from execution result of epoch smart contract
@@ -364,6 +369,9 @@ impl<H: BlockHandler> Core<H> {
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, period: u64, connected_authorities: AuthoritySet) -> bool {
         let quorum_round = self.threshold_clock.get_round();
+
+        // report the current round. As ready_new_block will get periodically pulled anyways it's good enough
+        // place to have it.
 
         // Leader round we check if we have a leader block
         if quorum_round > self.last_commit_leader.round().max(period - 1) {

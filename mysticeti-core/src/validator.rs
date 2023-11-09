@@ -187,6 +187,7 @@ impl Validator<SimpleBlockHandler> {
             consumer.sender,
             consumer.last_sent_height,
             commit_observer_recovered,
+            metrics.clone(),
         );
 
         let validator = Validator::start_internal(

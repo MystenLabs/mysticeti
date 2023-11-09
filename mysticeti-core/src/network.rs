@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::stat::HistogramSender;
-use crate::types::{AuthorityIndex, Epoch, RoundNumber, StatementBlock};
+use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
 use crate::{config::Parameters, data::Data, runtime};
 use crate::{
     metrics::{print_network_address_table, Metrics},
@@ -33,7 +33,6 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
-    Epoch(Epoch), // Sending our current epoch to the other validator - should be the first message sent
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
     /// Request a few specific block references (this is not indented for large requests).

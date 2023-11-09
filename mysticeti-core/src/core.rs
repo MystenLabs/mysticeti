@@ -259,6 +259,7 @@ impl<H: BlockHandler> Core<H> {
             statements,
             time_ns,
             self.epoch_changing(),
+            self.committee.epoch(),
             &self.signer,
         );
         assert_eq!(

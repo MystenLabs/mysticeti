@@ -437,6 +437,7 @@ pub fn build_dag(
                     vec![],
                     0,
                     false,
+                    committee.epoch(),
                     Default::default(),
                 ));
                 (*block.reference(), block)
@@ -465,6 +466,7 @@ pub fn build_dag_layer(
             vec![],
             0,
             false,
+            0,
             Default::default(),
         ));
 

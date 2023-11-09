@@ -87,6 +87,9 @@ pub struct StatementBlock {
 
     epoch_marker: EpochStatus,
 
+    // The epoch that this block has been created in
+    epoch: Epoch,
+
     // Signature by the block author
     signature: SignatureBytes,
 }
@@ -125,6 +128,7 @@ impl StatementBlock {
             vec![],
             0,
             false,
+            0,
             SignatureBytes::default(),
         ))
     }
@@ -136,6 +140,7 @@ impl StatementBlock {
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
         epoch_marker: EpochStatus,
+        epoch: Epoch,
         signer: &Signer,
     ) -> Self {
         let signature = signer.sign_block(
@@ -145,6 +150,7 @@ impl StatementBlock {
             &statements,
             meta_creation_time_ns,
             epoch_marker,
+            epoch,
         );
         Self::new(
             authority,
@@ -153,6 +159,7 @@ impl StatementBlock {
             statements,
             meta_creation_time_ns,
             epoch_marker,
+            epoch,
             signature,
         )
     }
@@ -164,6 +171,7 @@ impl StatementBlock {
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
         epoch_marker: EpochStatus,
+        epoch: Epoch,
         signature: SignatureBytes,
     ) -> Self {
         Self {
@@ -177,9 +185,11 @@ impl StatementBlock {
                     &statements,
                     meta_creation_time_ns,
                     epoch_marker,
+                    epoch,
                     &signature,
                 ),
             },
+            epoch,
             includes,
             statements,
             meta_creation_time_ns,
@@ -272,6 +282,10 @@ impl StatementBlock {
         self.epoch_marker
     }
 
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     pub fn meta_creation_time(&self) -> Duration {
         // Some context: https://github.com/rust-lang/rust/issues/51107
         let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
@@ -288,6 +302,7 @@ impl StatementBlock {
             &self.statements,
             self.meta_creation_time_ns,
             self.epoch_marker,
+            self.epoch,
             &self.signature,
         );
         ensure!(
@@ -295,6 +310,12 @@ impl StatementBlock {
             "Digest does not match, calculated {:?}, provided {:?}",
             digest,
             self.digest()
+        );
+        ensure!(
+            self.epoch == committee.epoch(),
+            "Block's epoch {} doesn't match committee epoch {}",
+            self.epoch,
+            committee.epoch()
         );
         let pub_key = committee.get_public_key(self.author());
         let Some(pub_key) = pub_key else {
@@ -705,6 +726,7 @@ mod test {
                 meta_creation_time_ns: 0,
                 epoch_marker: false,
                 signature: Default::default(),
+                epoch: 0,
             }
         }
 

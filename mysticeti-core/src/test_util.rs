@@ -417,7 +417,7 @@ pub fn build_dag(
         None => {
             let (references, genesis): (Vec<_>, Vec<_>) = committee
                 .authorities()
-                .map(|index| StatementBlock::new_genesis(index))
+                .map(|index| StatementBlock::new_genesis(index, committee.epoch()))
                 .map(|block| (*block.reference(), block))
                 .unzip();
             block_writer.add_blocks(genesis);

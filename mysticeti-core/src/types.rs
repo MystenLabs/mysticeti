@@ -120,7 +120,7 @@ impl Ord for BlockReference {
 }
 
 impl StatementBlock {
-    pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
+    pub fn new_genesis(authority: AuthorityIndex, epoch: Epoch) -> Data<Self> {
         Data::new(Self::new(
             authority,
             GENESIS_ROUND,
@@ -128,7 +128,7 @@ impl StatementBlock {
             vec![],
             0,
             false,
-            0,
+            epoch,
             SignatureBytes::default(),
         ))
     }
@@ -453,7 +453,7 @@ impl BlockReference {
     #[cfg(test)]
     pub fn new_test(authority: AuthorityIndex, round: RoundNumber) -> Self {
         if round == 0 {
-            StatementBlock::new_genesis(authority).reference
+            StatementBlock::new_genesis(authority, 0).reference
         } else {
             Self {
                 authority,
@@ -745,7 +745,7 @@ mod test {
         /// For each authority add a 0 round block if not present
         pub fn add_genesis_blocks(mut self) -> Self {
             for authority in self.authorities() {
-                let block = StatementBlock::new_genesis(authority);
+                let block = StatementBlock::new_genesis(authority, 0);
                 let entry = self.0.entry(*block.reference());
                 entry.or_insert_with(move || block);
             }

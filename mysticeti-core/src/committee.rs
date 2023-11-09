@@ -103,11 +103,11 @@ impl Committee {
                 if a == for_authority {
                     None
                 } else {
-                    Some(StatementBlock::new_genesis(a))
+                    Some(StatementBlock::new_genesis(a, self.epoch))
                 }
             })
             .collect();
-        let own_genesis_block = StatementBlock::new_genesis(for_authority);
+        let own_genesis_block = StatementBlock::new_genesis(for_authority, self.epoch);
         (own_genesis_block, other_blocks)
     }
 

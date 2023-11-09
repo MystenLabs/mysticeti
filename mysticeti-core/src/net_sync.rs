@@ -7,13 +7,14 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::format_authority_index;
 use crate::types::AuthorityIndex;
+use crate::types::{format_authority_index, AuthoritySet};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
 use futures::future::join_all;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -40,6 +41,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     stop: mpsc::Sender<()>,
     epoch_close_signal: mpsc::Sender<()>,
     pub epoch_closing_time: Arc<AtomicU64>,
+    connected_authorities: Arc<Mutex<AuthoritySet>>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -66,12 +68,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             commit_observer,
             metrics.clone(),
         );
-        syncer.force_new_block(0);
+        syncer.force_new_block(0, Default::default());
         let syncer = CoreThreadDispatcher::start(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let (epoch_sender, epoch_receiver) = mpsc::channel(1);
         epoch_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
+        let connected_authorities = Arc::new(Mutex::new(AuthoritySet::default()));
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
@@ -80,6 +83,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
             epoch_closing_time,
+            connected_authorities,
         });
         let block_fetcher = Arc::new(BlockFetcher::start(
             authority_index,
@@ -142,6 +146,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             let sender = connection.sender.clone();
             let authority = peer_id as AuthorityIndex;
             block_fetcher.register_authority(authority, sender).await;
+            inner.connected_authorities.lock().insert(authority);
 
             let task = handle.spawn(Self::connection_task(
                 connection,
@@ -214,8 +219,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
-
-                    inner.syncer.add_blocks(vec![block]).await;
+                    let connected_authorities = inner.connected_authorities.lock().clone();
+                    inner
+                        .syncer
+                        .add_blocks(vec![block], connected_authorities)
+                        .await;
                 }
                 NetworkMessage::RequestBlocks(references) => {
                     if references.len() > MAXIMUM_BLOCK_REQUEST {
@@ -237,8 +245,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             }
         }
         disseminator.shutdown().await;
-        let id = connection.peer_id as AuthorityIndex;
-        block_fetcher.remove_authority(id).await;
+        let authority = connection.peer_id as AuthorityIndex;
+        inner.connected_authorities.lock().remove(authority);
+        block_fetcher.remove_authority(authority).await;
         None
     }
 
@@ -270,7 +279,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 _sleep = runtime::sleep(leader_timeout) => {
                     tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
-                    inner.syncer.force_new_block(round).await;
+                    let connected_authorities = inner.connected_authorities.lock().clone();
+                    inner.syncer.force_new_block(round, connected_authorities).await;
                 }
                 _notified = notified => {
                     // restart loop

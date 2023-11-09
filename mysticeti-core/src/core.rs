@@ -9,7 +9,9 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
-use crate::types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock};
+use crate::types::{
+    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, RoundNumber, StatementBlock,
+};
 use crate::wal::{WalPosition, WalSyncer, WalWriter};
 use crate::{
     block_handler::BlockHandler, consensus::universal_committer::UniversalCommitterBuilder,
@@ -360,13 +362,14 @@ impl<H: BlockHandler> Core<H> {
     /// try_new_block might still return None if threshold clock is not ready
     ///
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
-    pub fn ready_new_block(&self, period: u64) -> bool {
+    pub fn ready_new_block(&self, period: u64, connected_authorities: AuthoritySet) -> bool {
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block
         if quorum_round > self.last_commit_leader.round().max(period - 1) {
             let leader_round = quorum_round - 1;
-            let leaders = self.committer.get_leaders(leader_round);
+            let mut leaders = self.committer.get_leaders(leader_round);
+            leaders.retain(|leader| connected_authorities.contains(*leader));
             self.block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)
         } else {

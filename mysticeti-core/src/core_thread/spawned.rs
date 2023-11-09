@@ -5,6 +5,7 @@ use crate::block_handler::BlockHandler;
 use crate::commit_observer::CommitObserver;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::syncer::{Syncer, SyncerSignals};
+use crate::types::AuthoritySet;
 use crate::types::{RoundNumber, StatementBlock};
 use crate::{data::Data, types::BlockReference};
 use std::sync::Arc;
@@ -23,8 +24,8 @@ pub struct CoreThread<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
 }
 
 enum CoreThreadCommand {
-    AddBlocks(Vec<Data<StatementBlock>>, oneshot::Sender<()>),
-    ForceNewBlock(RoundNumber, oneshot::Sender<()>),
+    AddBlocks(Vec<Data<StatementBlock>>, AuthoritySet, oneshot::Sender<()>),
+    ForceNewBlock(RoundNumber, AuthoritySet, oneshot::Sender<()>),
     Cleanup(oneshot::Sender<()>),
     /// Request missing blocks that need to be synched.
     GetMissing(oneshot::Sender<Vec<HashSet<BlockReference>>>),
@@ -53,17 +54,29 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         self.join_handle.join().unwrap()
     }
 
-    pub async fn add_blocks(&self, blocks: Vec<Data<StatementBlock>>) {
+    pub async fn add_blocks(
+        &self,
+        blocks: Vec<Data<StatementBlock>>,
+        connected_authorities: AuthoritySet,
+    ) {
         let (sender, receiver) = oneshot::channel();
-        self.send(CoreThreadCommand::AddBlocks(blocks, sender))
-            .await;
+        self.send(CoreThreadCommand::AddBlocks(
+            blocks,
+            connected_authorities,
+            sender,
+        ))
+        .await;
         receiver.await.expect("core thread is not expected to stop");
     }
 
-    pub async fn force_new_block(&self, round: RoundNumber) {
+    pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
         let (sender, receiver) = oneshot::channel();
-        self.send(CoreThreadCommand::ForceNewBlock(round, sender))
-            .await;
+        self.send(CoreThreadCommand::ForceNewBlock(
+            round,
+            connected_authorities,
+            sender,
+        ))
+        .await;
         receiver.await.expect("core thread is not expected to stop");
     }
 
@@ -95,12 +108,12 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
             let _timer = metrics.core_lock_util.utilization_timer();
             metrics.core_lock_dequeued.inc();
             match command {
-                CoreThreadCommand::AddBlocks(blocks, sender) => {
-                    self.syncer.add_blocks(blocks);
+                CoreThreadCommand::AddBlocks(blocks, connected_authorities, sender) => {
+                    self.syncer.add_blocks(blocks, connected_authorities);
                     sender.send(()).ok();
                 }
-                CoreThreadCommand::ForceNewBlock(round, sender) => {
-                    self.syncer.force_new_block(round);
+                CoreThreadCommand::ForceNewBlock(round, connected_authorities, sender) => {
+                    self.syncer.force_new_block(round, connected_authorities);
                     sender.send(()).ok();
                 }
                 CoreThreadCommand::Cleanup(sender) => {

@@ -6,7 +6,7 @@ use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::types::{RoundNumber, StatementBlock};
+use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use std::sync::Arc;
 
@@ -41,32 +41,44 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
+    pub fn add_blocks(
+        &mut self,
+        blocks: Vec<Data<StatementBlock>>,
+        connected_authorities: AuthoritySet,
+    ) {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
         self.core.add_blocks(blocks);
-        self.try_new_block();
+        self.try_new_block(connected_authorities);
     }
 
-    pub fn force_new_block(&mut self, round: RoundNumber) -> bool {
+    pub fn force_new_block(
+        &mut self,
+        round: RoundNumber,
+        connected_authorities: AuthoritySet,
+    ) -> bool {
         if self.core.last_proposed() == round {
             self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
-            self.try_new_block();
+            self.try_new_block(connected_authorities);
             true
         } else {
             false
         }
     }
 
-    fn try_new_block(&mut self) {
+    fn try_new_block(&mut self, connected_authorities: AuthoritySet) {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::try_new_block");
-        if self.force_new_block || self.core.ready_new_block(self.commit_period) {
+        if self.force_new_block
+            || self
+                .core
+                .ready_new_block(self.commit_period, connected_authorities)
+        {
             if self.core.try_new_block().is_none() {
                 return;
             }
@@ -145,13 +157,13 @@ mod tests {
         fn handle_event(&mut self, event: Self::Event) {
             match event {
                 SyncerEvent::ForceNewBlock(round) => {
-                    if self.force_new_block(round) {
+                    if self.force_new_block(round, AuthoritySet::all_set()) {
                         // eprintln!("[{:06} {}] Proposal timeout for {round}", scheduler.time_ms(), self.core.authority());
                     }
                 }
                 SyncerEvent::DeliverBlock(block) => {
                     // eprintln!("[{:06} {}] Deliver {block}", scheduler.time_ms(), self.core.authority());
-                    self.add_blocks(vec![block]);
+                    self.add_blocks(vec![block], AuthoritySet::all_set());
                 }
             }
 

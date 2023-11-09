@@ -493,6 +493,31 @@ impl AuthoritySet {
         }
     }
 
+    #[inline]
+    pub fn remove(&mut self, index: AuthorityIndex) -> bool {
+        let index = index as usize;
+        let byte_index = index / ELEMENT_BITS;
+        let bit_index = index % ELEMENT_BITS;
+
+        let bit = 1 << bit_index;
+        if (self.0[byte_index] & bit) != 0 {
+            self.0[byte_index] ^= bit;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, index: AuthorityIndex) -> bool {
+        let index = index as usize;
+        let byte_index = index / ELEMENT_BITS;
+        let bit_index = index % ELEMENT_BITS;
+
+        let bit = 1 << bit_index;
+        (self.0[byte_index] & bit) != 0
+    }
+
     pub fn present(&self) -> impl Iterator<Item = AuthorityIndex> + '_ {
         self.0.iter().enumerate().flat_map(|(byte_index, byte)| {
             (0..ELEMENT_BITS)
@@ -504,6 +529,10 @@ impl AuthoritySet {
     #[inline]
     pub fn clear(&mut self) {
         self.0.fill(0);
+    }
+
+    pub fn all_set() -> Self {
+        Self([u64::MAX; AUTH_SET_ELEMENT_COUNT])
     }
 }
 
@@ -790,9 +819,15 @@ mod test {
     #[test]
     fn authority_set_test() {
         let mut a = AuthoritySet::default();
+        assert!(!a.contains(0));
         assert!(a.insert(0));
+        assert!(a.contains(0));
         assert!(!a.insert(0));
+
+        assert!(!a.contains(1));
         assert!(a.insert(1));
+        assert!(a.contains(1));
+
         assert!(a.insert(2));
         assert!(!a.insert(1));
         assert!(a.insert(127));
@@ -815,14 +850,94 @@ mod test {
     #[test]
     fn large_authority_set_test() {
         let mut a = AuthoritySet::default();
+        assert!(!a.contains(128));
         assert!(a.insert(128));
+        assert!(a.contains(128));
         assert!(!a.insert(128));
+        assert!(a.contains(128));
+
+        assert!(!a.contains(234));
         assert!(a.insert(234));
+        assert!(a.contains(234));
         // 511 is the max authority index we could use since we currently only support 512 validators.
+        assert!(!a.contains(511));
         assert!(a.insert(511));
+        assert!(a.contains(511));
         assert!(!a.insert(511));
+        assert!(a.contains(511));
         assert_eq!(a.present().collect::<Vec<_>>(), vec![128, 234, 511]);
         a.clear();
         assert!(a.present().collect::<Vec<_>>().is_empty());
+    }
+
+    #[test]
+    fn authority_set_test_remove() {
+        let mut a = AuthoritySet::default();
+
+        assert!(!a.contains(0));
+        assert!(a.insert(0));
+        assert!(a.contains(0));
+
+        assert!(!a.contains(1));
+        assert!(a.insert(1));
+        assert!(a.contains(1));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![0, 1]);
+
+        assert!(a.remove(0));
+        assert!(!a.contains(0));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+        assert!(!a.remove(0));
+        assert!(!a.contains(0));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+
+        assert!(!a.contains(127));
+        assert!(a.insert(127));
+        assert!(a.contains(127));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 127]);
+        assert!(a.remove(127));
+        assert!(!a.contains(127));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+        assert!(!a.remove(127));
+        assert!(!a.contains(127));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+
+        assert!(!a.contains(128));
+        assert!(a.insert(128));
+        assert!(a.contains(128));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 128]);
+        assert!(a.remove(128));
+        assert!(!a.contains(128));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+        assert!(!a.remove(128));
+        assert!(!a.contains(128));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+
+        assert!(a.insert(127));
+        assert!(a.insert(128));
+        assert!(a.insert(344));
+        assert!(a.insert(511));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 127, 128, 344, 511]);
+        assert!(a.remove(128));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 127, 344, 511]);
+        assert!(a.remove(344));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 127, 511]);
+        assert!(a.remove(511));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 127]);
+        assert!(a.remove(1));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![127]);
+        assert!(a.remove(127));
+        assert_eq!(a.present().collect::<Vec<_>>(), Vec::<u64>::new());
+
+        assert!(a.insert(1));
+        assert!(a.insert(2));
+        assert!(a.insert(3));
+
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert!(a.remove(2));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1, 3]);
+        assert!(a.remove(3));
+        assert_eq!(a.present().collect::<Vec<_>>(), vec![1]);
+        assert!(a.remove(1));
+        assert_eq!(a.present().collect::<Vec<_>>(), Vec::<u64>::new());
     }
 }

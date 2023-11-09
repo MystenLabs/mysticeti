@@ -7,7 +7,7 @@ use crate::block_handler::BlockHandler;
 use crate::commit_observer::CommitObserver;
 use crate::data::Data;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::BlockReference;
+use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
 use parking_lot::Mutex;
 
@@ -28,12 +28,18 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         self.syncer.into_inner()
     }
 
-    pub async fn add_blocks(&self, blocks: Vec<Data<StatementBlock>>) {
-        self.syncer.lock().add_blocks(blocks);
+    pub async fn add_blocks(
+        &self,
+        blocks: Vec<Data<StatementBlock>>,
+        connected_authorities: AuthoritySet,
+    ) {
+        self.syncer.lock().add_blocks(blocks, connected_authorities);
     }
 
-    pub async fn force_new_block(&self, round: RoundNumber) {
-        self.syncer.lock().force_new_block(round);
+    pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
+        self.syncer
+            .lock()
+            .force_new_block(round, connected_authorities);
     }
 
     pub async fn cleanup(&self) {

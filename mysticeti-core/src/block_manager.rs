@@ -42,7 +42,7 @@ impl BlockManager {
         block_writer: &mut impl BlockWriter,
     ) -> Vec<(WalPosition, Data<StatementBlock>)> {
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
-        let mut newly_blocks_processed: Vec<(WalPosition, Data<StatementBlock>)> = vec![];
+        let mut newly_processed_blocks: Vec<(WalPosition, Data<StatementBlock>)> = vec![];
         while let Some(block) = blocks.pop_front() {
             // Update the highest known round number.
 
@@ -78,7 +78,7 @@ impl BlockManager {
 
                 // Block can be processed. So need to update indexes etc
                 let position = block_writer.insert_block(block.clone());
-                newly_blocks_processed.push((position, block.clone()));
+                newly_processed_blocks.push((position, block.clone()));
 
                 // Now unlock any pending blocks, and process them if ready.
                 if let Some(waiting_references) =
@@ -103,7 +103,10 @@ impl BlockManager {
             }
         }
 
-        newly_blocks_processed
+        // Sorting by round number potentially helps with including more statements when proposing
+        // a new block in the core, as it searches linearly for blocks within the current round.
+        newly_processed_blocks.sort_by_key(|(_, block)| block.round());
+        newly_processed_blocks
     }
 
     pub fn missing_blocks(&self) -> &[HashSet<BlockReference>] {

@@ -544,6 +544,9 @@ impl MetricReporter {
         self.proposed_block_vote_count.report();
 
         self.connection_latency.report();
+
+        self.block_commit_latency.report();
+        self.blocks_per_commit_count.report();
     }
 }
 

@@ -417,7 +417,7 @@ pub fn build_dag(
         None => {
             let (references, genesis): (Vec<_>, Vec<_>) = committee
                 .authorities()
-                .map(|index| StatementBlock::new_genesis(index))
+                .map(|index| StatementBlock::new_genesis(index, committee.epoch()))
                 .map(|block| (*block.reference(), block))
                 .unzip();
             block_writer.add_blocks(genesis);
@@ -437,6 +437,7 @@ pub fn build_dag(
                     vec![],
                     0,
                     false,
+                    committee.epoch(),
                     Default::default(),
                 ));
                 (*block.reference(), block)
@@ -465,6 +466,7 @@ pub fn build_dag_layer(
             vec![],
             0,
             false,
+            0,
             Default::default(),
         ));
 

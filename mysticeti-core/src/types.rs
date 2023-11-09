@@ -8,6 +8,7 @@ pub struct Transaction {
     data: Vec<u8>,
 }
 
+pub type Epoch = u64;
 pub type RoundNumber = u64;
 pub type BlockDigest = crate::crypto::BlockDigest;
 pub type Stake = u64;
@@ -86,6 +87,9 @@ pub struct StatementBlock {
 
     epoch_marker: EpochStatus,
 
+    // The epoch that this block has been created in
+    epoch: Epoch,
+
     // Signature by the block author
     signature: SignatureBytes,
 }
@@ -116,7 +120,7 @@ impl Ord for BlockReference {
 }
 
 impl StatementBlock {
-    pub fn new_genesis(authority: AuthorityIndex) -> Data<Self> {
+    pub fn new_genesis(authority: AuthorityIndex, epoch: Epoch) -> Data<Self> {
         Data::new(Self::new(
             authority,
             GENESIS_ROUND,
@@ -124,6 +128,7 @@ impl StatementBlock {
             vec![],
             0,
             false,
+            epoch,
             SignatureBytes::default(),
         ))
     }
@@ -135,6 +140,7 @@ impl StatementBlock {
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
         epoch_marker: EpochStatus,
+        epoch: Epoch,
         signer: &Signer,
     ) -> Self {
         let signature = signer.sign_block(
@@ -144,6 +150,7 @@ impl StatementBlock {
             &statements,
             meta_creation_time_ns,
             epoch_marker,
+            epoch,
         );
         Self::new(
             authority,
@@ -152,6 +159,7 @@ impl StatementBlock {
             statements,
             meta_creation_time_ns,
             epoch_marker,
+            epoch,
             signature,
         )
     }
@@ -163,6 +171,7 @@ impl StatementBlock {
         statements: Vec<BaseStatement>,
         meta_creation_time_ns: TimestampNs,
         epoch_marker: EpochStatus,
+        epoch: Epoch,
         signature: SignatureBytes,
     ) -> Self {
         Self {
@@ -176,9 +185,11 @@ impl StatementBlock {
                     &statements,
                     meta_creation_time_ns,
                     epoch_marker,
+                    epoch,
                     &signature,
                 ),
             },
+            epoch,
             includes,
             statements,
             meta_creation_time_ns,
@@ -271,6 +282,10 @@ impl StatementBlock {
         self.epoch_marker
     }
 
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     pub fn meta_creation_time(&self) -> Duration {
         // Some context: https://github.com/rust-lang/rust/issues/51107
         let secs = self.meta_creation_time_ns / NANOS_IN_SEC;
@@ -287,6 +302,7 @@ impl StatementBlock {
             &self.statements,
             self.meta_creation_time_ns,
             self.epoch_marker,
+            self.epoch,
             &self.signature,
         );
         ensure!(
@@ -294,6 +310,12 @@ impl StatementBlock {
             "Digest does not match, calculated {:?}, provided {:?}",
             digest,
             self.digest()
+        );
+        ensure!(
+            self.epoch == committee.epoch(),
+            "Block's epoch {} doesn't match committee epoch {}",
+            self.epoch,
+            committee.epoch()
         );
         let pub_key = committee.get_public_key(self.author());
         let Some(pub_key) = pub_key else {
@@ -431,7 +453,7 @@ impl BlockReference {
     #[cfg(test)]
     pub fn new_test(authority: AuthorityIndex, round: RoundNumber) -> Self {
         if round == 0 {
-            StatementBlock::new_genesis(authority).reference
+            StatementBlock::new_genesis(authority, 0).reference
         } else {
             Self {
                 authority,
@@ -733,6 +755,7 @@ mod test {
                 meta_creation_time_ns: 0,
                 epoch_marker: false,
                 signature: Default::default(),
+                epoch: 0,
             }
         }
 
@@ -751,7 +774,7 @@ mod test {
         /// For each authority add a 0 round block if not present
         pub fn add_genesis_blocks(mut self) -> Self {
             for authority in self.authorities() {
-                let block = StatementBlock::new_genesis(authority);
+                let block = StatementBlock::new_genesis(authority, 0);
                 let entry = self.0.entry(*block.reference());
                 entry.or_insert_with(move || block);
             }

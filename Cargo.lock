@@ -1730,6 +1730,7 @@ dependencies = [
  "axum",
  "bincode",
  "blake2",
+ "cfg-if",
  "crc32fast",
  "digest 0.10.7",
  "ed25519-consensus",

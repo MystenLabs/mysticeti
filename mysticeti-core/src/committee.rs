@@ -9,7 +9,9 @@ use crate::types::{
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
-use rand::Rng;
+use rand::prelude::SliceRandom;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -127,9 +129,28 @@ impl Committee {
         total_stake
     }
 
-    // TODO: fix to select by stake
-    pub fn elect_leader(&self, r: u64) -> AuthorityIndex {
-        (r % self.authorities.len() as u64) as AuthorityIndex
+    pub fn elect_leader(&self, round: u64) -> AuthorityIndex {
+        cfg_if::cfg_if! {
+            // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)
+            // we can use the staked approach.
+            if #[cfg(test)] {
+                (round % self.authorities.len() as u64) as AuthorityIndex
+            } else {
+                let mut seed_bytes = [0u8; 32];
+                seed_bytes[32 - 8..].copy_from_slice(&round.to_le_bytes());
+                let mut rng = StdRng::from_seed(seed_bytes);
+                let choices = self
+                    .authorities
+                    .iter()
+                    .enumerate()
+                    .map(|(index, authority)| (index, authority.stake as f32))
+                    .collect::<Vec<_>>();
+                choices
+                    .choose_weighted(&mut rng, |item| item.1)
+                    .expect("Weighted choice error: stake values incorrect!")
+                    .0 as AuthorityIndex
+            }
+        }
     }
 
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {

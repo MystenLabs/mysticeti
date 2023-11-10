@@ -305,7 +305,7 @@ where
             self.metrics
                 .missing_blocks
                 .with_label_values(&[&authority.to_string()])
-                .set(missing.len() as i64);
+                .inc_by(missing.len() as u64);
 
             // TODO: If we are missing many blocks from the same authority
             // (`missing.len() > self.parameters.new_stream_threshold`), it is likely that

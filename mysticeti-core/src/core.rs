@@ -111,7 +111,7 @@ impl<H: BlockHandler> Core<H> {
             block_writer.insert_own_block(&own_block_data);
             own_block_data
         };
-        let block_manager = BlockManager::new(block_store.clone(), &committee);
+        let block_manager = BlockManager::new(block_store.clone(), &committee, metrics.clone());
 
         if let Some(state) = state {
             block_handler.recover_state(&state);
@@ -369,9 +369,6 @@ impl<H: BlockHandler> Core<H> {
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, period: u64, connected_authorities: AuthoritySet) -> bool {
         let quorum_round = self.threshold_clock.get_round();
-
-        // report the current round. As ready_new_block will get periodically pulled anyways it's good enough
-        // place to have it.
 
         // Leader round we check if we have a leader block
         if quorum_round > self.last_commit_leader.round().max(period - 1) {

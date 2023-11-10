@@ -3,6 +3,7 @@
 
 use crate::block_store::{BlockStore, BlockWriter};
 use crate::data::Data;
+use crate::metrics::Metrics;
 use crate::wal::WalPosition;
 use crate::{
     committee::Committee,
@@ -24,15 +25,17 @@ pub struct BlockManager {
     /// blocks. The indices of the vector correspond the authority indices.
     missing: Vec<HashSet<BlockReference>>,
     block_store: BlockStore,
+    metrics: Arc<Metrics>,
 }
 
 impl BlockManager {
-    pub fn new(block_store: BlockStore, committee: &Arc<Committee>) -> Self {
+    pub fn new(block_store: BlockStore, committee: &Arc<Committee>, metrics: Arc<Metrics>) -> Self {
         Self {
             blocks_pending: Default::default(),
             block_references_waiting: Default::default(),
             missing: (0..committee.len()).map(|_| HashSet::new()).collect(),
             block_store,
+            metrics,
         }
     }
 
@@ -73,6 +76,7 @@ impl BlockManager {
 
             if !processed {
                 self.blocks_pending.insert(*block_reference, block);
+                self.metrics.blocks_suspended.inc();
             } else {
                 let block_reference = *block_reference;
 
@@ -116,11 +120,13 @@ mod tests {
     use super::*;
     use crate::test_util::TestBlockWriter;
     use crate::types::Dag;
+    use prometheus::Registry;
     use rand::prelude::StdRng;
     use rand::SeedableRng;
 
     #[test]
     fn test_block_manager_add_block() {
+        let (metrics, _reporter) = Metrics::new(&Registry::new(), None);
         let dag =
             Dag::draw("A1:[A0, B0]; B1:[A0, B0]; B2:[A0, B1]; A2:[A1, B2]").add_genesis_blocks();
         assert_eq!(dag.len(), 6); // 4 blocks in dag + 2 genesis
@@ -128,7 +134,11 @@ mod tests {
             let mut block_writer = TestBlockWriter::new(&dag.committee());
             println!("Seed {seed}");
             let iter = dag.random_iter(&mut rng(seed));
-            let mut bm = BlockManager::new(block_writer.block_store(), &dag.committee());
+            let mut bm = BlockManager::new(
+                block_writer.block_store(),
+                &dag.committee(),
+                metrics.clone(),
+            );
             let mut processed_blocks = HashSet::new();
             for block in iter {
                 let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);

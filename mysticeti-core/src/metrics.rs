@@ -56,7 +56,8 @@ pub struct Metrics {
 
     pub commit_handler_pending_certificates: IntGauge,
 
-    pub missing_blocks: IntGaugeVec,
+    pub missing_blocks: IntCounterVec,
+    pub blocks_suspended: IntCounter,
     pub block_sync_requests_sent: IntCounterVec,
     pub block_sync_requests_received: IntCounterVec,
 
@@ -319,7 +320,7 @@ impl Metrics {
             )
             .unwrap(),
 
-            missing_blocks: register_int_gauge_vec_with_registry!(
+            missing_blocks: register_int_counter_vec_with_registry!(
                 "missing_blocks",
                 "Number of missing blocks per authority",
                 &["authority"],
@@ -365,6 +366,12 @@ impl Metrics {
                 "connected_nodes",
                 "The number of connected nodes",
                 registry,
+            ).unwrap(),
+
+            blocks_suspended: register_int_counter_with_registry!(
+                "blocks_suspended",
+                "The number of blocks that got suspended due to missing references",
+                registry
             ).unwrap(),
 
             transaction_certified_latency,

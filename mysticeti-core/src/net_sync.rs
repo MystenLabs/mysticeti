@@ -26,6 +26,36 @@ use tokio::sync::{mpsc, oneshot, Notify};
 /// The maximum number of blocks that can be requested in a single message.
 pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
 
+struct ConnectedAuthorities {
+    metrics: Arc<Metrics>,
+    authorities: AuthoritySet,
+    count: u64,
+}
+
+impl ConnectedAuthorities {
+    fn new(metrics: Arc<Metrics>) -> Self {
+        Self {
+            metrics,
+            count: 0,
+            authorities: AuthoritySet::default(),
+        }
+    }
+
+    fn insert(&mut self, authority_index: AuthorityIndex) {
+        if self.authorities.insert(authority_index) {
+            self.count += 1;
+            self.metrics.connected_nodes.set(self.count as i64);
+        }
+    }
+
+    fn remove(&mut self, authority_index: AuthorityIndex) {
+        if self.authorities.remove(authority_index) {
+            self.count -= 1;
+            self.metrics.connected_nodes.set(self.count as i64);
+        }
+    }
+}
+
 pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
@@ -41,7 +71,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     stop: mpsc::Sender<()>,
     epoch_close_signal: mpsc::Sender<()>,
     pub epoch_closing_time: Arc<AtomicU64>,
-    connected_authorities: Arc<Mutex<AuthoritySet>>,
+    connected_authorities: Arc<Mutex<ConnectedAuthorities>>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -74,7 +104,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let (epoch_sender, epoch_receiver) = mpsc::channel(1);
         epoch_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
-        let connected_authorities = Arc::new(Mutex::new(AuthoritySet::default()));
+        let connected_authorities =
+            Arc::new(Mutex::new(ConnectedAuthorities::new(metrics.clone())));
         let inner = Arc::new(NetworkSyncerInner {
             notify,
             syncer,
@@ -219,7 +250,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
-                    let connected_authorities = inner.connected_authorities.lock().clone();
+                    let connected_authorities =
+                        inner.connected_authorities.lock().authorities.clone();
                     inner
                         .syncer
                         .add_blocks(vec![block], connected_authorities)
@@ -279,7 +311,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 _sleep = runtime::sleep(leader_timeout) => {
                     tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
-                    let connected_authorities = inner.connected_authorities.lock().clone();
+                    let connected_authorities = inner.connected_authorities.lock().authorities.clone();
                     inner.syncer.force_new_block(round, connected_authorities).await;
                 }
                 _notified = notified => {

@@ -56,7 +56,8 @@ pub struct Metrics {
 
     pub commit_handler_pending_certificates: IntGauge,
 
-    pub missing_blocks: IntGaugeVec,
+    pub missing_blocks: IntCounterVec,
+    pub blocks_suspended: IntCounter,
     pub block_sync_requests_sent: IntCounterVec,
     pub block_sync_requests_received: IntCounterVec,
 
@@ -69,8 +70,15 @@ pub struct Metrics {
     pub proposed_block_vote_count: HistogramSender<usize>,
 
     pub connection_latency_sender: Vec<HistogramSender<Duration>>,
+    pub connected_nodes: IntGauge,
 
     pub utilization_timer: IntCounterVec,
+
+    pub threshold_clock_round: IntGauge,
+    pub commit_round: IntGauge,
+    pub blocks_per_commit_count: HistogramSender<usize>,
+    pub sub_dags_per_commit_count: HistogramSender<usize>,
+    pub block_commit_latency: HistogramSender<Duration>,
 }
 
 pub struct MetricReporter {
@@ -88,6 +96,10 @@ pub struct MetricReporter {
 
     pub global_in_memory_blocks: IntGauge,
     pub global_in_memory_blocks_bytes: IntGauge,
+
+    pub blocks_per_commit_count: HistogramReporter<usize>,
+    pub block_commit_latency: HistogramReporter<Duration>,
+    pub sub_dags_per_commit_count: HistogramReporter<usize>,
 }
 
 pub struct HistogramReporter<T> {
@@ -109,6 +121,9 @@ impl Metrics {
         let (proposed_block_size_bytes_hist, proposed_block_size_bytes) = histogram();
         let (proposed_block_transaction_count_hist, proposed_block_transaction_count) = histogram();
         let (proposed_block_vote_count_hist, proposed_block_vote_count) = histogram();
+        let (block_commit_latency_hist, block_commit_latency) = histogram();
+        let (blocks_per_commit_count_hist, blocks_per_commit_count) = histogram();
+        let (sub_dags_per_commit_count_hist, sub_dags_per_commit_count) = histogram();
 
         let commitee_size = committee.map(Committee::len).unwrap_or_default();
         let (connection_latency_hist, connection_latency_sender) = (0..commitee_size)
@@ -161,6 +176,21 @@ impl Metrics {
                 "peer",
                 registry,
                 "connection_latency",
+            ),
+            block_commit_latency: HistogramReporter::new_in_registry(
+                block_commit_latency_hist,
+                registry,
+                "block_commit_latency",
+            ),
+            blocks_per_commit_count: HistogramReporter::new_in_registry(
+                blocks_per_commit_count_hist,
+                registry,
+                "blocks_per_commit_count",
+            ),
+            sub_dags_per_commit_count: HistogramReporter::new_in_registry(
+                sub_dags_per_commit_count_hist,
+                registry,
+                "sub_dags_per_commit_count",
             ),
 
             global_in_memory_blocks: register_int_gauge_with_registry!(
@@ -290,7 +320,7 @@ impl Metrics {
             )
             .unwrap(),
 
-            missing_blocks: register_int_gauge_vec_with_registry!(
+            missing_blocks: register_int_counter_vec_with_registry!(
                 "missing_blocks",
                 "Number of missing blocks per authority",
                 &["authority"],
@@ -320,6 +350,30 @@ impl Metrics {
             )
             .unwrap(),
 
+            threshold_clock_round: register_int_gauge_with_registry!(
+                "threshold_clock_round",
+                "The current threshold clock round. We only advance to a new round when a quorum of parents have been synced.",
+                registry,
+            ).unwrap(),
+
+            commit_round: register_int_gauge_with_registry!(
+                "commit_round",
+                "The last committed leader round number",
+                registry,
+            ).unwrap(),
+
+            connected_nodes: register_int_gauge_with_registry!(
+                "connected_nodes",
+                "The number of connected nodes",
+                registry,
+            ).unwrap(),
+
+            blocks_suspended: register_int_counter_with_registry!(
+                "blocks_suspended",
+                "The number of blocks that got suspended due to missing references",
+                registry
+            ).unwrap(),
+
             transaction_certified_latency,
             certificate_committed_latency,
             transaction_committed_latency,
@@ -329,6 +383,9 @@ impl Metrics {
             proposed_block_vote_count,
 
             connection_latency_sender,
+            block_commit_latency,
+            blocks_per_commit_count,
+            sub_dags_per_commit_count
         };
 
         (Arc::new(metrics), reporter)
@@ -460,6 +517,9 @@ impl MetricReporter {
         self.proposed_block_vote_count.clear_receive_all();
 
         self.connection_latency.clear_receive_all();
+        self.blocks_per_commit_count.clear_receive_all();
+        self.block_commit_latency.clear_receive_all();
+        self.sub_dags_per_commit_count.clear_receive_all();
     }
     async fn run(mut self, mut stop: tokio::sync::mpsc::Receiver<()>) {
         const REPORT_INTERVAL: Duration = Duration::from_secs(60);
@@ -501,6 +561,10 @@ impl MetricReporter {
         self.proposed_block_vote_count.report();
 
         self.connection_latency.report();
+
+        self.block_commit_latency.report();
+        self.blocks_per_commit_count.report();
+        self.sub_dags_per_commit_count.report();
     }
 }
 

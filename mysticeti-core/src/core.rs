@@ -111,7 +111,7 @@ impl<H: BlockHandler> Core<H> {
             block_writer.insert_own_block(&own_block_data);
             own_block_data
         };
-        let block_manager = BlockManager::new(block_store.clone(), &committee);
+        let block_manager = BlockManager::new(block_store.clone(), &committee, metrics.clone());
 
         if let Some(state) = state {
             block_handler.recover_state(&state);
@@ -177,6 +177,10 @@ impl<H: BlockHandler> Core<H> {
                 .push_back((position, MetaStatement::Include(*processed.reference())));
             result.push(processed);
         }
+
+        self.metrics
+            .threshold_clock_round
+            .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
         result
     }
@@ -337,6 +341,7 @@ impl<H: BlockHandler> Core<H> {
 
         if let Some(last) = sequence.last() {
             self.last_commit_leader = *last.reference();
+            self.metrics.commit_round.set(last.round() as i64);
         }
 
         // todo: should ideally come from execution result of epoch smart contract

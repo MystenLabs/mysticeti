@@ -7,7 +7,7 @@ use crate::committee::{
 };
 use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, UtilizationTimerVecExt};
 use crate::runtime;
 use crate::runtime::{timestamp_utc, TimeInstant};
 use crate::transactions_generator::TransactionGenerator;
@@ -273,6 +273,10 @@ impl CommitObserver for SimpleCommitObserver {
         &mut self,
         committed_leaders: Vec<Data<StatementBlock>>,
     ) -> Vec<CommittedSubDag> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("SimpleCommitObserver::handle_commit");
         let committed = self.commit_interpreter.handle_commit(committed_leaders);
         for commit in &committed {
             // TODO: Could we get rid of this clone latter?

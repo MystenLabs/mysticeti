@@ -342,6 +342,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::try_commit");
         let sequence: Vec<_> = self
             .committer
             .try_commit(self.last_commit_leader)
@@ -379,6 +383,10 @@ impl<H: BlockHandler> Core<H> {
     ///
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, period: u64, connected_authorities: AuthoritySet) -> bool {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::ready_new_block");
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block

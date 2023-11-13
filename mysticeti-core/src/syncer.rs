@@ -82,6 +82,12 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             if self.core.try_new_block().is_none() {
                 return;
             }
+
+            let _timer = self
+                .metrics
+                .utilization_timer
+                .utilization_timer("Syncer::try_new_block::iner");
+
             self.signals.new_block_ready();
             self.force_new_block = false;
 

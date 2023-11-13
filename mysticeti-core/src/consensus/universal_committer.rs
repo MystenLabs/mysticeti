@@ -3,6 +3,7 @@
 
 use std::{collections::VecDeque, sync::Arc};
 
+use crate::metrics::UtilizationTimerVecExt;
 use crate::{
     block_store::BlockStore,
     committee::Committee,
@@ -27,6 +28,10 @@ impl UniversalCommitter {
     /// ordered decided leaders.
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
     pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("UniversalCommitter::try_commit");
         let highest_known_round = self.block_store.highest_round();
         // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round = last_decided.round();

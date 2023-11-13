@@ -3,6 +3,7 @@
 
 use std::{fmt::Display, sync::Arc};
 
+use crate::metrics::{Metrics, UtilizationTimerVecExt};
 use crate::{
     block_store::BlockStore,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -48,14 +49,16 @@ pub struct BaseCommitter {
     block_store: BlockStore,
     /// The options used by this committer
     options: BaseCommitterOptions,
+    metrics: Arc<Metrics>,
 }
 
 impl BaseCommitter {
-    pub fn new(committee: Arc<Committee>, block_store: BlockStore) -> Self {
+    pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
         Self {
             committee,
             block_store,
             options: BaseCommitterOptions::default(),
+            metrics,
         }
     }
 
@@ -171,6 +174,10 @@ impl BaseCommitter {
         leader: AuthorityIndex,
         leader_round: RoundNumber,
     ) -> LeaderStatus {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::decide_leader_from_anchor");
         // Get the block(s) proposed by the leader. There could be more than one leader block
         // per round (produced by a Byzantine leader).
         let leader_blocks = self
@@ -269,6 +276,10 @@ impl BaseCommitter {
         leader_round: RoundNumber,
         leaders: impl Iterator<Item = &'a LeaderStatus>,
     ) -> LeaderStatus {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::try_indirect_decide");
         // The anchor is the first committed leader with round higher than the decision round of the
         // target leader. We must stop the iteration upon encountering an undecided leader.
         let anchors = leaders.filter(|x| leader_round + self.options.wave_length <= x.round());
@@ -298,6 +309,10 @@ impl BaseCommitter {
         leader: AuthorityIndex,
         leader_round: RoundNumber,
     ) -> LeaderStatus {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::try_direct_decide");
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;

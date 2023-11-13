@@ -55,7 +55,7 @@ impl Default for Parameters {
             rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
             shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             number_of_leaders: Self::DEFAULT_NUMBER_OF_LEADERS,
-            enable_pipelining: true,
+            enable_pipelining: false,
         }
     }
 }

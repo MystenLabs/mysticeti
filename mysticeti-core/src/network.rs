@@ -413,8 +413,8 @@ impl Worker {
     }
 
     async fn make_connection(&self) -> Option<WorkerConnection> {
-        let (network_in_sender, network_in_receiver) = mpsc::channel(16);
-        let (network_out_sender, network_out_receiver) = mpsc::channel(16);
+        let (network_in_sender, network_in_receiver) = mpsc::channel(150);
+        let (network_out_sender, network_out_receiver) = mpsc::channel(150);
         let connection = Connection {
             peer_id: self.peer_id,
             sender: network_out_sender,

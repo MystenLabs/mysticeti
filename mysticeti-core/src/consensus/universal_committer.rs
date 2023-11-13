@@ -155,9 +155,12 @@ impl UniversalCommitterBuilder {
                     round_offset,
                     leader_offset: leader_offset as RoundNumber,
                 };
-                let committer =
-                    BaseCommitter::new(self.committee.clone(), self.block_store.clone())
-                        .with_options(options);
+                let committer = BaseCommitter::new(
+                    self.committee.clone(),
+                    self.block_store.clone(),
+                    self.metrics.clone(),
+                )
+                .with_options(options);
                 committers.push(committer);
             }
         }

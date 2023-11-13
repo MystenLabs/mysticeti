@@ -79,6 +79,7 @@ pub struct Metrics {
     pub blocks_per_commit_count: HistogramSender<usize>,
     pub sub_dags_per_commit_count: HistogramSender<usize>,
     pub block_commit_latency: HistogramSender<Duration>,
+    pub block_receive_latency: HistogramVec,
 }
 
 pub struct MetricReporter {
@@ -371,6 +372,13 @@ impl Metrics {
             blocks_suspended: register_int_counter_with_registry!(
                 "blocks_suspended",
                 "The number of blocks that got suspended due to missing references",
+                registry
+            ).unwrap(),
+
+            block_receive_latency: register_histogram_vec_with_registry!(
+                "block_receive_latency",
+                "The time it took for a block to reach our node",
+                &["authority"],
                 registry
             ).unwrap(),
 

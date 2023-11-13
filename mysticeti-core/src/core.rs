@@ -170,11 +170,21 @@ impl<H: BlockHandler> Core<H> {
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
+        let utc_now = timestamp_utc();
         for (position, processed) in processed.into_iter() {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
                 .push_back((position, MetaStatement::Include(*processed.reference())));
+            self.metrics
+                .block_receive_latency
+                .with_label_values(&[&processed.author().to_string()])
+                .observe(
+                    utc_now
+                        .checked_sub(processed.meta_creation_time())
+                        .unwrap_or_default()
+                        .as_secs_f64(),
+                );
             result.push(processed);
         }
 
@@ -388,6 +398,10 @@ impl<H: BlockHandler> Core<H> {
         committed: Vec<CommittedSubDag>,
         state: &Bytes,
     ) -> Vec<CommitData> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::handle_committed_subdag");
         let mut commit_data = vec![];
         for commit in &committed {
             for block in &commit.blocks {
@@ -404,6 +418,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_state(&mut self) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::write_state");
         #[cfg(feature = "simulator")]
         if self.block_handler().state().len() >= crate::wal::MAX_ENTRY_SIZE {
             // todo - this is something needs a proper fix
@@ -417,6 +435,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn write_commits(&mut self, commits: &[CommitData], state: &Bytes) {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::write_commits");
         let commits = bincode::serialize(&(commits, state)).expect("Commits serialization failed");
         self.wal_writer
             .write(WAL_ENTRY_COMMIT, &commits)

@@ -4,6 +4,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::metrics::UtilizationTimerVecExt;
+use crate::runtime::timestamp_utc;
 use crate::{
     block_store::BlockStore,
     committee::Committee,
@@ -32,6 +33,7 @@ impl UniversalCommitter {
             .metrics
             .utilization_timer
             .utilization_timer("UniversalCommitter::try_commit");
+        let start = timestamp_utc();
         let highest_known_round = self.block_store.highest_round();
         // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round = last_decided.round();
@@ -39,6 +41,11 @@ impl UniversalCommitter {
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = VecDeque::new();
+        tracing::debug!(
+            "Try commit with range: {} -> {}",
+            last_decided_round,
+            highest_known_round
+        );
         for round in (last_decided_round..=highest_known_round).rev() {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
@@ -67,6 +74,11 @@ impl UniversalCommitter {
         }
 
         // The decided sequence is the longest prefix of decided leaders.
+        let end = timestamp_utc();
+        self.metrics
+            .code_scope_latency
+            .with_label_values(&["UniversalCommitter::try_commit"])
+            .observe(end.checked_sub(start).unwrap_or_default().as_secs_f64());
         leaders
             .into_iter()
             // Skip all leaders before the last decided round.

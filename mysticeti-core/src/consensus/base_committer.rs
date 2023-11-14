@@ -149,6 +149,10 @@ impl BaseCommitter {
         potential_certificate: &Data<StatementBlock>,
         leader_block: &Data<StatementBlock>,
     ) -> bool {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::is_certificate");
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
             let potential_vote = self
@@ -221,6 +225,10 @@ impl BaseCommitter {
     /// Check whether the specified leader has enough blames (that is, 2f+1 non-votes) to be
     /// directly skipped.
     fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::enough_leader_blame");
         let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
         let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -250,6 +258,11 @@ impl BaseCommitter {
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
     ) -> bool {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::enough_leader_support");
+
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -328,6 +341,16 @@ impl BaseCommitter {
         let leader_blocks = self
             .block_store
             .get_blocks_at_authority_round(leader, leader_round);
+
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Basecommitter::try_direct_decide::enough_leader_support");
+
+        tracing::debug!(
+            "try_direct_decide with leader blocks: {}",
+            leader_blocks.len()
+        );
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))

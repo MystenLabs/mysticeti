@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
 use std::{fmt::Display, sync::Arc};
 
 use crate::metrics::{Metrics, UtilizationTimerVecExt};
@@ -114,20 +115,24 @@ impl BaseCommitter {
             return None;
         }
         for include in from.includes() {
+            if include.author_round() == (author, round) {
+                return Some(*include);
+            }
+
+            /*
+            TODO: we have no support for weak links , so no need to check this at the moment
             // Weak links may point to blocks with lower round numbers than strong links.
             if include.round() < round {
                 continue;
             }
-            if include.author_round() == (author, round) {
-                return Some(*include);
-            }
+
             let include = self
                 .block_store
                 .get_block(*include)
                 .expect("We should have the whole sub-dag by now");
             if let Some(support) = self.find_support((author, round), &include) {
                 return Some(support);
-            }
+            }*/
         }
         None
     }
@@ -149,6 +154,7 @@ impl BaseCommitter {
         &self,
         potential_certificate: &Data<StatementBlock>,
         leader_block: &Data<StatementBlock>,
+        all_votes: &mut HashSet<BlockReference>,
     ) -> bool {
         let _timer = self
             .metrics
@@ -162,13 +168,23 @@ impl BaseCommitter {
             potential_certificate.round()
         );
         for reference in potential_certificate.includes() {
-            let potential_vote = self
-                .block_store
-                .get_block(*reference)
-                .expect("We should have the whole sub-dag by now");
+            let is_vote = if all_votes.contains(reference) {
+                true
+            } else {
+                let potential_vote = self
+                    .block_store
+                    .get_block(*reference)
+                    .expect("We should have the whole sub-dag by now");
+                if self.is_vote(&potential_vote, leader_block) {
+                    all_votes.insert(*reference);
+                    true
+                } else {
+                    false
+                }
+            };
 
-            if self.is_vote(&potential_vote, leader_block) {
-                tracing::trace!("[{self}] {potential_vote:?} is a vote for {leader_block:?}");
+            if is_vote {
+                //tracing::trace!("[{self}] {potential_vote:?} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -210,8 +226,9 @@ impl BaseCommitter {
         let mut certified_leader_blocks: Vec<_> = leader_blocks
             .into_iter()
             .filter(|leader_block| {
+                let mut all_votes = HashSet::new();
                 potential_certificates.iter().any(|potential_certificate| {
-                    self.is_certificate(potential_certificate, leader_block)
+                    self.is_certificate(potential_certificate, leader_block, &mut all_votes)
                 })
             })
             .collect();
@@ -276,9 +293,10 @@ impl BaseCommitter {
         tracing::debug!("enough_leader_support for leader: {}", leader_block.round());
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
+        let mut all_votes = HashSet::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
-            if self.is_certificate(decision_block, leader_block) {
+            if self.is_certificate(decision_block, leader_block, &mut all_votes) {
                 tracing::trace!(
                     "[{self}] {decision_block:?} is a certificate for leader {leader_block:?}"
                 );

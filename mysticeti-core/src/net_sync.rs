@@ -2,13 +2,14 @@ use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
+use crate::data::Data;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::AuthorityIndex;
 use crate::types::{format_authority_index, AuthoritySet};
+use crate::types::{AuthorityIndex, StatementBlock};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
@@ -61,6 +62,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     main_task: JoinHandle<()>,
     syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
+    add_block_handle: JoinHandle<()>,
 }
 
 pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
@@ -72,6 +74,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     epoch_close_signal: mpsc::Sender<()>,
     pub epoch_closing_time: Arc<AtomicU64>,
     connected_authorities: Arc<Mutex<ConnectedAuthorities>>,
+    tx_add_blocks: mpsc::Sender<Vec<Data<StatementBlock>>>,
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
@@ -106,16 +109,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         epoch_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let connected_authorities =
             Arc::new(Mutex::new(ConnectedAuthorities::new(metrics.clone())));
-        let inner = Arc::new(NetworkSyncerInner {
-            notify,
+        let (inner, add_block_handle) = NetworkSyncerInner::new(
             syncer,
             block_store,
+            notify,
             committee,
-            stop: stop_sender.clone(),
-            epoch_close_signal: epoch_sender.clone(),
+            stop_sender.clone(),
+            epoch_sender.clone(),
             epoch_closing_time,
             connected_authorities,
-        });
+        );
         let block_fetcher = Arc::new(BlockFetcher::start(
             authority_index,
             inner.clone(),
@@ -136,6 +139,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             main_task,
             stop: stop_receiver,
             syncer_task,
+            add_block_handle,
         }
     }
 
@@ -144,6 +148,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
         self.syncer_task.await.ok();
+        self.add_block_handle.abort();
+        self.add_block_handle.await.ok();
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
@@ -250,12 +256,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
-                    let connected_authorities =
-                        inner.connected_authorities.lock().authorities.clone();
-                    inner
-                        .syncer
-                        .add_blocks(vec![block], connected_authorities)
-                        .await;
+                    inner.add_blocks(vec![block]).await;
                 }
                 NetworkMessage::RequestBlocks(references) => {
                     if references.len() > MAXIMUM_BLOCK_REQUEST {
@@ -349,6 +350,46 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<H, C> {
+    fn new(
+        syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
+        block_store: BlockStore,
+        notify: Arc<Notify>,
+        committee: Arc<Committee>,
+        stop: mpsc::Sender<()>,
+        epoch_close_signal: mpsc::Sender<()>,
+        epoch_closing_time: Arc<AtomicU64>,
+        connected_authorities: Arc<Mutex<ConnectedAuthorities>>,
+    ) -> (Arc<Self>, JoinHandle<()>) {
+        let connected_authorities_clone = connected_authorities.clone();
+        let (tx_add_blocks, mut rx_add_blocks) = tokio::sync::mpsc::channel(1_000);
+        let new_s = Arc::new(Self {
+            syncer,
+            block_store,
+            notify,
+            committee,
+            stop,
+            epoch_close_signal,
+            epoch_closing_time,
+            connected_authorities,
+            tx_add_blocks,
+        });
+
+        let handle = Handle::current();
+        let new_s_cloned = new_s.clone();
+
+        let h = handle.spawn(async move {
+            while let Some(blocks) = rx_add_blocks.recv().await {
+                let authorities = connected_authorities_clone.lock().authorities.clone();
+                new_s_cloned.syncer.add_blocks(blocks, authorities).await;
+            }
+        });
+        (new_s, h)
+    }
+
+    async fn add_blocks(&self, blocks: Vec<Data<StatementBlock>>) {
+        let _ = self.tx_add_blocks.send(blocks).await.ok();
+    }
+
     // Returns None either if channel is closed or NetworkSyncerInner receives stop signal
     async fn recv_or_stopped<T>(&self, channel: &mut mpsc::Receiver<T>) -> Option<T> {
         select! {

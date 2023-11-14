@@ -4,6 +4,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use crate::metrics::{Metrics, UtilizationTimerVecExt};
+use crate::runtime::timestamp_utc;
 use crate::{
     block_store::BlockStore,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -154,6 +155,12 @@ impl BaseCommitter {
             .utilization_timer
             .utilization_timer("Basecommitter::is_certificate");
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
+        tracing::debug!(
+            "is_certificate: total references: {}, leader round: {}, cert round: {}",
+            potential_certificate.includes().len(),
+            leader_block.round(),
+            potential_certificate.round()
+        );
         for reference in potential_certificate.includes() {
             let potential_vote = self
                 .block_store
@@ -264,6 +271,9 @@ impl BaseCommitter {
             .utilization_timer("Basecommitter::enough_leader_support");
 
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
+        let start = timestamp_utc();
+
+        tracing::debug!("enough_leader_support for leader: {}", leader_block.round());
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
@@ -273,10 +283,22 @@ impl BaseCommitter {
                     "[{self}] {decision_block:?} is a certificate for leader {leader_block:?}"
                 );
                 if certificate_stake_aggregator.add(authority, &self.committee) {
+                    let stop = timestamp_utc();
+                    tracing::debug!(
+                        "Total time: support found for {}: {}",
+                        leader_block.round(),
+                        stop.checked_sub(start).unwrap_or_default().as_millis()
+                    );
                     return true;
                 }
             }
         }
+        let stop = timestamp_utc();
+        tracing::debug!(
+            "Total time: support not found for {}: {}",
+            leader_block.round(),
+            stop.checked_sub(start).unwrap_or_default().as_millis()
+        );
         false
     }
 

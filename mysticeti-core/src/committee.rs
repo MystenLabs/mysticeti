@@ -9,8 +9,10 @@ use crate::types::{
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
+use rand::prelude::SliceRandom;
 use rand::rngs::StdRng;
 use rand::Rng;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -19,8 +21,6 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
-use rand::SeedableRng;
-use rand::prelude::SliceRandom;
 
 #[derive(Serialize, Deserialize)]
 pub struct Committee {

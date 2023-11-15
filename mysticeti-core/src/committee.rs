@@ -9,6 +9,7 @@ use crate::types::{
 };
 use crate::{config::Print, data::Data};
 use minibytes::Bytes;
+use rand::rngs::StdRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -18,6 +19,8 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
+use rand::SeedableRng;
+use rand::prelude::SliceRandom;
 
 #[derive(Serialize, Deserialize)]
 pub struct Committee {
@@ -134,8 +137,7 @@ impl Committee {
     }
 
     pub fn elect_leader(&self, round: u64) -> AuthorityIndex {
-        (round % self.authorities.len() as u64) as AuthorityIndex
-        /*
+        //(round % self.authorities.len() as u64) as AuthorityIndex
         cfg_if::cfg_if! {
             // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)
             // we can use the staked approach.
@@ -156,7 +158,7 @@ impl Committee {
                     .expect("Weighted choice error: stake values incorrect!")
                     .0 as AuthorityIndex
             }
-        }*/
+        }
     }
 
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {

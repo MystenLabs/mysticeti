@@ -166,6 +166,8 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::add_blocks");
+        let start = timestamp_utc();
+
         let processed = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
@@ -176,9 +178,10 @@ impl<H: BlockHandler> Core<H> {
                 .add_block(*processed.reference(), &self.committee);
             self.pending
                 .push_back((position, MetaStatement::Include(*processed.reference())));
+            let hostname = self.committee.authority_safe(processed.author()).hostname();
             self.metrics
                 .block_receive_latency
-                .with_label_values(&[&processed.author().to_string()])
+                .with_label_values(&[&hostname, "Core::add_blocks"])
                 .observe(
                     utc_now
                         .checked_sub(processed.meta_creation_time())
@@ -192,6 +195,13 @@ impl<H: BlockHandler> Core<H> {
             .threshold_clock_round
             .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
+
+        let end = timestamp_utc();
+        self.metrics
+            .code_scope_latency
+            .with_label_values(&["Core::add_blocks"])
+            .observe(end.checked_sub(start).unwrap_or_default().as_secs_f64());
+
         result
     }
 

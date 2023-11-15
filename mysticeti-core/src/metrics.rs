@@ -135,7 +135,10 @@ impl Metrics {
                 (
                     (
                         hist,
-                        format_authority_index(peer as AuthorityIndex).to_string(),
+                        committee
+                            .unwrap()
+                            .authority_safe(peer as AuthorityIndex)
+                            .hostname(),
                     ),
                     sender,
                 )
@@ -380,7 +383,7 @@ impl Metrics {
             block_receive_latency: register_histogram_vec_with_registry!(
                 "block_receive_latency",
                 "The time it took for a block to reach our node",
-                &["authority"],
+                &["authority", "proc"],
                 registry
             ).unwrap(),
 

@@ -92,6 +92,12 @@ impl Committee {
         0..(self.authorities.len() as AuthorityIndex)
     }
 
+    pub fn authority_safe(&self, authority_index: AuthorityIndex) -> &Authority {
+        self.authorities
+            .get(authority_index as usize)
+            .unwrap_or_else(|| panic!("Authority with id {} not exists", authority_index))
+    }
+
     /// Return own genesis block and other genesis blocks
     pub fn genesis_blocks(
         &self,
@@ -170,18 +176,24 @@ impl Committee {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Authority {
     stake: Stake,
+    hostname: String,
     public_key: PublicKey,
 }
 
 impl Authority {
-    pub fn new(stake: Stake, public_key: PublicKey) -> Self {
-        Self { stake, public_key }
+    pub fn new(stake: Stake, public_key: PublicKey, hostname: String) -> Self {
+        Self {
+            stake,
+            public_key,
+            hostname,
+        }
     }
 
     pub fn test_from_stake(stake: Stake) -> Self {
         Self {
             stake,
             public_key: dummy_public_key(),
+            hostname: "".to_string(),
         }
     }
 
@@ -191,6 +203,10 @@ impl Authority {
 
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    pub fn hostname(&self) -> String {
+        self.hostname.clone()
     }
 }
 

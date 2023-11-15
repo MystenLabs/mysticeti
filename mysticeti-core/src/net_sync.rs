@@ -2,6 +2,7 @@ use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
+use crate::metrics::UtilizationTimerVecExt;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
@@ -228,7 +229,25 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::Block(block) => {
                     tracing::debug!("Received {} from {}", block.reference(), peer);
-                    // Verify blocks baesd on consensus rules
+
+                    // measure the receive time
+                    let now = timestamp_utc();
+                    let authority = inner.committee.authority_safe(block.author());
+                    metrics
+                        .block_receive_latency
+                        .with_label_values(&[&authority.hostname(), "network_receive"])
+                        .observe(
+                            now.checked_sub(block.meta_creation_time())
+                                .unwrap_or_default()
+                                .as_secs_f64(),
+                        );
+
+                    // measure overall block processing time
+                    let _timer = metrics
+                        .utilization_timer
+                        .utilization_timer("NetSync::NetworkMessage::Block");
+
+                    // Verify blocks based on consensus rules
                     if let Err(e) = block.verify(&inner.committee) {
                         tracing::warn!(
                             "Rejected incorrect block {} based on consensus rules from {}: {:?}",

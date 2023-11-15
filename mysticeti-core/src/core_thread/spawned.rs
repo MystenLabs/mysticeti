@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::{collections::HashSet, thread};
 use tokio::sync::{mpsc, oneshot};
 
-pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver + 'static> {
     sender: mpsc::Sender<CoreThreadCommand>,
     join_handle: thread::JoinHandle<Syncer<H, S, C>>,
     metrics: Arc<Metrics>,
 }
 
-pub struct CoreThread<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+pub struct CoreThread<H: BlockHandler, S: SyncerSignals, C: CommitObserver + 'static> {
     syncer: Syncer<H, S, C>,
     receiver: mpsc::Receiver<CoreThreadCommand>,
 }

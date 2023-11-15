@@ -46,7 +46,7 @@ impl Default for SynchronizerParameters {
     }
 }
 
-pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver> {
+pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver + 'static> {
     /// The sender to the network.
     sender: mpsc::Sender<NetworkMessage>,
     /// The inner state of the network syncer.
@@ -242,7 +242,7 @@ impl BlockFetcher {
     }
 }
 
-struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
+struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver + 'static> {
     id: AuthorityIndex,
     inner: Arc<NetworkSyncerInner<B, C>>,
     receiver: mpsc::Receiver<BlockFetcherMessage>,

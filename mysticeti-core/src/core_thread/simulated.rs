@@ -11,7 +11,7 @@ use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
 use parking_lot::Mutex;
 
-pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver + 'static> {
     syncer: Mutex<Syncer<H, S, C>>,
 }
 

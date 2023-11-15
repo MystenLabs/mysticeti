@@ -21,7 +21,7 @@ impl EpochManager {
         }
     }
 
-    pub fn epoch_change_begun(&mut self) {
+    pub fn _epoch_change_begun(&mut self) {
         if let InternalEpochStatus::Open = self.epoch_status {
             self.epoch_status = InternalEpochStatus::BeginChange;
             tracing::info!("Epoch change has begun");

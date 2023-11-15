@@ -1,12 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::commit_observer::CommitObserver;
 use crate::committee::Committee;
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
 use crate::metrics::UtilizationTimerVecExt;
-use crate::runtime::timestamp_utc;
+use crate::runtime::{timestamp_utc, Handle};
 use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{
@@ -26,12 +27,15 @@ use crate::{
 };
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
+use parking_lot::Mutex;
 use std::collections::{HashSet, VecDeque};
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use tokio::sync::watch::Receiver;
+use tokio::sync::Notify;
 
-pub struct Core<H: BlockHandler> {
+pub struct Core<H: BlockHandler, C: CommitObserver + 'static> {
     block_manager: BlockManager,
     pending: VecDeque<(WalPosition, MetaStatement)>,
     last_own_block: OwnBlockData,
@@ -39,15 +43,16 @@ pub struct Core<H: BlockHandler> {
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
-    last_commit_leader: BlockReference,
     wal_writer: WalWriter,
     block_store: BlockStore,
     pub(crate) metrics: Arc<Metrics>,
     options: CoreOptions,
     signer: Signer,
     epoch_manager: EpochManager,
-    rounds_in_epoch: RoundNumber,
-    committer: UniversalCommitter,
+    committer: Arc<Mutex<UniversalCommitter>>,
+    commit_observer: Arc<Mutex<C>>,
+    commit_notify: Arc<Notify>,
+    rx_last_commit_leader: Receiver<BlockReference>,
 }
 
 pub struct CoreOptions {
@@ -60,7 +65,7 @@ pub enum MetaStatement {
     Payload(Vec<BaseStatement>),
 }
 
-impl<H: BlockHandler> Core<H> {
+impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
     #[allow(clippy::too_many_arguments)]
     pub fn open(
         mut block_handler: H,
@@ -72,6 +77,7 @@ impl<H: BlockHandler> Core<H> {
         mut wal_writer: WalWriter,
         options: CoreOptions,
         signer: Signer,
+        commit_observer: C,
     ) -> Self {
         let CoreRecoveredState {
             block_store,
@@ -119,11 +125,52 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer =
+        let committer = Arc::new(Mutex::new(
             UniversalCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
                 .with_number_of_leaders(parameters.number_of_leaders)
                 .with_pipeline(parameters.enable_pipelining)
-                .build();
+                .build(),
+        ));
+
+        let commit_notify = Arc::new(Notify::new());
+        let commit_notify_clone = commit_notify.clone();
+        let committer_cloned = committer.clone();
+        let last_committed_leader_cloned = last_committed_leader;
+        let metrics_cloned = metrics.clone();
+        let (tx_last_commit_leader, rx_last_commit_leader) =
+            tokio::sync::watch::channel(last_committed_leader_cloned.unwrap_or_default());
+        let commit_observer = Arc::new(Mutex::new(commit_observer));
+        let commit_observer_cloned = commit_observer.clone();
+
+        let _h = Handle::current().spawn(async move {
+            let mut last_commit_leader: BlockReference =
+                last_committed_leader_cloned.unwrap_or_default();
+            loop {
+                // wait to get notified to trigger a commit
+                commit_notify_clone.notified().await;
+
+                let _timer = metrics_cloned
+                    .utilization_timer
+                    .utilization_timer("Core::commit");
+
+                // commit
+                let sequence: Vec<_> = committer_cloned
+                    .lock()
+                    .try_commit(last_commit_leader)
+                    .into_iter()
+                    .filter_map(|leader| leader.into_decided_block())
+                    .collect();
+
+                if let Some(last) = sequence.last() {
+                    last_commit_leader = *last.reference();
+                    tx_last_commit_leader.send(*last.reference()).ok();
+                    metrics_cloned.commit_round.set(last.round() as i64);
+                }
+
+                // call the commit observer
+                let _ = commit_observer.lock().handle_commit(sequence);
+            }
+        });
 
         let mut this = Self {
             block_manager,
@@ -133,15 +180,16 @@ impl<H: BlockHandler> Core<H> {
             authority,
             threshold_clock,
             committee,
-            last_commit_leader: last_committed_leader.unwrap_or_default(),
             wal_writer,
             block_store,
             metrics,
             options,
             signer,
             epoch_manager,
-            rounds_in_epoch: parameters.rounds_in_epoch(),
-            committer,
+            committer: committer.clone(),
+            commit_notify,
+            rx_last_commit_leader,
+            commit_observer: commit_observer_cloned,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -158,6 +206,10 @@ impl<H: BlockHandler> Core<H> {
     pub fn with_options(mut self, options: CoreOptions) -> Self {
         self.options = options;
         self
+    }
+
+    pub fn commit_observer(&self) -> &Arc<Mutex<C>> {
+        &self.commit_observer
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -356,31 +408,25 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::try_commit");
-        let sequence: Vec<_> = self
-            .committer
-            .try_commit(self.last_commit_leader)
-            .into_iter()
-            .filter_map(|leader| leader.into_decided_block())
-            .collect();
 
-        if let Some(last) = sequence.last() {
-            self.last_commit_leader = *last.reference();
-            self.metrics.commit_round.set(last.round() as i64);
-        }
+        // notify for a new commit
+        self.commit_notify.notify_waiters();
 
         // todo: should ideally come from execution result of epoch smart contract
+        /*
         if self.last_commit_leader.round() > self.rounds_in_epoch {
             self.epoch_manager.epoch_change_begun();
-        }
+        }*/
 
-        sequence
+        vec![]
     }
 
     pub fn cleanup(&self) {
         const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 100;
 
         self.block_store.cleanup(
-            self.last_commit_leader
+            self.rx_last_commit_leader
+                .borrow()
                 .round()
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );
@@ -400,9 +446,9 @@ impl<H: BlockHandler> Core<H> {
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block
-        if quorum_round > self.last_commit_leader.round().max(period - 1) {
+        if quorum_round > self.rx_last_commit_leader.borrow().round().max(period - 1) {
             let leader_round = quorum_round - 1;
-            let mut leaders = self.committer.get_leaders(leader_round);
+            let mut leaders = self.committer.lock().get_leaders(leader_round);
             leaders.retain(|leader| connected_authorities.contains(*leader));
             self.block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)

@@ -4,18 +4,24 @@
 use crate::crypto::{dummy_public_key, PublicKey};
 use crate::range_map::RangeMap;
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, Epoch, Stake, StatementBlock,
-    TransactionLocator, TransactionLocatorRange, Vote,
+    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, Epoch, RoundNumber, Stake,
+    StatementBlock, TransactionLocator, TransactionLocatorRange, Vote,
 };
 use crate::{config::Print, data::Data};
+use lru::LruCache;
 use minibytes::Bytes;
+use parking_lot::Mutex;
+use rand::prelude::SliceRandom;
+use rand::rngs::StdRng;
 use rand::Rng;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -25,6 +31,13 @@ pub struct Committee {
     epoch: Epoch,
     validity_threshold: Stake, // The minimum stake required for validity
     quorum_threshold: Stake,   // The minimum stake required for quorum
+    #[serde(skip)]
+    #[serde(default = "default_lru_cache")]
+    leaders_cache: Arc<Mutex<LruCache<RoundNumber, AuthorityIndex>>>,
+}
+
+fn default_lru_cache() -> Arc<Mutex<LruCache<RoundNumber, AuthorityIndex>>> {
+    Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(300).unwrap())))
 }
 
 #[allow(clippy::len_without_is_empty)]
@@ -58,6 +71,7 @@ impl Committee {
             epoch,
             validity_threshold,
             quorum_threshold,
+            leaders_cache: default_lru_cache(),
         })
     }
 
@@ -134,29 +148,36 @@ impl Committee {
     }
 
     pub fn elect_leader(&self, round: u64) -> AuthorityIndex {
-        (round % self.authorities.len() as u64) as AuthorityIndex
-        /*
+        //(round % self.authorities.len() as u64) as AuthorityIndex
         cfg_if::cfg_if! {
             // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)
             // we can use the staked approach.
             if #[cfg(test)] {
                 (round % self.authorities.len() as u64) as AuthorityIndex
             } else {
-                let mut seed_bytes = [0u8; 32];
-                seed_bytes[32 - 8..].copy_from_slice(&round.to_le_bytes());
-                let mut rng = StdRng::from_seed(seed_bytes);
-                let choices = self
-                    .authorities
-                    .iter()
-                    .enumerate()
-                    .map(|(index, authority)| (index, authority.stake as f32))
-                    .collect::<Vec<_>>();
-                choices
-                    .choose_weighted(&mut rng, |item| item.1)
-                    .expect("Weighted choice error: stake values incorrect!")
-                    .0 as AuthorityIndex
+                let mut guard = self.leaders_cache.lock();
+                if let Some(leader_index) = guard.get(&round) {
+                    *leader_index
+                } else {
+                    let mut seed_bytes = [0u8; 32];
+                    seed_bytes[32 - 8..].copy_from_slice(&round.to_le_bytes());
+                    let mut rng = StdRng::from_seed(seed_bytes);
+                    let choices = self
+                        .authorities
+                        .iter()
+                        .enumerate()
+                        .map(|(index, authority)| (index, authority.stake as f32))
+                        .collect::<Vec<_>>();
+                    let leader_index = choices
+                        .choose_weighted(&mut rng, |item| item.1)
+                        .expect("Weighted choice error: stake values incorrect!")
+                        .0 as AuthorityIndex;
+
+                    guard.put(round, leader_index);
+                    leader_index
+                }
             }
-        }*/
+        }
     }
 
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {

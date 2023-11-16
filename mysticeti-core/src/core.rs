@@ -441,7 +441,7 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
     /// try_new_block might still return None if threshold clock is not ready
     ///
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
-    pub fn ready_new_block(&self, period: u64, connected_authorities: AuthoritySet) -> bool {
+    pub fn ready_new_block(&self, _period: u64, connected_authorities: AuthoritySet) -> bool {
         let _timer = self
             .metrics
             .utilization_timer
@@ -449,7 +449,7 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block
-        if quorum_round > self.rx_last_commit_leader.borrow().round().max(period - 1) {
+        if quorum_round > self.last_proposed() {
             let leader_round = quorum_round - 1;
             let mut leaders = self.get_leaders(leader_round);
             if leaders.is_empty() {

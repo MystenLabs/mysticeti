@@ -199,7 +199,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut connection: Connection,
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
-        _block_verifier: Arc<impl BlockVerifier>,
+        block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
     ) -> Option<()> {
         let last_seen = inner
@@ -251,8 +251,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         // Terminate connection on receiving incorrect block
                         break;
                     }
-                    /*
-                    TODO: re-enable the block verification
                     // Verify blocks based on customized validation rules
                     if let Err(e) = block_verifier.verify(&block).await {
                         tracing::warn!(
@@ -263,7 +261,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         );
                         // Terminate connection on receiving incorrect block
                         break;
-                    }*/
+                    }
                     let connected_authorities =
                         inner.connected_authorities.lock().authorities.clone();
                     inner

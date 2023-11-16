@@ -203,10 +203,6 @@ impl BaseCommitter {
         leader: AuthorityIndex,
         leader_round: RoundNumber,
     ) -> LeaderStatus {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::decide_leader_from_anchor");
         // Get the block(s) proposed by the leader. There could be more than one leader block
         // per round (produced by a Byzantine leader).
         let leader_blocks = self
@@ -251,10 +247,6 @@ impl BaseCommitter {
     /// Check whether the specified leader has enough blames (that is, 2f+1 non-votes) to be
     /// directly skipped.
     fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::enough_leader_blame");
         let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
         let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
@@ -383,11 +375,6 @@ impl BaseCommitter {
         let leader_blocks = self
             .block_store
             .get_blocks_at_authority_round(leader, leader_round);
-
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::try_direct_decide::enough_leader_support");
 
         tracing::debug!(
             "try_direct_decide with leader blocks: {}",

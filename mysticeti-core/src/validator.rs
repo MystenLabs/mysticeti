@@ -261,6 +261,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             core,
             parameters.wave_length(),
             parameters.shutdown_grace_period(),
+            parameters.leader_timeout,
             block_verifier,
             metrics,
         );

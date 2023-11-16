@@ -81,6 +81,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         core: Core<H, C>,
         commit_period: u64,
         shutdown_grace_period: Duration,
+        leader_timeout: Duration,
         block_verifier: impl BlockVerifier,
         metrics: Arc<Metrics>,
     ) -> Self {
@@ -120,6 +121,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             inner.clone(),
             epoch_receiver,
             shutdown_grace_period,
+            leader_timeout,
             block_fetcher,
             Arc::new(block_verifier),
             metrics.clone(),
@@ -149,6 +151,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner: Arc<NetworkSyncerInner<H, C>>,
         epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
+        leader_timeout: Duration,
         block_fetcher: Arc<BlockFetcher>,
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
@@ -159,6 +162,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             inner.clone(),
             epoch_close_signal,
             shutdown_grace_period,
+            leader_timeout,
         ));
         let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
@@ -299,8 +303,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
+        leader_timeout: Duration,
     ) -> Option<()> {
-        let leader_timeout = Duration::from_millis(200);
         loop {
             let notified = inner.notify.notified();
             let round = inner

@@ -20,6 +20,7 @@ use super::{LeaderStatus, DEFAULT_WAVE_LENGTH};
 /// voting round, and one decision round.
 type WaveNumber = u64;
 
+#[derive(Clone)]
 pub struct BaseCommitterOptions {
     /// The length of a wave (minimum 3)
     pub wave_length: u64,
@@ -44,6 +45,7 @@ impl Default for BaseCommitterOptions {
 /// The [`BaseCommitter`] contains the bare bone commit logic. Once instantiated, the method `try_direct_decide`
 /// and `try_indirect_decide` can be called at any time and any number of times (it is idempotent) to determine
 /// whether a leader can be committed or skipped.
+#[derive(Clone)]
 pub struct BaseCommitter {
     /// The committee information
     committee: Arc<Committee>,

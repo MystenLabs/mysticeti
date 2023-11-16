@@ -20,7 +20,7 @@ use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
 /// multi-leaders, backup leaders, and pipelines.
 pub struct UniversalCommitter {
     block_store: BlockStore,
-    committers: Vec<BaseCommitter>,
+    pub committers: Vec<BaseCommitter>,
     metrics: Arc<Metrics>,
 }
 

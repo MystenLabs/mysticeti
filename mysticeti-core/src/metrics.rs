@@ -82,6 +82,7 @@ pub struct Metrics {
     pub block_receive_latency: HistogramVec,
 
     pub code_scope_latency: HistogramVec,
+    pub ready_new_block: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -392,6 +393,13 @@ impl Metrics {
                 "Time it takes for a code block to process",
                 &["proc"],
                 registry
+            ).unwrap(),
+
+            ready_new_block: register_int_counter_vec_with_registry!(
+                "ready_new_block",
+                "Report when it's ready to propose a new block",
+                &["type"],
+                registry,
             ).unwrap(),
 
             transaction_certified_latency,

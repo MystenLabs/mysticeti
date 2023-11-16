@@ -1,8 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::block_store::{
+    BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
+    WAL_ENTRY_STATE,
+};
 use crate::commit_observer::CommitObserver;
 use crate::committee::Committee;
+use crate::consensus::base_committer::BaseCommitter;
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -18,13 +23,6 @@ use crate::{
     block_handler::BlockHandler, consensus::universal_committer::UniversalCommitterBuilder,
 };
 use crate::{block_manager::BlockManager, metrics::Metrics};
-use crate::{
-    block_store::{
-        BlockStore, BlockWriter, CommitData, OwnBlockData, WAL_ENTRY_COMMIT, WAL_ENTRY_PAYLOAD,
-        WAL_ENTRY_STATE,
-    },
-    consensus::universal_committer::UniversalCommitter,
-};
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
 use minibytes::Bytes;
 use parking_lot::Mutex;
@@ -49,7 +47,7 @@ pub struct Core<H: BlockHandler, C: CommitObserver + 'static> {
     options: CoreOptions,
     signer: Signer,
     epoch_manager: EpochManager,
-    committer: Arc<Mutex<UniversalCommitter>>,
+    committers: Vec<BaseCommitter>,
     commit_observer: Arc<Mutex<C>>,
     commit_notify: Arc<Notify>,
     rx_last_commit_leader: Receiver<BlockReference>,
@@ -125,16 +123,15 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer = Arc::new(Mutex::new(
+        let committer =
             UniversalCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
                 .with_number_of_leaders(parameters.number_of_leaders)
                 .with_pipeline(parameters.enable_pipelining)
-                .build(),
-        ));
+                .build();
+        let committers = committer.committers.clone();
 
         let commit_notify = Arc::new(Notify::new());
         let commit_notify_clone = commit_notify.clone();
-        let committer_cloned = committer.clone();
         let last_committed_leader_cloned = last_committed_leader;
         let metrics_cloned = metrics.clone();
         let (tx_last_commit_leader, rx_last_commit_leader) =
@@ -154,8 +151,7 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
                     .utilization_timer("Core::commit");
 
                 // commit
-                let sequence: Vec<_> = committer_cloned
-                    .lock()
+                let sequence: Vec<_> = committer
                     .try_commit(last_commit_leader)
                     .into_iter()
                     .filter_map(|leader| leader.into_decided_block())
@@ -186,7 +182,7 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
             options,
             signer,
             epoch_manager,
-            committer: committer.clone(),
+            committers,
             commit_notify,
             rx_last_commit_leader,
             commit_observer: commit_observer_cloned,
@@ -210,6 +206,13 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
 
     pub fn commit_observer(&self) -> &Arc<Mutex<C>> {
         &self.commit_observer
+    }
+
+    pub fn get_leaders(&self, round: RoundNumber) -> Vec<AuthorityIndex> {
+        self.committers
+            .iter()
+            .filter_map(|committer| committer.elect_leader(round))
+            .collect()
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
@@ -448,8 +451,24 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
         // Leader round we check if we have a leader block
         if quorum_round > self.rx_last_commit_leader.borrow().round().max(period - 1) {
             let leader_round = quorum_round - 1;
-            let mut leaders = self.committer.lock().get_leaders(leader_round);
+            let mut leaders = self.get_leaders(leader_round);
+            if leaders.is_empty() {
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["non_leader_round"])
+                    .inc();
+                return true;
+            }
+
             leaders.retain(|leader| connected_authorities.contains(*leader));
+            if leaders.is_empty() {
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["leader_not_connected"])
+                    .inc();
+                return true;
+            }
+
             self.block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)
         } else {

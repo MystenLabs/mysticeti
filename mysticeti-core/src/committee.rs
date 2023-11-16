@@ -134,8 +134,7 @@ impl Committee {
     }
 
     pub fn elect_leader(&self, round: u64) -> AuthorityIndex {
-        //(round % self.authorities.len() as u64) as AuthorityIndex
-        ((round / 3) % self.authorities.len() as u64) as AuthorityIndex
+        (round % self.authorities.len() as u64) as AuthorityIndex
         /*
         cfg_if::cfg_if! {
             // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)

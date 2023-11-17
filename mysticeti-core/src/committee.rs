@@ -155,6 +155,11 @@ impl Committee {
             if #[cfg(test)] {
                 (round % self.authorities.len() as u64) as AuthorityIndex
             } else {
+                // if genesis, always return index 0 - TODO: this needs to be removed.
+                if round == 0 {
+                    return 0;
+                }
+
                 let mut guard = self.leaders_cache.lock();
                 if let Some(leader_index) = guard.get(&round) {
                     *leader_index

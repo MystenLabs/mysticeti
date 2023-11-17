@@ -10,7 +10,7 @@ use crate::{
     committee::Committee,
     consensus::base_committer::BaseCommitterOptions,
     metrics::Metrics,
-    types::{format_authority_round, AuthorityIndex, BlockReference, RoundNumber},
+    types::{AuthorityIndex, BlockReference, RoundNumber},
 };
 
 use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
@@ -52,10 +52,6 @@ impl UniversalCommitter {
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;
                 };
-                tracing::debug!(
-                    "Trying to decide {} with {committer}",
-                    format_authority_round(leader, round)
-                );
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
@@ -69,9 +65,23 @@ impl UniversalCommitter {
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
+                tracing::debug!(
+                    "Leader commit outcome: {}, {}, with committer {}",
+                    status.round(),
+                    status.to_string(),
+                    committer
+                );
+
                 leaders.push_front(status);
             }
         }
+
+        tracing::debug!(
+            "Try commit with range: {} -> {} - total leaders: {}",
+            last_decided_round,
+            highest_known_round,
+            leaders.len()
+        );
 
         // The decided sequence is the longest prefix of decided leaders.
         let end = timestamp_utc();

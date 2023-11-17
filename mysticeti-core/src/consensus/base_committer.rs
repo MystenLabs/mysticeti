@@ -163,12 +163,6 @@ impl BaseCommitter {
             .utilization_timer
             .utilization_timer("Basecommitter::is_certificate");
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
-        tracing::debug!(
-            "is_certificate: total references: {}, leader round: {}, cert round: {}",
-            potential_certificate.includes().len(),
-            leader_block.round(),
-            potential_certificate.round()
-        );
         for reference in potential_certificate.includes() {
             let is_vote = if all_votes.contains(reference) {
                 true
@@ -375,11 +369,6 @@ impl BaseCommitter {
         let leader_blocks = self
             .block_store
             .get_blocks_at_authority_round(leader, leader_round);
-
-        tracing::debug!(
-            "try_direct_decide with leader blocks: {}",
-            leader_blocks.len()
-        );
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))

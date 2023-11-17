@@ -450,6 +450,16 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
 
         // Leader round we check if we have a leader block
         if quorum_round > self.last_proposed() {
+            // if I am going to be the leader for the next round, just go ahead and propose
+            if self.get_leaders(quorum_round).contains(&self.authority) {
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["fast_propose"])
+                    .inc();
+                return true;
+            }
+
+            // otherwise check that we include the previous leader
             let leader_round = quorum_round - 1;
             let mut leaders = self.get_leaders(leader_round);
             if leaders.is_empty() {

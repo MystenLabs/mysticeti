@@ -83,6 +83,7 @@ pub struct Metrics {
 
     pub code_scope_latency: HistogramVec,
     pub ready_new_block: IntCounterVec,
+    pub init_own_block_stream: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -400,6 +401,13 @@ impl Metrics {
                 "Report when it's ready to propose a new block",
                 &["type"],
                 registry,
+            ).unwrap(),
+
+            init_own_block_stream: register_int_counter_vec_with_registry!(
+                "init_own_block_stream",
+                "The number of blocks that initially the validator streamed to another validator",
+                &["authority"],
+                registry
             ).unwrap(),
 
             transaction_certified_latency,

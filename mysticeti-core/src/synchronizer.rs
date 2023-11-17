@@ -4,10 +4,12 @@
 use std::{collections::HashMap, env, sync::Arc, time::Duration};
 
 use futures::future::join_all;
+use itertools::Itertools;
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::mpsc;
 
 use crate::commit_observer::CommitObserver;
+use crate::committee::{Authority, Committee};
 use crate::{
     block_handler::BlockHandler,
     metrics::Metrics,
@@ -38,8 +40,8 @@ impl Default for SynchronizerParameters {
         Self {
             absolute_maximum_helpers: 10,
             maximum_helpers_per_authority: 2,
-            batch_size: 10,
-            sample_precision: Duration::from_millis(500),
+            batch_size: 100,
+            sample_precision: Duration::from_millis(250),
             stream_interval: Duration::from_secs(1),
             new_stream_threshold: 10,
         }
@@ -59,6 +61,9 @@ pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver + 'static> {
     parameters: SynchronizerParameters,
     /// Metrics.
     metrics: Arc<Metrics>,
+    /// The peer id
+    peer: AuthorityIndex,
+    committee: Arc<Committee>,
 }
 
 impl<H, C> BlockDisseminator<H, C>
@@ -67,6 +72,8 @@ where
     C: CommitObserver + 'static,
 {
     pub fn new(
+        peer: AuthorityIndex,
+        committee: Arc<Committee>,
         sender: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         metrics: Arc<Metrics>,
@@ -78,6 +85,8 @@ where
             other_blocks: Vec::new(),
             parameters: SynchronizerParameters::default(),
             metrics,
+            peer,
+            committee,
         }
     }
 
@@ -126,20 +135,54 @@ where
         }
 
         let handle = Handle::current().spawn(Self::stream_own_blocks(
+            self.committee.authority_safe(self.peer).clone(),
             self.sender.clone(),
             self.inner.clone(),
             round,
             self.parameters.batch_size,
+            self.metrics.clone(),
         ));
         self.own_blocks = Some(handle);
     }
 
     async fn stream_own_blocks(
+        peer: Authority,
         to: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut round: RoundNumber,
         batch_size: usize,
+        metrics: Arc<Metrics>,
     ) -> Option<()> {
+        // to help node make progress just try to help them catch up for the first several hundred rounds
+        let highest_own_round = inner
+            .block_store
+            .last_own_block_ref()
+            .unwrap_or_default()
+            .round;
+        let highest_round = highest_own_round.min(1_000);
+
+        loop {
+            let blocks = inner.block_store.get_own_blocks(round, batch_size);
+            for block in blocks {
+                round = block.round();
+                to.send(NetworkMessage::Block(block)).await.ok()?;
+            }
+            if round >= highest_round {
+                break;
+            }
+        }
+
+        tracing::debug!(
+            "Stream own blocks helped catching up {}: {} {}",
+            peer.hostname(),
+            highest_round,
+            highest_own_round
+        );
+        metrics
+            .init_own_block_stream
+            .with_label_values(&[&peer.hostname()])
+            .inc_by(highest_round);
+
         loop {
             let notified = inner.notify.notified();
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
@@ -299,7 +342,7 @@ where
         if self.enable {
             return;
         }
-        let mut to_request = Vec::new();
+        let mut to_request: Vec<BlockReference> = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {
             self.metrics
@@ -312,8 +355,14 @@ where
             // we have a network partition. We should try to find an other peer from which
             // to (temporarily) sync the blocks from that authority.
 
-            to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
+            to_request.extend(missing.into_iter().collect::<Vec<_>>());
         }
+
+        // just sort them by ascending order to help facilitate the processing once responses arrive
+        to_request = to_request
+            .into_iter()
+            .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
+            .collect::<Vec<_>>();
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
             let Some((peer, permit)) = self.sample_peer(&[self.id]) else {

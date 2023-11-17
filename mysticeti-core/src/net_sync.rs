@@ -25,7 +25,7 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
-pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
+pub const MAXIMUM_BLOCK_REQUEST: usize = 100;
 
 struct ConnectedAuthorities {
     metrics: Arc<Metrics>,
@@ -215,8 +215,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .await
             .ok()?;
 
-        let mut disseminator =
-            BlockDisseminator::new(connection.sender.clone(), inner.clone(), metrics.clone());
+        let mut disseminator = BlockDisseminator::new(
+            connection.peer_id as AuthorityIndex,
+            inner.committee.clone(),
+            connection.sender.clone(),
+            inner.clone(),
+            metrics.clone(),
+        );
 
         let peer = format_authority_index(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {

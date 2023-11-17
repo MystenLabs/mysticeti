@@ -442,10 +442,6 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
     ///
     /// The algorithm to calling is roughly: if timeout || commit_ready_new_block then try_new_block(..)
     pub fn ready_new_block(&self, _period: u64, connected_authorities: AuthoritySet) -> bool {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Core::ready_new_block");
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block

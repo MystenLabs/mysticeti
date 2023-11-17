@@ -8,6 +8,7 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
+use crate::synchronizer::SynchronizerParameters;
 use crate::types::AuthorityIndex;
 use crate::types::{format_authority_index, AuthoritySet};
 use crate::wal::WalSyncer;
@@ -84,6 +85,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         leader_timeout: Duration,
         block_verifier: impl BlockVerifier,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
+        cleanup_enabled: bool,
     ) -> Self {
         let authority_index = core.authority();
         let handle = Handle::current();
@@ -125,6 +128,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             block_fetcher,
             Arc::new(block_verifier),
             metrics.clone(),
+            parameters,
+            cleanup_enabled,
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
@@ -155,6 +160,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_fetcher: Arc<BlockFetcher>,
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
+        cleanup_enabled: bool,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
@@ -164,7 +171,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             shutdown_grace_period,
             leader_timeout,
         ));
-        //let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
+        let cleanup_task = if cleanup_enabled {
+            handle.spawn(Self::cleanup_task(inner.clone()))
+        } else {
+            handle.spawn(async { None })
+        };
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
             if let Some(task) = connections.remove(&peer_id) {
@@ -183,13 +194,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 block_fetcher.clone(),
                 block_verifier.clone(),
                 metrics.clone(),
+                parameters.clone(),
             ));
             connections.insert(peer_id, task);
         }
         join_all(
             connections
                 .into_values()
-                .chain([leader_timeout_task].into_iter()),
+                .chain([leader_timeout_task, cleanup_task].into_iter()),
         )
         .await;
         Arc::try_unwrap(block_fetcher)
@@ -205,6 +217,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_fetcher: Arc<BlockFetcher>,
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
     ) -> Option<()> {
         let last_seen = inner
             .block_store
@@ -221,6 +234,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             connection.sender.clone(),
             inner.clone(),
             metrics.clone(),
+            parameters,
         );
 
         let peer = format_authority_index(connection.peer_id as AuthorityIndex);
@@ -349,7 +363,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
-    async fn _cleanup_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
+    async fn cleanup_task(inner: Arc<NetworkSyncerInner<H, C>>) -> Option<()> {
         let cleanup_interval = Duration::from_secs(10);
         loop {
             select! {

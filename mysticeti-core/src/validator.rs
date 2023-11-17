@@ -264,6 +264,8 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             parameters.leader_timeout,
             block_verifier,
             metrics,
+            parameters.synchronizer_parameters.clone(),
+            parameters.enable_cleanup,
         );
 
         tracing::info!("Validator {authority} listening on {network_address}");

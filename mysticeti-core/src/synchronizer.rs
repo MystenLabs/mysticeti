@@ -6,6 +6,7 @@ use std::{collections::HashMap, env, sync::Arc, time::Duration};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{seq::SliceRandom, thread_rng};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::commit_observer::CommitObserver;
@@ -20,9 +21,8 @@ use crate::{
 };
 
 // TODO: A central controller will eventually dynamically update these parameters.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SynchronizerParameters {
-    /// The maximum number of helpers (across all nodes).
-    pub absolute_maximum_helpers: usize,
     /// The maximum number of helpers per authority.
     pub maximum_helpers_per_authority: usize,
     /// The number of blocks to send in a single batch.
@@ -38,7 +38,6 @@ pub struct SynchronizerParameters {
 impl Default for SynchronizerParameters {
     fn default() -> Self {
         Self {
-            absolute_maximum_helpers: 10,
             maximum_helpers_per_authority: 2,
             batch_size: 100,
             sample_precision: Duration::from_millis(250),
@@ -77,13 +76,14 @@ where
         sender: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
     ) -> Self {
         Self {
             sender,
             inner,
             own_blocks: None,
             other_blocks: Vec::new(),
-            parameters: SynchronizerParameters::default(),
+            parameters,
             metrics,
             peer,
             committee,

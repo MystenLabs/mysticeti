@@ -19,6 +19,7 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
+use crate::synchronizer::SynchronizerParameters;
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,
 };
@@ -31,6 +32,7 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub fn test_metrics() -> Arc<Metrics> {
     Metrics::new(&Registry::new(), None).0
@@ -209,6 +211,7 @@ pub fn simulated_network_syncers_with_epoch_duration(
         committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
+    let parameters = Parameters::default();
     for ((network, core), _commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
@@ -217,8 +220,11 @@ pub fn simulated_network_syncers_with_epoch_duration(
             core,
             3,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            parameters.leader_timeout,
             AcceptAllBlockVerifier,
             test_metrics(),
+            parameters.synchronizer_parameters.clone(),
+            parameters.enable_cleanup,
         );
         drop(node_context);
         network_syncers.push(network_syncer);
@@ -238,6 +244,7 @@ pub async fn network_syncers_with_epoch_duration(
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
+    let parameters = Parameters::default();
     for ((network, core), _commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let network_syncer = NetworkSyncer::start(
@@ -245,8 +252,11 @@ pub async fn network_syncers_with_epoch_duration(
             core,
             3,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
+            parameters.leader_timeout,
             AcceptAllBlockVerifier,
             test_metrics(),
+            parameters.synchronizer_parameters.clone(),
+            parameters.enable_cleanup,
         );
         network_syncers.push(network_syncer);
     }

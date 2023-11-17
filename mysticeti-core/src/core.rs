@@ -469,8 +469,22 @@ impl<H: BlockHandler, C: CommitObserver> Core<H, C> {
                 return true;
             }
 
-            self.block_store
+            if self
+                .block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)
+            {
+                return true;
+            }
+
+            // TODO: for now just get the one as we don't support multiple leaders
+            let leader_index = *leaders.first().unwrap();
+            let leader_hostname = self.committee.authority_safe(leader_index).hostname();
+
+            self.metrics
+                .ready_new_block
+                .with_label_values(&[format!("leader_not_found:{leader_hostname}").as_str()])
+                .inc();
+            false
         } else {
             false
         }

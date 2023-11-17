@@ -7,6 +7,7 @@ use crate::block_validator::AcceptAllBlockVerifier;
 use crate::commit_observer::TestCommitObserver;
 use crate::committee::Committee;
 use crate::config::Parameters;
+use crate::config::SynchronizerParameters;
 use crate::core::{Core, CoreOptions};
 use crate::crypto::dummy_signer;
 use crate::data::Data;
@@ -19,7 +20,6 @@ use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::synchronizer::SynchronizerParameters;
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,
 };

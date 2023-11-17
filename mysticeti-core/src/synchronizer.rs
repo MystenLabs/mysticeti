@@ -6,11 +6,11 @@ use std::{collections::HashMap, env, sync::Arc, time::Duration};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{seq::SliceRandom, thread_rng};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::commit_observer::CommitObserver;
 use crate::committee::{Authority, Committee};
+use crate::config::SynchronizerParameters;
 use crate::{
     block_handler::BlockHandler,
     metrics::Metrics,
@@ -19,33 +19,6 @@ use crate::{
     runtime::{sleep, Handle, JoinHandle},
     types::{AuthorityIndex, BlockReference, RoundNumber},
 };
-
-// TODO: A central controller will eventually dynamically update these parameters.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SynchronizerParameters {
-    /// The maximum number of helpers per authority.
-    pub maximum_helpers_per_authority: usize,
-    /// The number of blocks to send in a single batch.
-    pub batch_size: usize,
-    /// The sampling precision with which to re-evaluate the sync strategy.
-    pub sample_precision: Duration,
-    /// The interval at which to send stream blocks authored by other nodes.
-    pub stream_interval: Duration,
-    /// Threshold number of missing block from an authority to open a new stream.
-    pub new_stream_threshold: usize,
-}
-
-impl Default for SynchronizerParameters {
-    fn default() -> Self {
-        Self {
-            maximum_helpers_per_authority: 2,
-            batch_size: 100,
-            sample_precision: Duration::from_millis(250),
-            stream_interval: Duration::from_secs(1),
-            new_stream_threshold: 10,
-        }
-    }
-}
 
 pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver + 'static> {
     /// The sender to the network.

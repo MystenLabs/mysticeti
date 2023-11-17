@@ -1,5 +1,6 @@
 use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
+use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::metrics::UtilizationTimerVecExt;
@@ -8,7 +9,6 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::synchronizer::SynchronizerParameters;
 use crate::types::AuthorityIndex;
 use crate::types::{format_authority_index, AuthoritySet};
 use crate::wal::WalSyncer;

@@ -246,7 +246,6 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             wal_writer,
             CoreOptions::default(),
             signer,
-            commit_observer,
         );
 
         let network = Network::load(
@@ -260,6 +259,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             network,
             core,
             parameters.wave_length(),
+            commit_observer,
             parameters.shutdown_grace_period(),
             parameters.leader_timeout,
             block_verifier,

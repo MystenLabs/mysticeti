@@ -57,14 +57,14 @@ impl ConnectedAuthorities {
     }
 }
 
-pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver + 'static> {
+pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
     syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
 }
 
-pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver + 'static> {
+pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     pub syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
@@ -78,8 +78,9 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver + 'static> {
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
     pub fn start(
         network: Network,
-        core: Core<H, C>,
+        core: Core<H>,
         commit_period: u64,
+        commit_observer: C,
         shutdown_grace_period: Duration,
         leader_timeout: Duration,
         block_verifier: impl BlockVerifier,
@@ -94,7 +95,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
         let epoch_closing_time = core.epoch_closing_time();
-        let mut syncer = Syncer::new(core, commit_period, notify.clone(), metrics.clone());
+        let mut syncer = Syncer::new(
+            core,
+            commit_period,
+            notify.clone(),
+            commit_observer,
+            metrics.clone(),
+        );
         syncer.force_new_block(0, Default::default());
         let syncer = CoreThreadDispatcher::start(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
@@ -285,6 +292,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         .syncer
                         .add_blocks(vec![block], connected_authorities)
                         .await;
+
+                    metrics
+                        .code_scope_latency
+                        .with_label_values(&["NetSync::Block"])
+                        .observe(
+                            timestamp_utc()
+                                .checked_sub(now)
+                                .unwrap_or_default()
+                                .as_secs_f64(),
+                        );
                 }
                 NetworkMessage::RequestBlocks(references) => {
                     if references.len() > MAXIMUM_BLOCK_REQUEST {
@@ -574,13 +591,9 @@ mod sim_tests {
             simulated_network_syncers_with_epoch_duration(n, rounds_in_epoch);
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
-        let canonical_commit_seq = syncers[0]
-            .commit_observer()
-            .lock()
-            .committed_leaders()
-            .clone();
+        let canonical_commit_seq = syncers[0].commit_observer().committed_leaders().clone();
         for syncer in &syncers {
-            let commit_seq = syncer.commit_observer().lock().committed_leaders().clone();
+            let commit_seq = syncer.commit_observer().committed_leaders().clone();
             assert_eq!(canonical_commit_seq, commit_seq);
         }
         print_stats(&syncers, &mut reporters);
@@ -602,16 +615,12 @@ mod sim_tests {
         for syncer in &syncers {
             let block_store = syncer.core().block_store();
             let committee = syncer.core().committee().clone();
-            let latest_committed_leader = syncer
-                .commit_observer()
-                .lock()
-                .committed_leaders()
-                .last()
-                .unwrap();
+            let latest_committed_leader =
+                syncer.commit_observer().committed_leaders().last().unwrap();
 
             println!(
                 "Num of Committed leaders: {:?}",
-                syncer.commit_observer().lock().committed_leaders()
+                syncer.commit_observer().committed_leaders()
             );
 
             let mut finalization_interpreter = FinalizationInterpreter::new(block_store, committee);

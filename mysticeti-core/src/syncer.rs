@@ -8,14 +8,14 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
-use parking_lot::Mutex;
 use std::sync::Arc;
 
-pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver + 'static> {
-    core: Core<H, C>,
+pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+    core: Core<H>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
+    commit_observer: C,
     metrics: Arc<Metrics>,
 }
 
@@ -24,12 +24,19 @@ pub trait SyncerSignals: Send + Sync {
 }
 
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
-    pub fn new(core: Core<H, C>, commit_period: u64, signals: S, metrics: Arc<Metrics>) -> Self {
+    pub fn new(
+        core: Core<H>,
+        commit_period: u64,
+        signals: S,
+        commit_observer: C,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             core,
             force_new_block: false,
             commit_period,
             signals,
+            commit_observer,
             metrics,
         }
     }
@@ -98,20 +105,19 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 tracing::debug!("Committed {:?}", committed_refs);
             }
 
-            /*
+            let committed_subdag = self.commit_observer.handle_commit(newly_committed);
             self.core.handle_committed_subdag(
                 committed_subdag,
                 &self.commit_observer.aggregator_state(),
             );
-             */
         }
     }
 
-    pub fn commit_observer(&self) -> &Arc<Mutex<C>> {
-        self.core.commit_observer()
+    pub fn commit_observer(&self) -> &C {
+        &self.commit_observer
     }
 
-    pub fn core(&self) -> &Core<H, C> {
+    pub fn core(&self) -> &Core<H> {
         &self.core
     }
 

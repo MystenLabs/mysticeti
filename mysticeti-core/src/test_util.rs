@@ -7,7 +7,6 @@ use crate::block_validator::AcceptAllBlockVerifier;
 use crate::commit_observer::TestCommitObserver;
 use crate::committee::Committee;
 use crate::config::Parameters;
-use crate::config::SynchronizerParameters;
 use crate::core::{Core, CoreOptions};
 use crate::crypto::dummy_signer;
 use crate::data::Data;
@@ -25,7 +24,6 @@ use crate::types::{
 };
 use crate::wal::{open_file_for_wal, walf, WalPosition, WalWriter};
 use futures::future::join_all;
-use parking_lot::Mutex;
 use prometheus::Registry;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -46,8 +44,8 @@ pub fn committee_and_cores(
     n: usize,
 ) -> (
     Arc<Committee>,
-    Vec<Core<TestBlockHandler, TestCommitObserver>>,
-    Vec<Arc<Mutex<TestCommitObserver>>>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     committee_and_cores_persisted_epoch_duration(n, None, &Parameters::default())
@@ -58,8 +56,8 @@ pub fn committee_and_cores_epoch_duration(
     rounds_in_epoch: RoundNumber,
 ) -> (
     Arc<Committee>,
-    Vec<Core<TestBlockHandler, TestCommitObserver>>,
-    Vec<Arc<Mutex<TestCommitObserver>>>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     let parameters = Parameters {
@@ -74,8 +72,8 @@ pub fn committee_and_cores_persisted(
     path: Option<&Path>,
 ) -> (
     Arc<Committee>,
-    Vec<Core<TestBlockHandler, TestCommitObserver>>,
-    Vec<Arc<Mutex<TestCommitObserver>>>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     committee_and_cores_persisted_epoch_duration(n, path, &Parameters::default())
@@ -87,8 +85,8 @@ pub fn committee_and_cores_persisted_epoch_duration(
     parameters: &Parameters,
 ) -> (
     Arc<Committee>,
-    Vec<Core<TestBlockHandler, TestCommitObserver>>,
-    Vec<Arc<Mutex<TestCommitObserver>>>,
+    Vec<Core<TestBlockHandler>>,
+    Vec<TestCommitObserver>,
     Vec<MetricReporter>,
 ) {
     let committee = committee(n);
@@ -137,10 +135,8 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 wal_writer,
                 CoreOptions::test(),
                 dummy_signer(),
-                commit_observer,
             );
-            let co = core.commit_observer().clone();
-            (core, co, reporter)
+            (core, commit_observer, reporter)
         })
         .collect();
     let (cores, commit_observers, reporters) = itertools::multiunzip(cores);
@@ -163,8 +159,8 @@ pub fn committee_and_syncers(
         cores
             .into_iter()
             .zip(commit_observers)
-            .map(|(core, _commit_observer)| {
-                Syncer::new(core, 3, Default::default(), test_metrics())
+            .map(|(core, commit_observer)| {
+                Syncer::new(core, 3, Default::default(), commit_observer, test_metrics())
             })
             .collect(),
     )
@@ -212,13 +208,14 @@ pub fn simulated_network_syncers_with_epoch_duration(
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
     let parameters = Parameters::default();
-    for ((network, core), _commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
+    for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
+            commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             parameters.leader_timeout,
             AcceptAllBlockVerifier,
@@ -245,12 +242,13 @@ pub async fn network_syncers_with_epoch_duration(
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
     let parameters = Parameters::default();
-    for ((network, core), _commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
+    for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let network_syncer = NetworkSyncer::start(
             network,
             core,
             3,
+            commit_observer,
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             parameters.leader_timeout,
             AcceptAllBlockVerifier,
@@ -275,7 +273,7 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
 ) {
     let commits = syncers
         .iter()
-        .map(|state| state.commit_observer().lock().committed_leaders().clone());
+        .map(|state| state.commit_observer().committed_leaders().clone());
     let zero_commit = vec![];
     let mut max_commit = zero_commit;
     for commit in commits {

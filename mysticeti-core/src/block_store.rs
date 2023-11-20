@@ -9,14 +9,12 @@ use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
 use crate::{committee::Committee, types::TransactionLocator};
 use crate::{consensus::linearizer::CommittedSubDag, types::Transaction};
 use crate::{data::Data, types::BaseStatement};
-use lru::LruCache;
 use minibytes::Bytes;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap};
 use std::io::IoSlice;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -27,28 +25,14 @@ pub struct BlockStore {
     metrics: Arc<Metrics>,
 }
 
+#[derive(Default)]
 struct BlockStoreInner {
-    cache: LruCache<BlockReference, Data<StatementBlock>>,
     index: BTreeMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
     own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
     authority: AuthorityIndex,
     last_seen_by_authority: Vec<RoundNumber>,
     last_own_block: Option<BlockReference>,
-}
-
-impl Default for BlockStoreInner {
-    fn default() -> Self {
-        Self {
-            cache: LruCache::new(NonZeroUsize::new(10_000).unwrap()),
-            index: BTreeMap::default(),
-            own_blocks: BTreeMap::default(),
-            highest_round: RoundNumber::default(),
-            authority: AuthorityIndex::default(),
-            last_seen_by_authority: Vec::default(),
-            last_own_block: Option::default(),
-        }
-    }
 }
 
 pub trait BlockWriter {
@@ -74,7 +58,6 @@ impl BlockStore {
         let mut inner = BlockStoreInner {
             authority,
             last_seen_by_authority,
-            cache: LruCache::new(NonZeroUsize::new(30_000).unwrap()), // 150 blocks/ round, 6 rounds/sec = 900 blocks/sec * 30 = 27_000 blocks
             ..Default::default()
         };
         let mut builder = RecoveredStateBuilder::new();
@@ -134,27 +117,12 @@ impl BlockStore {
 
     pub fn insert_block(&self, block: Data<StatementBlock>, position: WalPosition) {
         self.metrics.block_store_entries.inc();
-        self.inner
-            .write()
-            .cache
-            .put(*block.reference(), block.clone());
         self.inner.write().add_loaded(position, block);
     }
 
     pub fn get_block(&self, reference: BlockReference) -> Option<Data<StatementBlock>> {
-        if let Some(result) = self.inner.write().cache.get(&reference) {
-            return Some(result.clone());
-        }
         let entry = self.inner.read().get_block(reference);
-        // todo - consider adding loaded entries back to cache
-        let result = entry.map(|pos| self.read_index(pos));
-        if result.is_some() {
-            self.inner
-                .write()
-                .cache
-                .put(reference, result.as_ref().unwrap().clone());
-        }
-        result
+        entry.map(|pos| self.read_index(pos))
     }
 
     pub fn get_blocks_by_round(&self, round: RoundNumber) -> Vec<Data<StatementBlock>> {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_observer::CommitObserverRecoveredState;
-use crate::metrics::{Metrics, UtilizationTimerExt, UtilizationTimerVecExt};
+use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{CoreRecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -135,10 +135,6 @@ impl BlockStore {
         authority: AuthorityIndex,
         round: RoundNumber,
     ) -> Vec<Data<StatementBlock>> {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Blockstore::get_blocks_at_authority_round");
         let entries = self
             .inner
             .read()

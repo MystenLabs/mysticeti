@@ -3,13 +3,14 @@ use crate::commit_observer::CommitObserver;
 use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
+use crate::data::Data;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::AuthorityIndex;
 use crate::types::{format_authority_index, AuthoritySet};
+use crate::types::{AuthorityIndex, StatementBlock};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
@@ -255,59 +256,21 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::SubscribeOwnFrom(round) => {
                     disseminator.disseminate_own_blocks(round).await
                 }
+                NetworkMessage::Blocks(blocks) => {
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks, peer)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 NetworkMessage::Block(block) => {
-                    tracing::debug!("Received {} from {}", block.reference(), peer);
-
-                    // measure the receive time
-                    let now = timestamp_utc();
-                    let authority = inner.committee.authority_safe(block.author());
-                    metrics
-                        .block_receive_latency
-                        .with_label_values(&[&authority.hostname(), "network_receive"])
-                        .observe(
-                            now.checked_sub(block.meta_creation_time())
-                                .unwrap_or_default()
-                                .as_secs_f64(),
-                        );
-
-                    // Verify blocks based on consensus rules
-                    if let Err(e) = block.verify(&inner.committee) {
-                        tracing::warn!(
-                            "Rejected incorrect block {} based on consensus rules from {}: {:?}",
-                            block.reference(),
-                            peer,
-                            e
-                        );
-                        // Terminate connection on receiving incorrect block
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, vec![block], peer)
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
-                    // Verify blocks based on customized validation rules
-                    if let Err(e) = block_verifier.verify(&block).await {
-                        tracing::warn!(
-                            "Rejected incorrect block {} based on validation rules from {}: {:?}",
-                            block.reference(),
-                            peer,
-                            e
-                        );
-                        // Terminate connection on receiving incorrect block
-                        break;
-                    }
-                    let connected_authorities =
-                        inner.connected_authorities.lock().authorities.clone();
-                    inner
-                        .syncer
-                        .add_blocks(vec![block], connected_authorities)
-                        .await;
-
-                    metrics
-                        .code_scope_latency
-                        .with_label_values(&["NetSync::Block"])
-                        .observe(
-                            timestamp_utc()
-                                .checked_sub(now)
-                                .unwrap_or_default()
-                                .as_secs_f64(),
-                        );
                 }
                 NetworkMessage::RequestBlocks(references) => {
                     if references.len() > MAXIMUM_BLOCK_REQUEST {
@@ -333,6 +296,78 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner.connected_authorities.lock().remove(authority);
         block_fetcher.remove_authority(authority).await;
         None
+    }
+
+    async fn process_blocks(
+        inner: &Arc<NetworkSyncerInner<H, C>>,
+        block_verifier: &Arc<impl BlockVerifier>,
+        metrics: &Arc<Metrics>,
+        blocks: Vec<Data<StatementBlock>>,
+        peer: char,
+    ) -> Result<(), eyre::Report> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        // measure the receive time
+        let now = timestamp_utc();
+
+        for block in blocks.iter() {
+            tracing::debug!("Received {} from {}", block.reference(), peer);
+
+            let authority = inner.committee.authority_safe(block.author());
+            metrics
+                .block_receive_latency
+                .with_label_values(&[&authority.hostname(), "network_receive"])
+                .observe(
+                    now.checked_sub(block.meta_creation_time())
+                        .unwrap_or_default()
+                        .as_secs_f64(),
+                );
+
+            // Verify blocks based on consensus rules
+            if let Err(e) = block.verify(&inner.committee) {
+                tracing::warn!(
+                    "Rejected incorrect block {} based on consensus rules from {}: {:?}",
+                    block.reference(),
+                    peer,
+                    e
+                );
+                // Terminate connection on receiving incorrect block
+                return Err(e);
+            }
+            // Verify blocks based on customized validation rules
+            if let Err(e) = block_verifier.verify(block).await {
+                tracing::warn!(
+                    "Rejected incorrect block {} based on validation rules from {}: {:?}",
+                    block.reference(),
+                    peer,
+                    e
+                );
+                // Terminate connection on receiving incorrect block
+                return Err(eyre::Report::msg(""));
+            }
+        }
+
+        let label = if blocks.len() == 1 {
+            "NetSync::Block"
+        } else {
+            "NetSync::Blocks"
+        };
+
+        let connected_authorities = inner.connected_authorities.lock().authorities.clone();
+        inner.syncer.add_blocks(blocks, connected_authorities).await;
+
+        metrics
+            .code_scope_latency
+            .with_label_values(&[label])
+            .observe(
+                timestamp_utc()
+                    .checked_sub(now)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
+            );
+        Ok(())
     }
 
     async fn leader_timeout_task(

@@ -82,19 +82,38 @@ where
         references: Vec<BlockReference>,
     ) -> Option<()> {
         let mut missing = Vec::new();
+        const CHUNK_SIZE: usize = 10;
+        let mut to_send = vec![];
         for reference in references {
             let stored_block = self.inner.block_store.get_block(reference);
             let found = stored_block.is_some();
+
             match stored_block {
-                // TODO: Should we be able to send more than one block in a single network message?
-                Some(block) => self.sender.send(NetworkMessage::Block(block)).await.ok()?,
+                Some(block) => to_send.push(block),
                 None => missing.push(reference),
             }
+
+            if to_send.len() >= CHUNK_SIZE {
+                self.sender
+                    .send(NetworkMessage::Blocks(std::mem::take(&mut to_send)))
+                    .await
+                    .ok()?
+            }
+
             self.metrics
                 .block_sync_requests_received
                 .with_label_values(&[&peer.to_string(), &found.to_string()])
                 .inc();
         }
+
+        // send any leftovers
+        if !to_send.is_empty() {
+            self.sender
+                .send(NetworkMessage::Blocks(std::mem::take(&mut to_send)))
+                .await
+                .ok()?
+        }
+
         self.sender
             .send(NetworkMessage::BlockNotFound(missing))
             .await
@@ -136,9 +155,11 @@ where
 
         loop {
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+            for block_chunk in blocks.chunks(10) {
+                round = block_chunk.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(block_chunk.to_vec()))
+                    .await
+                    .ok()?;
             }
             if round >= highest_round {
                 break;

@@ -30,7 +30,6 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 pub fn test_metrics() -> Arc<Metrics> {
     Metrics::new(&Registry::new(), None).0

@@ -191,7 +191,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 
             let sender = connection.sender.clone();
             let authority = peer_id as AuthorityIndex;
-            block_fetcher.register_authority(authority, sender).await;
+            block_fetcher
+                .register_authority(
+                    authority,
+                    sender,
+                    connection.latency_last_value_receiver.clone(),
+                )
+                .await;
             inner.connected_authorities.lock().insert(authority);
 
             let task = handle.spawn(Self::connection_task(

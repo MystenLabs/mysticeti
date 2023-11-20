@@ -209,7 +209,11 @@ where
 }
 
 enum BlockFetcherMessage {
-    RegisterAuthority(AuthorityIndex, mpsc::Sender<NetworkMessage>),
+    RegisterAuthority(
+        AuthorityIndex,
+        mpsc::Sender<NetworkMessage>,
+        tokio::sync::watch::Receiver<Duration>,
+    ),
     RemoveAuthority(AuthorityIndex),
 }
 
@@ -238,9 +242,14 @@ impl BlockFetcher {
         &self,
         authority: AuthorityIndex,
         sender: mpsc::Sender<NetworkMessage>,
+        latency_receiver: tokio::sync::watch::Receiver<Duration>,
     ) {
         self.sender
-            .send(BlockFetcherMessage::RegisterAuthority(authority, sender))
+            .send(BlockFetcherMessage::RegisterAuthority(
+                authority,
+                sender,
+                latency_receiver,
+            ))
             .await
             .ok();
     }
@@ -262,7 +271,13 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver + 'static> {
     id: AuthorityIndex,
     inner: Arc<NetworkSyncerInner<B, C>>,
     receiver: mpsc::Receiver<BlockFetcherMessage>,
-    senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
+    senders: HashMap<
+        AuthorityIndex,
+        (
+            mpsc::Sender<NetworkMessage>,
+            tokio::sync::watch::Receiver<Duration>,
+        ),
+    >,
     parameters: SynchronizerParameters,
     metrics: Arc<Metrics>,
     enable: bool,
@@ -297,8 +312,8 @@ where
                 _ = sleep(self.parameters.sample_precision) => self.sync_strategy().await,
                 message = self.receiver.recv() => {
                     match message {
-                        Some(BlockFetcherMessage::RegisterAuthority(authority, sender)) => {
-                            self.senders.insert(authority, sender);
+                        Some(BlockFetcherMessage::RegisterAuthority(authority, sender, latency_receiver)) => {
+                            self.senders.insert(authority, (sender, latency_receiver));
                         },
                         Some(BlockFetcherMessage::RemoveAuthority(authority)) => {
                             self.senders.remove(&authority);
@@ -355,17 +370,29 @@ where
         &self,
         except: &[AuthorityIndex],
     ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
-        let mut senders = self
+        static MILIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
+        let senders = self
             .senders
             .iter()
             .filter(|&(index, _)| !except.contains(index))
+            .map(|(index, (sender, latency_receiver))| {
+                (
+                    index,
+                    sender,
+                    MILIS_IN_MINUTE.saturating_sub(latency_receiver.borrow().as_millis()) as f64,
+                )
+            })
             .collect::<Vec<_>>();
 
-        senders.shuffle(&mut thread_rng());
+        static NUMBER_OF_PEERS: usize = 5;
+        let senders = senders
+            .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
+            .expect("Weighted choice error: latency values incorrect!")
+            .collect::<Vec<_>>();
 
-        for (peer, sender) in senders {
+        for (peer, sender, _latency) in senders {
             if let Ok(permit) = sender.try_reserve() {
-                return Some((*peer, permit));
+                return Some((**peer, permit));
             }
         }
         None

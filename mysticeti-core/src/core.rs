@@ -10,7 +10,7 @@ use crate::consensus::universal_committer::UniversalCommitter;
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
-use crate::metrics::UtilizationTimerVecExt;
+use crate::metrics::{LatencyHistogramVecExt, UtilizationTimerVecExt};
 use crate::runtime::timestamp_utc;
 use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
@@ -164,7 +164,10 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::add_blocks");
-        let start = timestamp_utc();
+        let _guard = self
+            .metrics
+            .code_scope_latency
+            .latency_histogram(&["Core::add_blocks"]);
 
         let processed = self
             .block_manager
@@ -193,12 +196,6 @@ impl<H: BlockHandler> Core<H> {
             .threshold_clock_round
             .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
-
-        let end = timestamp_utc();
-        self.metrics
-            .code_scope_latency
-            .with_label_values(&["Core::add_blocks"])
-            .observe(end.checked_sub(start).unwrap_or_default().as_secs_f64());
 
         result
     }
@@ -376,8 +373,7 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn cleanup(&self) {
-        let start = timestamp_utc();
-        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 200;
+        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 500;
 
         self.block_store.cleanup(
             self.last_commit_leader
@@ -386,11 +382,6 @@ impl<H: BlockHandler> Core<H> {
         );
 
         self.block_handler.cleanup();
-        let end = timestamp_utc();
-        self.metrics
-            .code_scope_latency
-            .with_label_values(&["Core::cleanup"])
-            .observe(end.checked_sub(start).unwrap_or_default().as_secs_f64());
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,

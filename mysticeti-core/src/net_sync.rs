@@ -4,6 +4,7 @@ use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::data::Data;
+use crate::metrics::LatencyHistogramVecExt;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
@@ -309,8 +310,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             return Ok(());
         }
 
-        // measure the receive time
         let now = timestamp_utc();
+
+        let label = if blocks.len() == 1 {
+            "NetSync::Block"
+        } else {
+            "NetSync::Blocks"
+        };
+
+        let _guard = metrics.code_scope_latency.latency_histogram(&[label]);
 
         for block in blocks.iter() {
             tracing::debug!("Received {} from {}", block.reference(), peer);
@@ -349,24 +357,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             }
         }
 
-        let label = if blocks.len() == 1 {
-            "NetSync::Block"
-        } else {
-            "NetSync::Blocks"
-        };
-
         let connected_authorities = inner.connected_authorities.lock().authorities.clone();
         inner.syncer.add_blocks(blocks, connected_authorities).await;
 
-        metrics
-            .code_scope_latency
-            .with_label_values(&[label])
-            .observe(
-                timestamp_utc()
-                    .checked_sub(now)
-                    .unwrap_or_default()
-                    .as_secs_f64(),
-            );
         Ok(())
     }
 

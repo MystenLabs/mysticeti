@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_observer::CommitObserverRecoveredState;
-use crate::metrics::{Metrics, UtilizationTimerExt};
+use crate::metrics::{LatencyHistogramVecExt, Metrics, UtilizationTimerExt};
 use crate::state::{CoreRecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
 use crate::wal::{Tag, WalPosition, WalReader, WalWriter};
@@ -204,6 +204,11 @@ impl BlockStore {
     }
 
     pub fn cleanup(&self, threshold_round: RoundNumber) {
+        let _guard_1 = self
+            .metrics
+            .code_scope_latency
+            .latency_histogram(&["Blockstore::cleanup"]);
+
         if threshold_round == 0 {
             return;
         }
@@ -212,6 +217,11 @@ impl BlockStore {
         self.metrics
             .block_store_unloaded_blocks
             .inc_by(unloaded as u64);
+
+        let _guard_2 = self
+            .metrics
+            .code_scope_latency
+            .latency_histogram(&["Blockstore::cleanup::blockwallreader"]);
         let retained_maps = self.block_wal_reader.cleanup();
         self.metrics.wal_mappings.set(retained_maps as i64);
     }

@@ -138,53 +138,24 @@ where
     }
 
     async fn stream_own_blocks(
-        peer: Authority,
+        _peer: Authority,
         to: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut round: RoundNumber,
         batch_size: usize,
-        metrics: Arc<Metrics>,
+        _metrics: Arc<Metrics>,
     ) -> Option<()> {
-        // to help node make progress just try to help them catch up for the first several hundred rounds
-        let highest_own_round = inner
-            .block_store
-            .last_own_block_ref()
-            .unwrap_or_default()
-            .round;
-        let highest_round = highest_own_round.min(1_000);
-
-        loop {
-            let blocks = inner.block_store.get_own_blocks(round, batch_size);
-            for block_chunk in blocks.chunks(10) {
-                round = block_chunk.last().unwrap().round();
-                to.send(NetworkMessage::Blocks(block_chunk.to_vec()))
-                    .await
-                    .ok()?;
-            }
-            if round >= highest_round {
-                break;
-            }
-        }
-
-        tracing::debug!(
-            "Stream own blocks helped catching up {}: {} {}",
-            peer.hostname(),
-            highest_round,
-            highest_own_round
-        );
-        metrics
-            .init_own_block_stream
-            .with_label_values(&[&peer.hostname()])
-            .inc_by(highest_round);
-
         loop {
             let notified = inner.notify.notified();
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+
+            // if we have no more to send, then wait, otherwise keep sending blocks.
+            if blocks.is_empty() {
+                notified.await;
+            } else {
+                round = blocks.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
-            notified.await
         }
     }
 
@@ -405,7 +376,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        static NUMBER_OF_PEERS: usize = 5;
+        static NUMBER_OF_PEERS: usize = 3;
         let senders = senders
             .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
             .expect("Weighted choice error: latency values incorrect!")

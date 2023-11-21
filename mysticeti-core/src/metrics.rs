@@ -10,7 +10,7 @@ use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry, CounterVec,
+    register_int_gauge_vec_with_registry, register_int_gauge_with_registry, CounterVec, Histogram,
     HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
 };
 use std::net::SocketAddr;
@@ -38,6 +38,7 @@ pub struct Metrics {
     pub latency_squared_s: CounterVec,
     pub committed_leaders_total: IntCounterVec,
     pub leader_timeout_total: IntCounter,
+    pub leader_timeout_propose_total: IntCounter,
     pub inter_block_latency_s: HistogramVec,
 
     pub block_store_unloaded_blocks: IntCounter,
@@ -410,6 +411,12 @@ impl Metrics {
                 registry
             ).unwrap(),
 
+            leader_timeout_propose_total: register_int_counter_with_registry!(
+                "leader_timeout_propose_total",
+                "The number of blocks that got proposed after hitting a leader timeout",
+                registry
+            ).unwrap(),
+
             transaction_certified_latency,
             certificate_committed_latency,
             transaction_committed_latency,
@@ -666,6 +673,30 @@ impl<'a> Drop for UtilizationTimer<'a> {
 impl Drop for OwnedUtilizationTimer {
     fn drop(&mut self) {
         self.metric.inc_by(self.start.elapsed().as_micros() as u64);
+    }
+}
+
+pub trait LatencyHistogramVecExt {
+    fn latency_histogram(&self, labels: &[&str]) -> LatencyHistogram;
+}
+
+pub struct LatencyHistogram {
+    metric: Histogram,
+    start: Instant,
+}
+
+impl LatencyHistogramVecExt for HistogramVec {
+    fn latency_histogram(&self, labels: &[&str]) -> LatencyHistogram {
+        LatencyHistogram {
+            metric: self.with_label_values(labels).clone(),
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Drop for LatencyHistogram {
+    fn drop(&mut self) {
+        self.metric.observe(self.start.elapsed().as_secs_f64());
     }
 }
 

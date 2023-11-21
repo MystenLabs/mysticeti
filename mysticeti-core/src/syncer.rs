@@ -83,6 +83,10 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 return;
             }
 
+            if self.force_new_block {
+                self.metrics.leader_timeout_propose_total.inc();
+            }
+
             self.signals.new_block_ready();
             self.force_new_block = false;
 

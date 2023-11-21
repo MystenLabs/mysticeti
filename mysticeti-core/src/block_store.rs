@@ -25,9 +25,14 @@ pub struct BlockStore {
     metrics: Arc<Metrics>,
 }
 
+type Dirty = bool;
+
+type BlockIndex =
+    BTreeMap<RoundNumber, (Dirty, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>)>;
+
 #[derive(Default)]
 struct BlockStoreInner {
-    index: BTreeMap<RoundNumber, HashMap<(AuthorityIndex, BlockDigest), IndexEntry>>,
+    index: BlockIndex,
     own_blocks: BTreeMap<RoundNumber, BlockDigest>,
     highest_round: RoundNumber,
     authority: AuthorityIndex,
@@ -148,7 +153,7 @@ impl BlockStore {
         round: RoundNumber,
     ) -> bool {
         let inner = self.inner.read();
-        let Some(blocks) = inner.index.get(&round) else {
+        let Some((_, blocks)) = inner.index.get(&round) else {
             return false;
         };
         blocks
@@ -162,7 +167,7 @@ impl BlockStore {
         round: RoundNumber,
     ) -> bool {
         let inner = self.inner.read();
-        let Some(blocks) = inner.index.get(&round) else {
+        let Some((_, blocks)) = inner.index.get(&round) else {
             return false;
         };
         authorities.iter().all(|authority| {
@@ -196,7 +201,7 @@ impl BlockStore {
 
     pub fn len_expensive(&self) -> usize {
         let inner = self.inner.read();
-        inner.index.values().map(HashMap::len).sum()
+        inner.index.values().map(|(_, map)| map.len()).sum()
     }
 
     pub fn highest_round(&self) -> RoundNumber {
@@ -213,7 +218,10 @@ impl BlockStore {
             return;
         }
         let _timer = self.metrics.block_store_cleanup_util.utilization_timer();
-        let unloaded = self.inner.write().unload_below_round(threshold_round);
+        let unloaded = self
+            .inner
+            .write()
+            .unload_below_round(threshold_round, &self.metrics);
         self.metrics
             .block_store_unloaded_blocks
             .inc_by(unloaded as u64);
@@ -313,7 +321,7 @@ impl BlockStore {
 
 impl BlockStoreInner {
     pub fn block_exists(&self, reference: BlockReference) -> bool {
-        let Some(blocks) = self.index.get(&reference.round) else {
+        let Some((_, blocks)) = self.index.get(&reference.round) else {
             return false;
         };
         blocks.contains_key(&(reference.authority, reference.digest))
@@ -324,7 +332,7 @@ impl BlockStoreInner {
         authority: AuthorityIndex,
         round: RoundNumber,
     ) -> Vec<IndexEntry> {
-        let Some(blocks) = self.index.get(&round) else {
+        let Some((_, blocks)) = self.index.get(&round) else {
             return vec![];
         };
         blocks
@@ -340,7 +348,7 @@ impl BlockStoreInner {
     }
 
     pub fn get_blocks_by_round(&self, round: RoundNumber) -> Vec<IndexEntry> {
-        let Some(blocks) = self.index.get(&round) else {
+        let Some((_, blocks)) = self.index.get(&round) else {
             return vec![];
         };
         blocks.values().cloned().collect()
@@ -349,17 +357,29 @@ impl BlockStoreInner {
     pub fn get_block(&self, reference: BlockReference) -> Option<IndexEntry> {
         self.index
             .get(&reference.round)?
+            .1
             .get(&(reference.authority, reference.digest))
             .cloned()
     }
 
     // todo - also specify LRU criteria
     /// Unload all entries from below or equal threshold_round
-    pub fn unload_below_round(&mut self, threshold_round: RoundNumber) -> usize {
+    pub fn unload_below_round(
+        &mut self,
+        threshold_round: RoundNumber,
+        metrics: &Arc<Metrics>,
+    ) -> usize {
+        let _metrics = metrics
+            .code_scope_latency
+            .latency_histogram(&["Blockstore::unload_below_round"]);
         let mut unloaded = 0usize;
-        for (round, map) in self.index.iter_mut() {
+        for (round, (dirty, map)) in self.index.iter_mut() {
             // todo - try BTreeMap for self.index?
             if *round > threshold_round {
+                continue;
+            }
+            // do not bother doing any clean up if row is not dirty
+            if !*dirty {
                 continue;
             }
             for entry in map.values_mut() {
@@ -372,6 +392,8 @@ impl BlockStoreInner {
                     }
                 }
             }
+            // now mark it as not dirty
+            *dirty = false;
         }
         if unloaded > 0 {
             tracing::debug!("Unloaded {unloaded} entries from block store cache");
@@ -382,7 +404,8 @@ impl BlockStoreInner {
     pub fn add_unloaded(&mut self, reference: &BlockReference, position: WalPosition) {
         self.highest_round = max(self.highest_round, reference.round());
         let map = self.index.entry(reference.round()).or_default();
-        map.insert(reference.author_digest(), IndexEntry::WalPosition(position));
+        map.1
+            .insert(reference.author_digest(), IndexEntry::WalPosition(position));
         self.add_own_index(reference);
         self.update_last_seen_by_authority(reference);
     }
@@ -392,7 +415,8 @@ impl BlockStoreInner {
         self.add_own_index(block.reference());
         self.update_last_seen_by_authority(block.reference());
         let map = self.index.entry(block.round()).or_default();
-        map.insert(
+        map.0 = true; // mark it as dirty since we are adding a loaded entry
+        map.1.insert(
             (block.author(), block.digest()),
             IndexEntry::Loaded(position, block),
         );
@@ -443,7 +467,7 @@ impl BlockStoreInner {
         self.index
             .range((from_excluded + 1)..)
             .take(limit)
-            .flat_map(|(round, map)| {
+            .flat_map(|(round, (_, map))| {
                 map.keys()
                     .filter(|(a, _)| *a == authority)
                     .map(|(a, d)| BlockReference {

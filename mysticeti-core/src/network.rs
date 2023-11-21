@@ -261,7 +261,7 @@ impl Worker {
             // todo - pass signal to break the main loop
             return Ok(());
         };
-        Self::handle_stream(stream, connection).await
+        Self::handle_stream(stream, connection, peer).await
     }
 
     async fn handle_passive_stream(&self, mut stream: TcpStream) -> io::Result<()> {
@@ -276,10 +276,14 @@ impl Worker {
             // todo - pass signal to break the main loop
             return Ok(());
         };
-        Self::handle_stream(stream, connection).await
+        Self::handle_stream(stream, connection, self.peer).await
     }
 
-    async fn handle_stream(stream: TcpStream, connection: WorkerConnection) -> io::Result<()> {
+    async fn handle_stream(
+        stream: TcpStream,
+        connection: WorkerConnection,
+        peer: SocketAddr,
+    ) -> io::Result<()> {
         let WorkerConnection {
             sender,
             receiver,
@@ -296,6 +300,7 @@ impl Worker {
             pong_receiver,
             latency_sender,
             latency_last_value_sender,
+            peer,
         )
         .boxed();
         let read_fut = Self::handle_read_stream(reader, sender, pong_sender).boxed();
@@ -310,6 +315,7 @@ impl Worker {
         mut pong_receiver: mpsc::Receiver<i64>,
         latency_sender: HistogramSender<Duration>,
         latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
+        peer: SocketAddr,
     ) -> io::Result<()> {
         let start = Instant::now();
         let mut ping_deadline = start + PING_INTERVAL;
@@ -356,6 +362,11 @@ impl Worker {
                                         let d = Duration::from_micros(delay);
                                         latency_sender.observe(d);
                                         latency_last_value_sender.send(d).ok();
+
+                                        static CUT_OFF_LATENCY: u128 = 3_000;
+                                        if d.as_millis() >= CUT_OFF_LATENCY {
+                                            tracing::warn!("High latency connection: {:?}, {:?}", d, peer);
+                                        }
                                     },
                                     None => {
                                         tracing::warn!("Invalid ping: {ping}, greater then current time {time}");

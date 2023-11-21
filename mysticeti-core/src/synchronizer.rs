@@ -376,7 +376,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        static NUMBER_OF_PEERS: usize = 3;
+        static NUMBER_OF_PEERS: usize = 6;
         let senders = senders
             .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
             .expect("Weighted choice error: latency values incorrect!")

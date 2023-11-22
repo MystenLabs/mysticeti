@@ -13,7 +13,7 @@ use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::AuthoritySet;
 use crate::types::{AuthorityIndex, StatementBlock};
 use crate::wal::WalSyncer;
-use crate::{block_handler::BlockHandler, metrics::Metrics};
+use crate::{block_handler::BlockHandler, metered_channel, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
 use crate::{committee::Committee, synchronizer::BlockFetcher};
 use futures::future::join_all;
@@ -252,11 +252,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             parameters,
         );
 
-        while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
-            metrics
-                .network_messages_received
-                .with_label_values(&[&connection.peer.to_string()])
-                .inc();
+        while let Some(message) = inner
+            .recv_or_stopped_metered(&mut connection.receiver)
+            .await
+        {
             let start = timestamp_utc();
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
@@ -456,6 +455,25 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<H, C> {
     // Returns None either if channel is closed or NetworkSyncerInner receives stop signal
     async fn recv_or_stopped<T>(&self, channel: &mut mpsc::Receiver<T>) -> Option<T> {
+        select! {
+            stopped = self.stop.send(()) => {
+                assert!(stopped.is_err());
+                None
+            }
+            closed = self.epoch_close_signal.send(()) => {
+                assert!(closed.is_err());
+                None
+            }
+            data = channel.recv() => {
+                data
+            }
+        }
+    }
+
+    async fn recv_or_stopped_metered<T>(
+        &self,
+        channel: &mut metered_channel::Receiver<T>,
+    ) -> Option<T> {
         select! {
             stopped = self.stop.send(()) => {
                 assert!(stopped.is_err());

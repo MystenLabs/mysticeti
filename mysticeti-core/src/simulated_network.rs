@@ -4,7 +4,8 @@
 use crate::committee::Committee;
 use crate::future_simulator::SimulatorContext;
 use crate::network::{Connection, Network};
-use crate::runtime;
+use crate::test_util::test_metrics;
+use crate::{metered_channel, runtime};
 use rand::Rng;
 use std::fmt::Debug;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -78,9 +79,18 @@ impl SimulatedNetwork {
         b.send(b_connection).await.ok();
     }
 
-    fn latency_channel<T: Send + 'static + Debug>() -> (mpsc::Sender<T>, mpsc::Receiver<T>) {
-        let (buf_sender, mut buf_receiver) = mpsc::channel(16);
-        let (sender, receiver) = mpsc::channel(16);
+    fn latency_channel<T: Send + 'static + Debug>(
+    ) -> (metered_channel::Sender<T>, metered_channel::Receiver<T>) {
+        let metrics = test_metrics();
+
+        let channel_messages_total = metrics
+            .channel_messages_total
+            .with_label_values(&["in", ""])
+            .clone();
+
+        let (buf_sender, mut buf_receiver) =
+            metered_channel::channel(16, channel_messages_total.clone());
+        let (sender, receiver) = metered_channel::channel(16, channel_messages_total);
         runtime::Handle::current().spawn(async move {
             while let Some(message) = buf_receiver.recv().await {
                 let latency = SimulatorContext::with_rng(|rng| rng.gen_range(Self::LATENCY_RANGE));

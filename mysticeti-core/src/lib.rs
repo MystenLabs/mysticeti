@@ -21,6 +21,7 @@ mod future_simulator;
 #[allow(dead_code)] // todo - delete if unused after a while
 mod lock;
 mod log;
+mod metered_channel;
 pub mod metrics;
 pub mod net_sync;
 pub mod network;

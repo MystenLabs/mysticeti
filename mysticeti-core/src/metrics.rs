@@ -85,7 +85,8 @@ pub struct Metrics {
     pub code_scope_latency: HistogramVec,
     pub ready_new_block: IntCounterVec,
     pub init_own_block_stream: IntCounterVec,
-    pub network_messages_received: IntCounterVec,
+    pub channel_messages: IntCounterVec,
+    pub channel_messages_total: IntGaugeVec,
 }
 
 pub struct MetricReporter {
@@ -418,10 +419,17 @@ impl Metrics {
                 registry
             ).unwrap(),
 
-            network_messages_received: register_int_counter_vec_with_registry!(
-                "network_messages_received",
-                "The number of received messages via network",
-                &["authority"],
+            channel_messages: register_int_counter_vec_with_registry!(
+                "channel_messages",
+                "The number of messages consumed from the channel",
+                &["direction","authority_address"],
+                registry
+            ).unwrap(),
+
+            channel_messages_total: register_int_gauge_vec_with_registry!(
+                "channel_messages_total",
+                "The total number of messages in the channel not consumed yet",
+                &["direction","authority_address"],
                 registry
             ).unwrap(),
 

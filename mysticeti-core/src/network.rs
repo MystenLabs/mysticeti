@@ -3,7 +3,7 @@
 
 use crate::stat::HistogramSender;
 use crate::types::{AuthorityIndex, RoundNumber, StatementBlock};
-use crate::{config::Parameters, data::Data, runtime};
+use crate::{config::Parameters, data::Data, metered_channel, runtime};
 use crate::{
     metrics::{print_network_address_table, Metrics},
     types::BlockReference,
@@ -53,8 +53,8 @@ pub struct Network {
 pub struct Connection {
     pub peer_id: usize,
     pub peer: SocketAddr,
-    pub sender: mpsc::Sender<NetworkMessage>,
-    pub receiver: mpsc::Receiver<NetworkMessage>,
+    pub sender: metered_channel::Sender<NetworkMessage>,
+    pub receiver: metered_channel::Receiver<NetworkMessage>,
     pub latency_last_value_receiver: tokio::sync::watch::Receiver<Duration>,
 }
 
@@ -117,6 +117,7 @@ impl Network {
             );
             handle.spawn(
                 Worker {
+                    metrics: metrics.clone(),
                     peer: *address,
                     peer_id: id,
                     connection_sender: connection_sender.clone(),
@@ -184,6 +185,7 @@ impl Server {
 }
 
 struct Worker {
+    metrics: Arc<Metrics>,
     peer: SocketAddr,
     peer_id: usize,
     connection_sender: mpsc::Sender<Connection>,
@@ -193,8 +195,8 @@ struct Worker {
 }
 
 struct WorkerConnection {
-    sender: mpsc::Sender<NetworkMessage>,
-    receiver: mpsc::Receiver<NetworkMessage>,
+    sender: metered_channel::Sender<NetworkMessage>,
+    receiver: metered_channel::Receiver<NetworkMessage>,
     peer_id: usize,
     latency_sender: HistogramSender<Duration>,
     latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
@@ -313,7 +315,7 @@ impl Worker {
 
     async fn handle_write_stream(
         mut writer: OwnedWriteHalf,
-        mut receiver: mpsc::Receiver<NetworkMessage>,
+        mut receiver: metered_channel::Receiver<NetworkMessage>,
         mut pong_receiver: mpsc::Receiver<i64>,
         latency_sender: HistogramSender<Duration>,
         latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
@@ -397,7 +399,7 @@ impl Worker {
 
     async fn handle_read_stream(
         mut stream: OwnedReadHalf,
-        sender: mpsc::Sender<NetworkMessage>,
+        sender: metered_channel::Sender<NetworkMessage>,
         pong_sender: mpsc::Sender<i64>,
         peer: SocketAddr,
     ) -> io::Result<()> {
@@ -453,8 +455,38 @@ impl Worker {
     }
 
     async fn make_connection(&self) -> Option<WorkerConnection> {
-        let (network_in_sender, network_in_receiver) = mpsc::channel(1_000);
-        let (network_out_sender, network_out_receiver) = mpsc::channel(1_000);
+        let channel_messages_in = self
+            .metrics
+            .channel_messages
+            .with_label_values(&["in", &self.peer.to_string()])
+            .clone();
+        let channel_messages_in_total = self
+            .metrics
+            .channel_messages_total
+            .with_label_values(&["in", &self.peer.to_string()])
+            .clone();
+
+        let channel_messages_out = self
+            .metrics
+            .channel_messages
+            .with_label_values(&["out", &self.peer.to_string()])
+            .clone();
+        let channel_messages_out_total = self
+            .metrics
+            .channel_messages_total
+            .with_label_values(&["out", &self.peer.to_string()])
+            .clone();
+
+        let (network_in_sender, network_in_receiver) = metered_channel::channel_with_total(
+            1_000,
+            channel_messages_in_total,
+            channel_messages_in,
+        );
+        let (network_out_sender, network_out_receiver) = metered_channel::channel_with_total(
+            1_000,
+            channel_messages_out_total,
+            channel_messages_out,
+        );
         let (latency_last_value_sender, latency_last_value_receiver) =
             tokio::sync::watch::channel(Duration::from_millis(0));
         let connection = Connection {

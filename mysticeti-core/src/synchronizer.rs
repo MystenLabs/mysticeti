@@ -15,6 +15,7 @@ use crate::committee::{Authority, Committee};
 use crate::config::SynchronizerParameters;
 use crate::{
     block_handler::BlockHandler,
+    metered_channel,
     metrics::Metrics,
     net_sync::{self, NetworkSyncerInner},
     network::NetworkMessage,
@@ -24,7 +25,7 @@ use crate::{
 
 pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver + 'static> {
     /// The sender to the network.
-    sender: mpsc::Sender<NetworkMessage>,
+    sender: metered_channel::Sender<NetworkMessage>,
     /// The inner state of the network syncer.
     inner: Arc<NetworkSyncerInner<H, C>>,
     /// The handle of the task disseminating our own blocks.
@@ -48,7 +49,7 @@ where
     pub fn new(
         peer: AuthorityIndex,
         committee: Arc<Committee>,
-        sender: mpsc::Sender<NetworkMessage>,
+        sender: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         metrics: Arc<Metrics>,
         parameters: SynchronizerParameters,
@@ -154,7 +155,7 @@ where
 
     async fn stream_own_blocks(
         _peer: Authority,
-        to: mpsc::Sender<NetworkMessage>,
+        to: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut round: RoundNumber,
         batch_size: usize,
@@ -195,7 +196,7 @@ where
     }
 
     async fn stream_others_blocks(
-        to: mpsc::Sender<NetworkMessage>,
+        to: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut round: RoundNumber,
         author: AuthorityIndex,
@@ -218,7 +219,7 @@ where
 enum BlockFetcherMessage {
     RegisterAuthority(
         AuthorityIndex,
-        mpsc::Sender<NetworkMessage>,
+        metered_channel::Sender<NetworkMessage>,
         tokio::sync::watch::Receiver<Duration>,
     ),
     RemoveAuthority(AuthorityIndex),
@@ -248,7 +249,7 @@ impl BlockFetcher {
     pub async fn register_authority(
         &self,
         authority: AuthorityIndex,
-        sender: mpsc::Sender<NetworkMessage>,
+        sender: metered_channel::Sender<NetworkMessage>,
         latency_receiver: tokio::sync::watch::Receiver<Duration>,
     ) {
         self.sender
@@ -281,7 +282,7 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver + 'static> {
     senders: HashMap<
         AuthorityIndex,
         (
-            mpsc::Sender<NetworkMessage>,
+            metered_channel::Sender<NetworkMessage>,
             tokio::sync::watch::Receiver<Duration>,
         ),
     >,
@@ -376,7 +377,7 @@ where
     fn sample_peer(
         &self,
         except: &[AuthorityIndex],
-    ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
+    ) -> Option<(AuthorityIndex, metered_channel::Permit<NetworkMessage>)> {
         static MILIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
         let senders = self
             .senders

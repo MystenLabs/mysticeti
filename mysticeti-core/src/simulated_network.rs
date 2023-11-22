@@ -7,6 +7,7 @@ use crate::network::{Connection, Network};
 use crate::runtime;
 use rand::Rng;
 use std::fmt::Debug;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::ops::Range;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -59,12 +60,14 @@ impl SimulatedNetwork {
         let (_bl_sender, bl_receiver) = tokio::sync::watch::channel(Duration::from_secs(0));
         let a_connection = Connection {
             peer_id: b,
+            peer: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             sender: b_sender,
             receiver: a_receiver,
             latency_last_value_receiver: al_receiver,
         };
         let b_connection = Connection {
             peer_id: a,
+            peer: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             sender: a_sender,
             receiver: b_receiver,
             latency_last_value_receiver: bl_receiver,

@@ -25,6 +25,7 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::runtime::Handle;
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -51,6 +52,7 @@ pub struct Network {
 
 pub struct Connection {
     pub peer_id: usize,
+    pub peer: SocketAddr,
     pub sender: mpsc::Sender<NetworkMessage>,
     pub receiver: mpsc::Receiver<NetworkMessage>,
     pub latency_last_value_receiver: tokio::sync::watch::Receiver<Duration>,
@@ -293,7 +295,7 @@ impl Worker {
         } = connection;
         tracing::debug!("Connected to {}", peer_id);
         let (reader, writer) = stream.into_split();
-        let (pong_sender, pong_receiver) = mpsc::channel(16);
+        let (pong_sender, pong_receiver) = mpsc::channel(150);
         let write_fut = Self::handle_write_stream(
             writer,
             receiver,
@@ -303,7 +305,7 @@ impl Worker {
             peer,
         )
         .boxed();
-        let read_fut = Self::handle_read_stream(reader, sender, pong_sender).boxed();
+        let read_fut = Self::handle_read_stream(reader, sender, pong_sender, peer).boxed();
         let (r, _, _) = select_all([write_fut, read_fut]).await;
         tracing::debug!("Disconnected from {}", peer_id);
         r
@@ -397,6 +399,7 @@ impl Worker {
         mut stream: OwnedReadHalf,
         sender: mpsc::Sender<NetworkMessage>,
         pong_sender: mpsc::Sender<i64>,
+        peer: SocketAddr,
     ) -> io::Result<()> {
         // stdlib has a special fast implementation for generating n-size byte vectors,
         // see impl SpecFromElem for u8
@@ -414,8 +417,20 @@ impl Worker {
                 let read = stream.read_exact(buf).await?;
                 assert_eq!(read, buf.len());
                 let pong = decode_ping(buf);
-                if pong_sender.send(pong).await.is_err() {
-                    return Ok(()); // write stream closed
+                let permit = pong_sender.try_reserve();
+                if let Err(err) = permit {
+                    match err {
+                        TrySendError::Full(_) => {
+                            tracing::error!(
+                                "Pong sender channel to {peer} is saturated. Will drop."
+                            );
+                        }
+                        TrySendError::Closed(_) => {
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    permit.unwrap().send(pong);
                 }
                 continue;
             }
@@ -438,12 +453,13 @@ impl Worker {
     }
 
     async fn make_connection(&self) -> Option<WorkerConnection> {
-        let (network_in_sender, network_in_receiver) = mpsc::channel(150);
-        let (network_out_sender, network_out_receiver) = mpsc::channel(150);
+        let (network_in_sender, network_in_receiver) = mpsc::channel(1_000);
+        let (network_out_sender, network_out_receiver) = mpsc::channel(1_000);
         let (latency_last_value_sender, latency_last_value_receiver) =
             tokio::sync::watch::channel(Duration::from_millis(0));
         let connection = Connection {
             peer_id: self.peer_id,
+            peer: self.peer,
             sender: network_out_sender,
             receiver: network_in_receiver,
             latency_last_value_receiver,

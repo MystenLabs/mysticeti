@@ -10,7 +10,7 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{format_authority_index, AuthoritySet};
+use crate::types::AuthoritySet;
 use crate::types::{AuthorityIndex, StatementBlock};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
@@ -19,6 +19,7 @@ use crate::{committee::Committee, synchronizer::BlockFetcher};
 use futures::future::join_all;
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -251,24 +252,40 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             parameters,
         );
 
-        let peer = format_authority_index(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
+            metrics
+                .network_messages_received
+                .with_label_values(&[&connection.peer.to_string()])
+                .inc();
+            let start = timestamp_utc();
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
                     disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Blocks(blocks) => {
-                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks, peer)
-                        .await
-                        .is_err()
+                    if Self::process_blocks(
+                        &inner,
+                        &block_verifier,
+                        &metrics,
+                        blocks,
+                        connection.peer,
+                    )
+                    .await
+                    .is_err()
                     {
                         break;
                     }
                 }
                 NetworkMessage::Block(block) => {
-                    if Self::process_blocks(&inner, &block_verifier, &metrics, vec![block], peer)
-                        .await
-                        .is_err()
+                    if Self::process_blocks(
+                        &inner,
+                        &block_verifier,
+                        &metrics,
+                        vec![block],
+                        connection.peer,
+                    )
+                    .await
+                    .is_err()
                     {
                         break;
                     }
@@ -280,7 +297,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     }
                     let authority = connection.peer_id as AuthorityIndex;
                     if disseminator
-                        .send_blocks(authority, references)
+                        .send_blocks(authority, connection.peer, references)
                         .await
                         .is_none()
                     {
@@ -290,6 +307,15 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
                 }
+            }
+
+            let latency = timestamp_utc().saturating_sub(start);
+            if latency.as_millis() >= 1_000 {
+                tracing::warn!(
+                    "Slow processing detecting when reading messages from {:?}, total: {:?}",
+                    connection.peer,
+                    latency
+                );
             }
         }
         disseminator.shutdown().await;
@@ -304,7 +330,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_verifier: &Arc<impl BlockVerifier>,
         metrics: &Arc<Metrics>,
         blocks: Vec<Data<StatementBlock>>,
-        peer: char,
+        peer: SocketAddr,
     ) -> Result<(), eyre::Report> {
         if blocks.is_empty() {
             return Ok(());
@@ -323,10 +349,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         for block in blocks.iter() {
             tracing::debug!("Received {} from {}", block.reference(), peer);
 
-            let authority = inner.committee.authority_safe(block.author());
             metrics
                 .block_receive_latency
-                .with_label_values(&[&authority.hostname(), "network_receive"])
+                .with_label_values(&[&peer.to_string(), "network_receive"])
                 .observe(
                     now.checked_sub(block.meta_creation_time())
                         .unwrap_or_default()

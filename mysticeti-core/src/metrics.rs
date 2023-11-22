@@ -85,6 +85,7 @@ pub struct Metrics {
     pub code_scope_latency: HistogramVec,
     pub ready_new_block: IntCounterVec,
     pub init_own_block_stream: IntCounterVec,
+    pub network_messages_received: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -414,6 +415,13 @@ impl Metrics {
             leader_timeout_propose_total: register_int_counter_with_registry!(
                 "leader_timeout_propose_total",
                 "The number of blocks that got proposed after hitting a leader timeout",
+                registry
+            ).unwrap(),
+
+            network_messages_received: register_int_counter_vec_with_registry!(
+                "network_messages_received",
+                "The number of received messages via network",
+                &["authority"],
                 registry
             ).unwrap(),
 

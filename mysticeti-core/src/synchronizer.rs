@@ -1,12 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::net::SocketAddr;
 use std::{collections::HashMap, env, sync::Arc, time::Duration};
 
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 
 use crate::commit_observer::CommitObserver;
 use crate::committee::{Authority, Committee};
@@ -79,6 +81,7 @@ where
     pub async fn send_blocks(
         &mut self,
         peer: AuthorityIndex,
+        peer_addr: SocketAddr,
         references: Vec<BlockReference>,
     ) -> Option<()> {
         let mut missing = Vec::new();
@@ -94,10 +97,10 @@ where
             }
 
             if to_send.len() >= CHUNK_SIZE {
-                self.sender
-                    .send(NetworkMessage::Blocks(std::mem::take(&mut to_send)))
-                    .await
-                    .ok()?
+                self.send(
+                    peer_addr,
+                    NetworkMessage::Blocks(std::mem::take(&mut to_send)),
+                )?;
             }
 
             self.metrics
@@ -108,16 +111,28 @@ where
 
         // send any leftovers
         if !to_send.is_empty() {
-            self.sender
-                .send(NetworkMessage::Blocks(std::mem::take(&mut to_send)))
-                .await
-                .ok()?
+            self.send(
+                peer_addr,
+                NetworkMessage::Blocks(std::mem::take(&mut to_send)),
+            )?;
         }
 
-        self.sender
-            .send(NetworkMessage::BlockNotFound(missing))
-            .await
-            .ok()
+        self.send(peer_addr, NetworkMessage::BlockNotFound(missing))
+    }
+
+    fn send(&self, peer: SocketAddr, message: NetworkMessage) -> Option<()> {
+        match self.sender.try_reserve() {
+            Err(TrySendError::Full(_)) => {
+                tracing::error!("Channel full to {}, dropping message", peer);
+            }
+            Err(TrySendError::Closed(_)) => {
+                return None;
+            }
+            Ok(permit) => {
+                permit.send(message);
+            }
+        }
+        Some(())
     }
 
     pub async fn disseminate_own_blocks(&mut self, round: RoundNumber) {

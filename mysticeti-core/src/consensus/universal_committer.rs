@@ -50,13 +50,18 @@ impl UniversalCommitter {
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
-                self.update_metrics(&status, true);
                 tracing::debug!("Outcome of direct rule: {status}");
 
                 // If we can't directly decide the leader, try to indirectly decide it.
-                if !status.is_decided() {
-                    status = committer.try_indirect_decide(leader, round, leaders.iter());
-                    self.update_metrics(&status, false);
+                if status.is_decided() {
+                    leaders.push_front((status.clone(), true));
+                } else {
+                    status = committer.try_indirect_decide(
+                        leader,
+                        round,
+                        leaders.iter().map(|(x, _)| x),
+                    );
+                    leaders.push_front((status.clone(), false));
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
@@ -66,8 +71,6 @@ impl UniversalCommitter {
                     status.to_string(),
                     committer
                 );
-
-                leaders.push_front(status);
             }
         }
 
@@ -87,14 +90,18 @@ impl UniversalCommitter {
         leaders
             .into_iter()
             // Skip all leaders before the last decided round.
-            .skip_while(|x| (x.round(), x.authority()) != last_decided_round_authority)
+            .skip_while(|(x, _)| (x.round(), x.authority()) != last_decided_round_authority)
             // Skip the last decided leader.
             .skip(1)
             // Filter out all the genesis.
-            .filter(|x| x.round() > 0)
+            .filter(|(x, _)| x.round() > 0)
             // Stop the sequence upon encountering an undecided leader.
-            .take_while(|x| x.is_decided())
-            .inspect(|x| tracing::debug!("Decided {x}"))
+            .take_while(|(x, _)| x.is_decided())
+            .inspect(|(x, direct_decided)| {
+                self.update_metrics(x, *direct_decided);
+                tracing::debug!("Decided {x}");
+            })
+            .map(|(x, _)| x)
             .collect()
     }
 

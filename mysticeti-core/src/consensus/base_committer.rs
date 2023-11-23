@@ -121,10 +121,8 @@ impl BaseCommitter {
                 return Some(*include);
             }
 
-            /*
-            TODO: we have no support for weak links , so no need to check this at the moment
             // Weak links may point to blocks with lower round numbers than strong links.
-            if include.round() < round {
+            if include.round() <= round {
                 continue;
             }
 
@@ -134,7 +132,7 @@ impl BaseCommitter {
                 .expect("We should have the whole sub-dag by now");
             if let Some(support) = self.find_support((author, round), &include) {
                 return Some(support);
-            }*/
+            }
         }
         None
     }

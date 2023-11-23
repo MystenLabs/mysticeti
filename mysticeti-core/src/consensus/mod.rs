@@ -12,6 +12,7 @@ pub mod base_committer;
 pub mod linearizer;
 pub mod universal_committer;
 
+pub mod reputation_scores;
 #[cfg(test)]
 mod tests;
 

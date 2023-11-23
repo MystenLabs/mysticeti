@@ -3,6 +3,8 @@
 
 use crate::block_store::{BlockStore, CommitData};
 use crate::commit_observer::CommitObserverRecoveredState;
+use crate::committee::Committee;
+use crate::consensus::reputation_scores::ReputationScores;
 use crate::{
     data::Data,
     types::{BlockReference, StatementBlock},
@@ -10,6 +12,7 @@ use crate::{
 use std::collections::HashSet;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 /// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
 /// sort the blocks within each sub-dag (but using a deterministic algorithm).
@@ -24,6 +27,8 @@ pub struct CommittedSubDag {
     /// Height of the commit.
     /// First commit after genesis has a height of 1, then every next commit has a height incremented by 1.
     pub height: u64,
+    /// The reputation scores
+    pub reputation_scores: ReputationScores,
 }
 
 impl CommittedSubDag {
@@ -33,12 +38,14 @@ impl CommittedSubDag {
         blocks: Vec<Data<StatementBlock>>,
         timestamp_ms: u64,
         height: u64,
+        reputation_scores: ReputationScores,
     ) -> Self {
         Self {
             anchor,
             blocks,
             timestamp_ms,
             height,
+            reputation_scores,
         }
     }
 
@@ -61,7 +68,13 @@ impl CommittedSubDag {
         let leader_block_idx = leader_block_idx.expect("Leader block must be in the sub-dag");
         let leader_block_ref = blocks[leader_block_idx].reference();
         let timestamp_ms = blocks[leader_block_idx].meta_creation_time_ms();
-        CommittedSubDag::new(*leader_block_ref, blocks, timestamp_ms, commit_data.height)
+        CommittedSubDag::new(
+            *leader_block_ref,
+            blocks,
+            timestamp_ms,
+            commit_data.height,
+            commit_data.reputation_scores,
+        )
     }
 
     /// Sort the blocks of the sub-dag by round number. Any deterministic algorithm works.
@@ -94,14 +107,22 @@ pub struct Linearizer {
     committed: HashSet<BlockReference>,
     /// Keep track of the height of last linearized commit
     last_height: u64,
+    /// Keeps the last committed leader
+    last_committed_leader: BlockReference,
+    /// the latest reputation scores
+    reputation_scores: ReputationScores,
+    committee: Arc<Committee>,
 }
 
 impl Linearizer {
-    pub fn new(block_store: BlockStore) -> Self {
+    pub fn new(block_store: BlockStore, committee: Arc<Committee>) -> Self {
         Self {
             block_store,
             committed: Default::default(),
             last_height: Default::default(),
+            last_committed_leader: BlockReference::default(),
+            reputation_scores: ReputationScores::new(&committee),
+            committee,
         }
     }
 
@@ -146,7 +167,17 @@ impl Linearizer {
             }
         }
         self.last_height += 1;
-        CommittedSubDag::new(leader_block_ref, to_commit, timestamp_ms, self.last_height)
+
+        // update the reputation scores
+        self.update_reputation_scores(self.last_height, &to_commit);
+
+        CommittedSubDag::new(
+            leader_block_ref,
+            to_commit,
+            timestamp_ms,
+            self.last_height,
+            self.reputation_scores.clone(),
+        )
     }
 
     pub fn handle_commit(
@@ -155,14 +186,38 @@ impl Linearizer {
     ) -> Vec<CommittedSubDag> {
         let mut committed = vec![];
         for leader_block in committed_leaders {
+            let leader_ref = *leader_block.reference();
             // Collect the sub-dag generated using each of these leaders as anchor.
             let mut sub_dag = self.collect_sub_dag(leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();
             committed.push(sub_dag);
+
+            self.last_committed_leader = leader_ref;
         }
         committed
+    }
+
+    fn update_reputation_scores(&mut self, height: u64, to_commit: &Vec<Data<StatementBlock>>) {
+        static NUM_SUB_DAGS_PER_SCHEDULE: u64 = 100;
+
+        // always reset when it is the first for the new window
+        if height % NUM_SUB_DAGS_PER_SCHEDULE == 1 {
+            self.reputation_scores = ReputationScores::new(&self.committee);
+        }
+
+        for block in to_commit {
+            for include in block.includes() {
+                if self.last_committed_leader == *include {
+                    self.reputation_scores.add_score(block.author(), 1);
+                    break;
+                }
+            }
+        }
+
+        // mark the reputation scores as final
+        self.reputation_scores.final_of_schedule = height % NUM_SUB_DAGS_PER_SCHEDULE == 0;
     }
 }
 

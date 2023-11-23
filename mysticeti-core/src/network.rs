@@ -367,9 +367,10 @@ impl Worker {
                                         latency_sender.observe(d);
                                         latency_last_value_sender.send(d).ok();
 
-                                        static CUT_OFF_LATENCY: u128 = 3_000;
+                                        static CUT_OFF_LATENCY: u128 = 5_000;
                                         if d.as_millis() >= CUT_OFF_LATENCY {
-                                            tracing::warn!("High latency connection: {:?}, {:?}", d, peer);
+                                            tracing::warn!("High latency connection: {:?}, {:?}. Breaking now connection.", d, peer);
+                                            return Ok(());
                                         }
                                     },
                                     None => {

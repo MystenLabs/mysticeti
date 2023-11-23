@@ -28,7 +28,7 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
-pub const MAXIMUM_BLOCK_REQUEST: usize = 100;
+pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
 
 struct ConnectedAuthorities {
     metrics: Arc<Metrics>,

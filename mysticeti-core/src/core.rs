@@ -394,7 +394,7 @@ impl<H: BlockHandler> Core<H> {
         if quorum_round > self.last_proposed() {
             // otherwise check that we include the previous leader
             let leader_round = quorum_round - 1;
-            let mut leaders = self.committer.get_leaders(leader_round);
+            let leaders = self.committer.get_leaders(leader_round);
             if leaders.is_empty() {
                 self.metrics
                     .ready_new_block
@@ -403,8 +403,23 @@ impl<H: BlockHandler> Core<H> {
                 return true;
             }
 
-            leaders.retain(|leader| connected_authorities.contains(*leader));
-            if leaders.is_empty() {
+            tracing::debug!("Leader of round {leader_round}: {leaders:?}");
+
+            // If I was the leader of the previous round, just return true;
+            if leaders.contains(&self.authority) {
+                tracing::debug!("I was the leader of round {}. Will progress.", leader_round);
+                return true;
+            }
+
+            let connected_leaders: Vec<_> = leaders
+                .iter()
+                .filter(|leader| connected_authorities.contains(**leader))
+                .collect();
+            if connected_leaders.is_empty() {
+                let leader_index = *leaders.first().unwrap();
+                let leader_hostname = self.committee.authority_safe(leader_index).hostname();
+
+                tracing::debug!("Leader not connected: {}", leader_hostname);
                 self.metrics
                     .ready_new_block
                     .with_label_values(&["leader_not_connected"])

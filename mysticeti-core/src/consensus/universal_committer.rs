@@ -48,6 +48,8 @@ impl UniversalCommitter {
                     continue;
                 };
 
+                tracing::debug!("Leader of round {round} -> {leader}");
+
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
                 tracing::debug!("Outcome of direct rule: {status}");

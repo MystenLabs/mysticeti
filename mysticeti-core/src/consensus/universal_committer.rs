@@ -41,7 +41,7 @@ impl UniversalCommitter {
             last_decided_round,
             highest_known_round
         );
-        for round in (last_decided_round..=highest_known_round).rev() {
+        for round in (last_decided_round..=highest_known_round.saturating_sub(2)).rev() {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {

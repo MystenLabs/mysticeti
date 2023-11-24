@@ -1,11 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::{fmt::Display, sync::Arc};
 
 use crate::metrics::{Metrics, UtilizationTimerVecExt};
 use crate::runtime::timestamp_utc;
+use crate::types::Stake;
 use crate::{
     block_store::BlockStore,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -154,27 +155,20 @@ impl BaseCommitter {
         &self,
         potential_certificate: &Data<StatementBlock>,
         leader_block: &Data<StatementBlock>,
-        all_votes: &mut HashSet<BlockReference>,
+        all_votes: &mut HashMap<BlockReference, bool>,
     ) -> bool {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::is_certificate");
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
-            let is_vote = if all_votes.contains(reference) {
-                true
+            let is_vote = if let Some(is_vote) = all_votes.get(reference) {
+                *is_vote
             } else {
                 let potential_vote = self
                     .block_store
                     .get_block(*reference)
                     .expect("We should have the whole sub-dag by now");
-                if self.is_vote(&potential_vote, leader_block) {
-                    all_votes.insert(*reference);
-                    true
-                } else {
-                    false
-                }
+                let is_vote = self.is_vote(&potential_vote, leader_block);
+                all_votes.insert(*reference, is_vote);
+                is_vote
             };
 
             if is_vote {
@@ -205,18 +199,21 @@ impl BaseCommitter {
         // are in the decision round of the target leader and are linked to the anchor.
         let wave = self.wave_number(leader_round);
         let decision_round = self.decision_round(wave);
+        let potential_certificates = self.block_store.linked_to_round(anchor, decision_round);
+
+        /*
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
         let potential_certificates: Vec<_> = decision_blocks
             .iter()
             .filter(|block| self.block_store.linked(anchor, block))
-            .collect();
+            .collect();*/
 
         // Use those potential certificates to determine which (if any) of the target leader
         // blocks can be committed.
         let mut certified_leader_blocks: Vec<_> = leader_blocks
             .into_iter()
             .filter(|leader_block| {
-                let mut all_votes = HashSet::new();
+                let mut all_votes = HashMap::new();
                 potential_certificates.iter().any(|potential_certificate| {
                     self.is_certificate(potential_certificate, leader_block, &mut all_votes)
                 })
@@ -276,10 +273,23 @@ impl BaseCommitter {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
         let start = timestamp_utc();
 
-        tracing::debug!("enough_leader_support for leader: {}", leader_block.round());
+        // quickly reject if there isn't enough stake to support the leader from the potential certificates
+        let total_stake: Stake = decision_blocks
+            .iter()
+            .map(|b| self.committee.get_stake(b.author()).unwrap())
+            .sum();
+        if total_stake < self.committee.quorum_threshold() {
+            tracing::debug!(
+                "Not enough support for: {}. Stake not enough: {} < {}",
+                leader_block.round(),
+                total_stake,
+                self.committee.quorum_threshold()
+            );
+            return false;
+        }
 
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
-        let mut all_votes = HashSet::new();
+        let mut all_votes = HashMap::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
             if self.is_certificate(decision_block, leader_block, &mut all_votes) {
@@ -315,10 +325,6 @@ impl BaseCommitter {
         leader_round: RoundNumber,
         leaders: impl Iterator<Item = &'a LeaderStatus>,
     ) -> LeaderStatus {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::try_indirect_decide");
         // The anchor is the first committed leader with round higher than the decision round of the
         // target leader. We must stop the iteration upon encountering an undecided leader.
         let anchors = leaders.filter(|x| leader_round + self.options.wave_length <= x.round());
@@ -348,10 +354,6 @@ impl BaseCommitter {
         leader: AuthorityIndex,
         leader_round: RoundNumber,
     ) -> LeaderStatus {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Basecommitter::try_direct_decide");
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
         let voting_round = leader_round + 1;

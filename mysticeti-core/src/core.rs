@@ -163,10 +163,6 @@ impl<H: BlockHandler> Core<H> {
 
     // Note that generally when you update this function you also want to change genesis initialization above
     pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Core::add_blocks");
         let _guard = self
             .metrics
             .code_scope_latency

@@ -47,7 +47,7 @@ pub struct Core<H: BlockHandler> {
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: UniversalCommitter,
-    leader_timeout: Duration,
+    _leader_timeout: Duration,
 }
 
 pub struct CoreOptions {
@@ -142,7 +142,7 @@ impl<H: BlockHandler> Core<H> {
             epoch_manager,
             rounds_in_epoch: parameters.rounds_in_epoch(),
             committer,
-            leader_timeout: parameters.leader_timeout,
+            _leader_timeout: parameters.leader_timeout,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -422,16 +422,6 @@ impl<H: BlockHandler> Core<H> {
             // TODO: for now just get the one as we don't support multiple leaders
             let leader_index = *leaders.first().unwrap();
             let leader_hostname = self.committee.authority_safe(leader_index).hostname();
-
-            let now = timestamp_utc();
-            let timeout = now.saturating_sub(self.last_own_block.block.meta_creation_time());
-            if timeout.as_millis() >= self.leader_timeout.as_millis() {
-                self.metrics
-                    .ready_new_block
-                    .with_label_values(&[format!("leader_timeout:{leader_hostname}").as_str()])
-                    .inc();
-                return true;
-            }
 
             self.metrics
                 .ready_new_block

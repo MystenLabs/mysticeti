@@ -321,6 +321,15 @@ impl<H: BlockHandler> Core<H> {
         Some(block)
     }
 
+    pub fn leaders(&self, leader_round: RoundNumber) -> Vec<String> {
+        let leaders = self.committer.get_leaders(leader_round);
+
+        leaders
+            .iter()
+            .map(|leader_id| self.committee.authority_safe(*leader_id).hostname())
+            .collect()
+    }
+
     pub fn wal_syncer(&self) -> WalSyncer {
         self.wal_writer
             .syncer()
@@ -402,7 +411,12 @@ impl<H: BlockHandler> Core<H> {
                 return true;
             }
 
-            tracing::debug!("Leader of round {leader_round}: {leaders:?}");
+            let leader_hostnames: Vec<_> = leaders
+                .iter()
+                .map(|leader_id| self.committee.authority_safe(*leader_id).hostname())
+                .collect();
+
+            tracing::debug!("Leader of round {leader_round}: {leader_hostnames:?}");
 
             // If I was the leader of the previous round, just return true;
             if leaders.contains(&self.authority) {

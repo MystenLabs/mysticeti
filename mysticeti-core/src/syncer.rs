@@ -84,6 +84,14 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             }
 
             if self.force_new_block {
+                let leaders = self
+                    .core
+                    .leaders(self.core.last_proposed().saturating_sub(1));
+                tracing::debug!(
+                    "Proposed with timeout for round {} missing {:?} ",
+                    self.core.last_proposed(),
+                    leaders
+                );
                 self.metrics.leader_timeout_propose_total.inc();
             }
 

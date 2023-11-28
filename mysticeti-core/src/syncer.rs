@@ -8,6 +8,7 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
+use itertools::Itertools;
 use std::sync::Arc;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
@@ -50,8 +51,14 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
-        self.core.add_blocks(blocks);
-        self.try_new_block(connected_authorities);
+
+        for block in blocks
+            .into_iter()
+            .sorted_by(|b1, b2| b1.round().cmp(&b2.round()))
+        {
+            self.core.add_blocks(vec![block]);
+            self.try_new_block(connected_authorities.clone());
+        }
     }
 
     pub fn force_new_block(

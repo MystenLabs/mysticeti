@@ -223,102 +223,118 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::try_new_block");
-        let clock_round = self.threshold_clock.get_round();
-        if clock_round <= self.last_proposed() {
-            return None;
-        }
+        let round = self.threshold_clock.get_round();
+        let mut final_block = None;
 
-        let mut includes = vec![];
-        let mut statements = vec![];
-
-        let first_include_index = self
-            .pending
-            .iter()
-            .position(|(_, statement)| match statement {
-                MetaStatement::Include(block_ref) => block_ref.round >= clock_round,
-                _ => false,
-            })
-            .unwrap_or(self.pending.len());
-
-        let mut taken = self.pending.split_off(first_include_index);
-        // Split off returns the "tail", what we want is keep the tail in "pending" and get the head
-        mem::swap(&mut taken, &mut self.pending);
-        // Compress the references in the block
-        // Iterate through all the include statements in the block, and make a set of all the references in their includes.
-        let mut references_in_block: HashSet<BlockReference> = HashSet::new();
-        references_in_block.extend(self.last_own_block.block.includes());
-        for (_, statement) in &taken {
-            if let MetaStatement::Include(block_ref) = statement {
-                // for all the includes in the block, add the references in the block to the set
-                if let Some(block) = self.block_store.get_block(*block_ref) {
-                    references_in_block.extend(block.includes());
-                }
+        for clock_round in round.saturating_sub(1)..=round {
+            if clock_round <= self.last_proposed() {
+                continue;
             }
-        }
-        includes.push(*self.last_own_block.block.reference());
-        for (_, statement) in taken.into_iter() {
-            match statement {
-                MetaStatement::Include(include) => {
-                    if !references_in_block.contains(&include) {
-                        includes.push(include);
+
+            // do not propose for the previous round if not already the leader.
+            if clock_round < round
+                && !self
+                    .committer
+                    .get_leaders(clock_round)
+                    .contains(&self.authority)
+            {
+                continue;
+            }
+
+            let mut includes = vec![];
+            let mut statements = vec![];
+
+            let first_include_index = self
+                .pending
+                .iter()
+                .position(|(_, statement)| match statement {
+                    MetaStatement::Include(block_ref) => block_ref.round >= clock_round,
+                    _ => false,
+                })
+                .unwrap_or(self.pending.len());
+
+            let mut taken = self.pending.split_off(first_include_index);
+            // Split off returns the "tail", what we want is keep the tail in "pending" and get the head
+            mem::swap(&mut taken, &mut self.pending);
+            // Compress the references in the block
+            // Iterate through all the include statements in the block, and make a set of all the references in their includes.
+            let mut references_in_block: HashSet<BlockReference> = HashSet::new();
+            references_in_block.extend(self.last_own_block.block.includes());
+            for (_, statement) in &taken {
+                if let MetaStatement::Include(block_ref) = statement {
+                    // for all the includes in the block, add the references in the block to the set
+                    if let Some(block) = self.block_store.get_block(*block_ref) {
+                        references_in_block.extend(block.includes());
                     }
                 }
-                MetaStatement::Payload(payload) => {
-                    if !self.epoch_changing() {
-                        statements.extend(payload);
+            }
+            includes.push(*self.last_own_block.block.reference());
+            for (_, statement) in taken.into_iter() {
+                match statement {
+                    MetaStatement::Include(include) => {
+                        if !references_in_block.contains(&include) {
+                            includes.push(include);
+                        }
+                    }
+                    MetaStatement::Payload(payload) => {
+                        if !self.epoch_changing() {
+                            statements.extend(payload);
+                        }
                     }
                 }
             }
-        }
 
-        assert!(!includes.is_empty());
-        let time_ns = timestamp_utc().as_nanos();
-        let block = StatementBlock::new_with_signer(
-            self.authority,
-            clock_round,
-            includes,
-            statements,
-            time_ns,
-            self.epoch_changing(),
-            self.committee.epoch(),
-            &self.signer,
-        );
-        assert_eq!(
-            block.includes().get(0).unwrap().authority,
-            self.authority,
-            "Invalid block {}",
-            block
-        );
-
-        let block = Data::new(block);
-        if block.serialized_bytes().len() > crate::wal::MAX_ENTRY_SIZE / 2 {
-            // Sanity check for now
-            panic!(
-                "Created an oversized block(check all limits set properly!): {:?}",
-                block.detailed()
+            assert!(!includes.is_empty());
+            let time_ns = timestamp_utc().as_nanos();
+            let block = StatementBlock::new_with_signer(
+                self.authority,
+                clock_round,
+                includes,
+                statements,
+                time_ns,
+                self.epoch_changing(),
+                self.committee.epoch(),
+                &self.signer,
             );
-        }
-        self.threshold_clock
-            .add_block(*block.reference(), &self.committee);
-        self.block_handler.handle_proposal(&block);
-        self.proposed_block_stats(&block);
-        let next_entry = if let Some((pos, _)) = self.pending.get(0) {
-            *pos
-        } else {
-            WalPosition::MAX
-        };
-        self.last_own_block = OwnBlockData {
-            next_entry,
-            block: block.clone(),
-        };
-        (&mut self.wal_writer, &self.block_store).insert_own_block(&self.last_own_block);
+            assert_eq!(
+                block.includes().get(0).unwrap().authority,
+                self.authority,
+                "Invalid block {}",
+                block
+            );
 
-        if self.options.fsync {
-            self.wal_writer.sync().expect("Wal sync failed");
-        }
+            let block = Data::new(block);
+            if block.serialized_bytes().len() > crate::wal::MAX_ENTRY_SIZE / 2 {
+                // Sanity check for now
+                panic!(
+                    "Created an oversized block(check all limits set properly!): {:?}",
+                    block.detailed()
+                );
+            }
+            self.threshold_clock
+                .add_block(*block.reference(), &self.committee);
+            self.block_handler.handle_proposal(&block);
+            self.proposed_block_stats(&block);
+            let next_entry = if let Some((pos, _)) = self.pending.get(0) {
+                *pos
+            } else {
+                WalPosition::MAX
+            };
+            self.last_own_block = OwnBlockData {
+                next_entry,
+                block: block.clone(),
+            };
+            (&mut self.wal_writer, &self.block_store).insert_own_block(&self.last_own_block);
 
-        tracing::debug!("Created block {block:?}");
-        Some(block)
+            if self.options.fsync {
+                self.wal_writer.sync().expect("Wal sync failed");
+            }
+
+            tracing::debug!("Created block {block:?}");
+
+            final_block = Some(block);
+        }
+        final_block
     }
 
     pub fn leaders(&self, leader_round: RoundNumber) -> Vec<String> {

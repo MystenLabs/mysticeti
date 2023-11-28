@@ -53,6 +53,25 @@ pub struct BlockReference {
     pub digest: BlockDigest,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct AuthorityRound {
+    pub authority: AuthorityIndex,
+    pub round: RoundNumber,
+}
+
+impl AuthorityRound {
+    pub fn new(authority: AuthorityIndex, round: RoundNumber) -> Self {
+        Self { authority, round }
+    }
+    pub fn round(&self) -> RoundNumber {
+        self.round
+    }
+
+    pub fn authority(&self) -> AuthorityIndex {
+        self.authority
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BaseStatement {
     /// Authority Shares a transactions, without accepting it or not.
@@ -66,6 +85,12 @@ pub enum BaseStatement {
 impl Hash for BlockReference {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write(&self.digest.as_ref()[..8]);
+    }
+}
+
+impl From<BlockReference> for AuthorityRound {
+    fn from(value: BlockReference) -> Self {
+        AuthorityRound::new(value.authority, value.round)
     }
 }
 
@@ -483,6 +508,27 @@ impl fmt::Debug for BlockReference {
 }
 
 impl fmt::Display for BlockReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.authority < 26 {
+            write!(
+                f,
+                "{}{}",
+                format_authority_index(self.authority),
+                self.round
+            )
+        } else {
+            write!(f, "[{:02}]{}", self.authority, self.round)
+        }
+    }
+}
+
+impl fmt::Debug for AuthorityRound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for AuthorityRound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.authority < 26 {
             write!(

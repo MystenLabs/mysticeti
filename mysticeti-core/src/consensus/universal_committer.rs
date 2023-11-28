@@ -4,12 +4,13 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::runtime::timestamp_utc;
+use crate::types::AuthorityRound;
 use crate::{
     block_store::BlockStore,
     committee::Committee,
     consensus::base_committer::BaseCommitterOptions,
     metrics::Metrics,
-    types::{AuthorityIndex, BlockReference, RoundNumber},
+    types::{AuthorityIndex, RoundNumber},
 };
 
 use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
@@ -27,7 +28,7 @@ impl UniversalCommitter {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
-    pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
+    pub fn try_commit(&self, last_decided: AuthorityRound) -> Vec<LeaderStatus> {
         let start = timestamp_utc();
         let highest_known_round = self.block_store.highest_round();
         // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
@@ -41,12 +42,20 @@ impl UniversalCommitter {
             last_decided_round,
             highest_known_round
         );
-        for round in (last_decided_round..=highest_known_round.saturating_sub(2)).rev() {
+        'outer: for round in (last_decided_round..=highest_known_round.saturating_sub(2)).rev() {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;
                 };
+
+                // now that we reached the last committed leader we can stop the commit rule
+                if (round, leader) == last_decided_round_authority {
+                    tracing::debug!(
+                        "Leader of round {round} -> {leader} - reached last committed, now exit"
+                    );
+                    break 'outer;
+                }
 
                 tracing::debug!("Leader of round {round} -> {leader}");
 
@@ -92,9 +101,9 @@ impl UniversalCommitter {
         leaders
             .into_iter()
             // Skip all leaders before the last decided round.
-            .skip_while(|(x, _)| (x.round(), x.authority()) != last_decided_round_authority)
+            //.skip_while(|(x, _)| (x.round(), x.authority()) != last_decided_round_authority)
             // Skip the last decided leader.
-            .skip(1)
+            //.skip(1)
             // Filter out all the genesis.
             .filter(|(x, _)| x.round() > 0)
             // Stop the sequence upon encountering an undecided leader.

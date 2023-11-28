@@ -15,7 +15,8 @@ use crate::runtime::timestamp_utc;
 use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, RoundNumber, StatementBlock,
+    AuthorityIndex, AuthorityRound, AuthoritySet, BaseStatement, BlockReference, RoundNumber,
+    StatementBlock,
 };
 use crate::wal::{WalPosition, WalSyncer, WalWriter};
 use crate::{
@@ -38,7 +39,7 @@ pub struct Core<H: BlockHandler> {
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
-    last_commit_leader: BlockReference,
+    last_decided_leader: AuthorityRound,
     wal_writer: WalWriter,
     block_store: BlockStore,
     pub(crate) metrics: Arc<Metrics>,
@@ -133,7 +134,7 @@ impl<H: BlockHandler> Core<H> {
             authority,
             threshold_clock,
             committee,
-            last_commit_leader: last_committed_leader.unwrap_or_default(),
+            last_decided_leader: last_committed_leader.unwrap_or_default().into(),
             wal_writer,
             block_store,
             metrics,
@@ -351,31 +352,29 @@ impl<H: BlockHandler> Core<H> {
             .utilization_timer
             .utilization_timer("Core::try_commit");
 
-        let sequence: Vec<_> = self
-            .committer
-            .try_commit(self.last_commit_leader)
-            .into_iter()
-            .filter_map(|leader| leader.into_decided_block())
-            .collect();
+        let sequence: Vec<_> = self.committer.try_commit(self.last_decided_leader);
 
         if let Some(last) = sequence.last() {
-            self.last_commit_leader = *last.reference();
+            self.last_decided_leader = last.clone().into_decided_author_round();
             self.metrics.commit_round.set(last.round() as i64);
         }
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_leader.round() > self.rounds_in_epoch {
+        if self.last_decided_leader.round() > self.rounds_in_epoch {
             self.epoch_manager.epoch_change_begun();
         }
 
         sequence
+            .into_iter()
+            .filter_map(|leader| leader.into_committed_block())
+            .collect()
     }
 
     pub fn cleanup(&self) {
         const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 500;
 
         self.block_store.cleanup(
-            self.last_commit_leader
+            self.last_decided_leader
                 .round()
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );

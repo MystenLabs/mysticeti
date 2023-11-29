@@ -113,6 +113,10 @@ impl BlockManager {
     pub fn missing_blocks(&self) -> &[HashSet<BlockReference>] {
         &self.missing
     }
+
+    pub fn exists_or_pending(&self, id: BlockReference) -> bool {
+        self.block_store.block_exists(id) || self.blocks_pending.contains_key(&id)
+    }
 }
 
 #[cfg(test)]

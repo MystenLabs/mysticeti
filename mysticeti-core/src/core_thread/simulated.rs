@@ -11,10 +11,10 @@ use crate::metrics::{LatencyHistogramVecExt, Metrics};
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
-    syncer: Mutex<Syncer<H, S, C>>,
+    syncer: RwLock<Syncer<H, S, C>>,
     metrics: Arc<Metrics>,
 }
 
@@ -24,7 +24,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
     pub fn start(syncer: Syncer<H, S, C>) -> Self {
         Self {
             metrics: syncer.core().metrics.clone(),
-            syncer: Mutex::new(syncer),
+            syncer: RwLock::new(syncer),
         }
     }
 
@@ -41,7 +41,9 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .metrics
             .code_scope_latency
             .latency_histogram(&["CoreThreadDispatcher::add_blocks"]);
-        self.syncer.lock().add_blocks(blocks, connected_authorities);
+        self.syncer
+            .write()
+            .add_blocks(blocks, connected_authorities);
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
@@ -50,7 +52,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .code_scope_latency
             .latency_histogram(&["CoreThreadDispatcher::force_new_block"]);
         self.syncer
-            .lock()
+            .write()
             .force_new_block(round, connected_authorities);
     }
 
@@ -59,7 +61,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .metrics
             .code_scope_latency
             .latency_histogram(&["CoreThreadDispatcher::cleanup"]);
-        self.syncer.lock().core().cleanup();
+        self.syncer.write().core().cleanup();
     }
 
     pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
@@ -68,10 +70,23 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .code_scope_latency
             .latency_histogram(&["CoreThreadDispatcher::get_missing_blocks"]);
         self.syncer
-            .lock()
+            .read()
             .core()
             .block_manager()
             .missing_blocks()
             .to_vec()
+    }
+
+    pub async fn processed(&self, refs: Vec<BlockReference>) -> HashSet<BlockReference> {
+        let lock = self.syncer.read();
+        refs.into_iter()
+            .filter_map(|block_id| {
+                if lock.core().block_manager().exists_or_pending(block_id) {
+                    Some(block_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }

@@ -29,6 +29,10 @@ enum CoreThreadCommand {
     Cleanup(oneshot::Sender<()>),
     /// Request missing blocks that need to be synched.
     GetMissing(oneshot::Sender<Vec<HashSet<BlockReference>>>),
+    Processed(
+        Vec<BlockReference>,
+        oneshot::Sender<HashSet<BlockReference>>,
+    ),
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -92,6 +96,12 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         receiver.await.expect("core thread is not expected to stop")
     }
 
+    pub async fn processed(&self, refs: Vec<BlockReference>) -> HashSet<BlockReference> {
+        let (sender, receiver) = oneshot::channel();
+        self.send(CoreThreadCommand::Processed(refs, sender)).await;
+        receiver.await.expect("core thread is not expected to stop")
+    }
+
     async fn send(&self, command: CoreThreadCommand) {
         self.metrics.core_lock_enqueued.inc();
         if self.sender.send(command).await.is_err() {
@@ -123,6 +133,18 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
                 CoreThreadCommand::GetMissing(sender) => {
                     let missing = self.syncer.core().block_manager().missing_blocks();
                     sender.send(missing.to_vec()).ok();
+                }
+                CoreThreadCommand::Processed(refs, sender) => {
+                    let result = refs
+                        .into_iter()
+                        .filter(|block_id| {
+                            self.syncer
+                                .core()
+                                .block_manager()
+                                .exists_or_pending(*block_id)
+                        })
+                        .collect();
+                    sender.send(result).ok();
                 }
             }
         }

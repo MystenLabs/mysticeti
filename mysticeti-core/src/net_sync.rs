@@ -345,7 +345,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 
         let _guard = metrics.code_scope_latency.latency_histogram(&[label]);
 
+        let processed = inner
+            .syncer
+            .processed(blocks.iter().map(|block| *block.reference()).collect())
+            .await;
+
         for block in blocks.iter() {
+            // skip the processing if already processed.
+            if processed.contains(block.reference()) {
+                continue;
+            }
             tracing::debug!("Received {} from {}", block.reference(), peer);
 
             metrics

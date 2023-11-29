@@ -353,6 +353,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         for block in blocks.iter() {
             // skip the processing if already processed.
             if processed.contains(block.reference()) {
+                tracing::debug!("Skip block {} as is already processed", block.reference());
                 continue;
             }
             tracing::debug!("Received {} from {}", block.reference(), peer);

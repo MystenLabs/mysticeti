@@ -343,6 +343,7 @@ where
             return;
         }
 
+        let mut to_request: Vec<BlockReference> = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {
             let hostname = self
@@ -359,28 +360,28 @@ where
             // we have a network partition. We should try to find an other peer from which
             // to (temporarily) sync the blocks from that authority.
 
-            //to_request.extend(missing.into_iter().collect::<Vec<_>>());
+            to_request.extend(missing.into_iter().collect::<Vec<_>>());
+        }
 
-            // just sort them by ascending order to help facilitate the processing once responses arrive
-            let to_request: Vec<BlockReference> = missing
-                .into_iter()
-                .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
-                .collect::<Vec<_>>();
+        // just sort them by ascending order to help facilitate the processing once responses arrive
+        to_request = to_request
+            .into_iter()
+            .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
+            .collect::<Vec<_>>();
 
-            for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
-                let Some((peer, permit)) = self.sample_peer(&[self.id, authority as u64]) else {
-                    break;
-                };
-                let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-                permit.send(message);
+        for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
+            let Some((peer, permit)) = self.sample_peer(&[self.id]) else {
+                break;
+            };
+            let message = NetworkMessage::RequestBlocks(chunks.to_vec());
+            permit.send(message);
 
-                let hostname = self.committee.authority_safe(peer).hostname();
+            let hostname = self.committee.authority_safe(peer).hostname();
 
-                self.metrics
-                    .block_sync_requests_sent
-                    .with_label_values(&[&hostname])
-                    .inc();
-            }
+            self.metrics
+                .block_sync_requests_sent
+                .with_label_values(&[&hostname])
+                .inc();
         }
     }
 

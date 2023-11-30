@@ -451,12 +451,9 @@ impl<H: BlockHandler> Core<H> {
             let connected_leaders: Vec<_> = leaders
                 .iter()
                 .filter(|leader| connected_authorities.contains(**leader))
+                .cloned()
                 .collect();
             if connected_leaders.is_empty() {
-                let leader_index = *leaders.first().unwrap();
-                let leader_hostname = self.committee.authority_safe(leader_index).hostname();
-
-                tracing::debug!("Leader not connected: {}", leader_hostname);
                 self.metrics
                     .ready_new_block
                     .with_label_values(&["leader_not_connected"])
@@ -466,7 +463,7 @@ impl<H: BlockHandler> Core<H> {
 
             if self
                 .block_store
-                .all_blocks_exists_at_authority_round(&leaders, leader_round)
+                .all_blocks_exists_at_authority_round(&connected_leaders, leader_round)
             {
                 // time to receive leader
                 let now = Instant::now();
@@ -488,13 +485,9 @@ impl<H: BlockHandler> Core<H> {
                 return true;
             }
 
-            // TODO: for now just get the one as we don't support multiple leaders
-            let leader_index = *leaders.first().unwrap();
-            let leader_hostname = self.committee.authority_safe(leader_index).hostname();
-
             self.metrics
                 .ready_new_block
-                .with_label_values(&[format!("leader_not_found:{leader_hostname}").as_str()])
+                .with_label_values(&["leader_not_found"])
                 .inc();
             false
         } else {

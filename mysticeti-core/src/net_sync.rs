@@ -351,7 +351,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .processed(blocks.iter().map(|block| *block.reference()).collect())
             .await;
 
-        for block in blocks.iter() {
+        let mut to_process = Vec::new();
+        for block in blocks.into_iter() {
             // skip the processing if already processed.
             if processed.contains(block.reference()) {
                 tracing::debug!("Skip block {} as is already processed", block.reference());
@@ -380,7 +381,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 return Err(e);
             }
             // Verify blocks based on customized validation rules
-            if let Err(e) = block_verifier.verify(block).await {
+            if let Err(e) = block_verifier.verify(&block).await {
                 tracing::warn!(
                     "Rejected incorrect block {} based on validation rules from {}: {:?}",
                     block.reference(),
@@ -390,10 +391,17 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 // Terminate connection on receiving incorrect block
                 return Err(eyre::Report::msg(""));
             }
+
+            to_process.push(block);
         }
 
-        let connected_authorities = inner.connected_authorities.lock().authorities.clone();
-        inner.syncer.add_blocks(blocks, connected_authorities).await;
+        if !to_process.is_empty() {
+            let connected_authorities = inner.connected_authorities.lock().authorities.clone();
+            inner
+                .syncer
+                .add_blocks(to_process, connected_authorities)
+                .await;
+        }
 
         Ok(())
     }

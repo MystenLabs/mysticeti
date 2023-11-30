@@ -33,10 +33,10 @@ pub struct Committee {
     quorum_threshold: Stake,   // The minimum stake required for quorum
     #[serde(skip)]
     #[serde(default = "default_lru_cache")]
-    leaders_cache: Arc<Mutex<LruCache<RoundNumber, AuthorityIndex>>>,
+    leaders_cache: Arc<Mutex<LruCache<RoundNumber, Vec<AuthorityIndex>>>>,
 }
 
-fn default_lru_cache() -> Arc<Mutex<LruCache<RoundNumber, AuthorityIndex>>> {
+fn default_lru_cache() -> Arc<Mutex<LruCache<RoundNumber, Vec<AuthorityIndex>>>> {
     Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(300).unwrap())))
 }
 
@@ -161,8 +161,8 @@ impl Committee {
                 }
 
                 let mut guard = self.leaders_cache.lock();
-                if let Some(leader_index) = guard.get(&round) {
-                    *leader_index
+                if let Some(leader_indexes) = guard.get(&round) {
+                    leader_indexes[0]
                 } else {
                     let mut seed_bytes = [0u8; 32];
                     seed_bytes[32 - 8..].copy_from_slice(&round.to_le_bytes());
@@ -178,9 +178,54 @@ impl Committee {
                         .expect("Weighted choice error: stake values incorrect!")
                         .0 as AuthorityIndex;
 
-                    guard.put(round, leader_index);
+                    guard.put(round, vec![leader_index]);
                     leader_index
                 }
+            }
+        }
+    }
+
+    pub fn elect_leader_with_offset(&self, round: u64, offset: u64) -> AuthorityIndex {
+        cfg_if::cfg_if! {
+            // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)
+            // we can use the staked approach.
+            if #[cfg(test)] {
+                ((round + offset) % self.authorities.len() as u64) as AuthorityIndex
+            } else {
+                assert!((offset as usize) < self.authorities.len());
+
+                // if genesis, always return index 0 - TODO: this needs to be removed.
+                if round == 0 {
+                    return 0;
+                }
+
+                let mut guard = self.leaders_cache.lock();
+                let leader_indexes = guard.get_or_insert_mut(round, Vec::new);
+
+                for i in leader_indexes.len() as u64..=offset {
+                    let mut seed_bytes = [0u8; 32];
+
+                    seed_bytes[32 - 8..].copy_from_slice(&(round + i).to_le_bytes());
+                        let mut rng = StdRng::from_seed(seed_bytes);
+                        let choices = self
+                            .authorities
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, _authority)| {
+                                let id = *index as AuthorityIndex;
+                                !leader_indexes.contains(&id)
+                            })
+                            .map(|(index, authority)| (index, authority.stake as f32))
+                            .collect::<Vec<_>>();
+                        let leader_index = choices
+                            .choose_weighted(&mut rng, |item| item.1)
+                            .expect("Weighted choice error: stake values incorrect!")
+                            .0 as AuthorityIndex;
+
+                        leader_indexes.push(leader_index);
+                }
+
+                leader_indexes[offset as usize]
             }
         }
     }

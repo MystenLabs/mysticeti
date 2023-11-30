@@ -200,7 +200,7 @@ impl Linearizer {
     }
 
     fn update_reputation_scores(&mut self, height: u64, to_commit: &Vec<Data<StatementBlock>>) {
-        static NUM_SUB_DAGS_PER_SCHEDULE: u64 = 100;
+        static NUM_SUB_DAGS_PER_SCHEDULE: u64 = 200;
 
         // always reset when it is the first for the new window
         if height % NUM_SUB_DAGS_PER_SCHEDULE == 1 {
@@ -208,12 +208,13 @@ impl Linearizer {
         }
 
         for block in to_commit {
-            for include in block.includes() {
-                if self.last_committed_leader == *include {
-                    self.reputation_scores.add_score(block.author(), 1);
-                    break;
-                }
-            }
+            //for include in block.includes() {
+            //    if self.last_committed_leader == *include {
+            // We give one point to the author of every committed block. This could be good enough for now
+            self.reputation_scores.add_score(block.author(), 1);
+            //        break;
+            //    }
+            //}
         }
 
         // mark the reputation scores as final

@@ -101,7 +101,7 @@ impl BaseCommitter {
         }
 
         let offset = self.options.leader_offset as RoundNumber;
-        Some(self.committee.elect_leader(round + offset))
+        Some(self.committee.elect_leader_with_offset(round, offset))
     }
 
     /// Find which block is supported at (author, round) by the given block.

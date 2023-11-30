@@ -205,7 +205,7 @@ impl Committee {
                 for i in leader_indexes.len() as u64..=offset {
                     let mut seed_bytes = [0u8; 32];
 
-                    seed_bytes[32 - 8..].copy_from_slice(&(round + i).to_le_bytes());
+                    seed_bytes[32 - 8..].copy_from_slice(&(round + (i * self.authorities.len() as u64)).to_le_bytes());
                         let mut rng = StdRng::from_seed(seed_bytes);
                         let choices = self
                             .authorities

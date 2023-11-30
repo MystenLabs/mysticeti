@@ -232,6 +232,7 @@ pub struct BlockFetcher {
 
 impl BlockFetcher {
     pub fn start<B, C>(
+        committee: Arc<Committee>,
         id: AuthorityIndex,
         inner: Arc<NetworkSyncerInner<B, C>>,
         metrics: Arc<Metrics>,
@@ -241,7 +242,7 @@ impl BlockFetcher {
         C: CommitObserver + 'static,
     {
         let (sender, receiver) = mpsc::channel(100);
-        let worker = BlockFetcherWorker::new(id, inner, receiver, metrics);
+        let worker = BlockFetcherWorker::new(id, inner, receiver, metrics, committee);
         let handle = Handle::current().spawn(worker.run());
         Self { sender, handle }
     }
@@ -289,6 +290,7 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver + 'static> {
     parameters: SynchronizerParameters,
     metrics: Arc<Metrics>,
     enable: bool,
+    committee: Arc<Committee>,
 }
 
 impl<B, C> BlockFetcherWorker<B, C>
@@ -301,6 +303,7 @@ where
         inner: Arc<NetworkSyncerInner<B, C>>,
         receiver: mpsc::Receiver<BlockFetcherMessage>,
         metrics: Arc<Metrics>,
+        committee: Arc<Committee>,
     ) -> Self {
         let enable = env::var("USE_SYNCER").is_ok();
         Self {
@@ -311,6 +314,7 @@ where
             parameters: Default::default(),
             metrics,
             enable,
+            committee,
         }
     }
 
@@ -338,12 +342,16 @@ where
         if self.enable {
             return;
         }
-        let mut to_request: Vec<BlockReference> = Vec::new();
+
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {
+            let hostname = self
+                .committee
+                .authority_safe(authority as AuthorityIndex)
+                .hostname();
             self.metrics
                 .missing_blocks
-                .with_label_values(&[&authority.to_string()])
+                .with_label_values(&[&hostname])
                 .inc_by(missing.len() as u64);
 
             // TODO: If we are missing many blocks from the same authority
@@ -351,26 +359,28 @@ where
             // we have a network partition. We should try to find an other peer from which
             // to (temporarily) sync the blocks from that authority.
 
-            to_request.extend(missing.into_iter().collect::<Vec<_>>());
-        }
+            //to_request.extend(missing.into_iter().collect::<Vec<_>>());
 
-        // just sort them by ascending order to help facilitate the processing once responses arrive
-        to_request = to_request
-            .into_iter()
-            .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
-            .collect::<Vec<_>>();
+            // just sort them by ascending order to help facilitate the processing once responses arrive
+            let to_request: Vec<BlockReference> = missing
+                .into_iter()
+                .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
+                .collect::<Vec<_>>();
 
-        for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
-            let Some((peer, permit)) = self.sample_peer(&[self.id]) else {
-                break;
-            };
-            let message = NetworkMessage::RequestBlocks(chunks.to_vec());
-            permit.send(message);
+            for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
+                let Some((peer, permit)) = self.sample_peer(&[self.id, authority as u64]) else {
+                    break;
+                };
+                let message = NetworkMessage::RequestBlocks(chunks.to_vec());
+                permit.send(message);
 
-            self.metrics
-                .block_sync_requests_sent
-                .with_label_values(&[&peer.to_string()])
-                .inc();
+                let hostname = self.committee.authority_safe(peer).hostname();
+
+                self.metrics
+                    .block_sync_requests_sent
+                    .with_label_values(&[&hostname])
+                    .inc();
+            }
         }
     }
 
@@ -392,7 +402,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        static NUMBER_OF_PEERS: usize = 6;
+        static NUMBER_OF_PEERS: usize = 10;
         let senders = senders
             .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
             .expect("Weighted choice error: latency values incorrect!")

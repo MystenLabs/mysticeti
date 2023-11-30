@@ -83,6 +83,7 @@ pub struct Metrics {
     pub block_receive_latency: HistogramVec,
 
     pub code_scope_latency: HistogramVec,
+    pub leader_receive_time_latency: HistogramVec,
     pub ready_new_block: IntCounterVec,
     pub init_own_block_stream: IntCounterVec,
     pub channel_messages: IntCounterVec,
@@ -430,6 +431,13 @@ impl Metrics {
                 "channel_messages_total",
                 "The total number of messages in the channel not consumed yet",
                 &["direction","authority_address"],
+                registry
+            ).unwrap(),
+
+            leader_receive_time_latency: register_histogram_vec_with_registry!(
+                "leader_receive_time_latency",
+                "Time it takes to receive a leader",
+                &["authority"],
                 registry
             ).unwrap(),
 

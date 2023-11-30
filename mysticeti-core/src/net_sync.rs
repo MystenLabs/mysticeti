@@ -117,13 +117,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             notify,
             syncer,
             block_store,
-            committee,
+            committee: committee.clone(),
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
             epoch_closing_time,
             connected_authorities,
         });
         let block_fetcher = Arc::new(BlockFetcher::start(
+            committee,
             authority_index,
             inner.clone(),
             metrics.clone(),

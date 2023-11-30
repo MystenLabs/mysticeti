@@ -24,12 +24,13 @@ use crate::{
 };
 use crate::{block_manager::BlockManager, metrics::Metrics};
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
+use itertools::Itertools;
 use minibytes::Bytes;
 use std::collections::{HashSet, VecDeque};
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -82,7 +83,7 @@ impl<H: BlockHandler> Core<H> {
             unprocessed_blocks,
             last_committed_leader,
         } = recovered;
-        let mut threshold_clock = ThresholdClockAggregator::new(0);
+        let mut threshold_clock = ThresholdClockAggregator::new(0, metrics.clone());
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {
                 if let MetaStatement::Include(include) = pending_block {
@@ -174,7 +175,10 @@ impl<H: BlockHandler> Core<H> {
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
         let utc_now = timestamp_utc();
-        for (position, processed) in processed.into_iter() {
+        for (position, processed) in processed
+            .into_iter()
+            .sorted_by(|b1, b2| b1.1.round().cmp(&b2.1.round()))
+        {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
@@ -239,6 +243,10 @@ impl<H: BlockHandler> Core<H> {
                     .contains(&self.authority)
             {
                 continue;
+            }
+
+            if clock_round < round {
+                tracing::debug!("Proposing now for previous leader round {clock_round}");
             }
 
             let mut includes = vec![];
@@ -460,6 +468,23 @@ impl<H: BlockHandler> Core<H> {
                 .block_store
                 .all_blocks_exists_at_authority_round(&leaders, leader_round)
             {
+                // time to receive leader
+                let now = Instant::now();
+                tracing::debug!(
+                    "Leader receive time for round {}: {:?} , {:?}",
+                    leader_round,
+                    now.duration_since(self.threshold_clock.last_quorum_ts),
+                    leaders
+                );
+
+                self.metrics
+                    .leader_receive_time_latency
+                    .with_label_values(&[&format!("{:?}", leaders)])
+                    .observe(
+                        now.duration_since(self.threshold_clock.last_quorum_ts)
+                            .as_secs_f64(),
+                    );
+
                 return true;
             }
 

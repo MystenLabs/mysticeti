@@ -129,28 +129,48 @@ impl Committee {
         total_stake
     }
 
-    pub fn elect_leader(&self, round: u64) -> AuthorityIndex {
+    pub fn elect_leader(&self, round: u64, offset: u64) -> AuthorityIndex {
         cfg_if::cfg_if! {
             // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)
             // we can use the staked approach.
             if #[cfg(test)] {
-                (round % self.authorities.len() as u64) as AuthorityIndex
+                ((round + offset) % self.authorities.len() as u64) as AuthorityIndex
             } else {
-                let mut seed_bytes = [0u8; 32];
-                seed_bytes[32 - 8..].copy_from_slice(&round.to_le_bytes());
-                let mut rng = StdRng::from_seed(seed_bytes);
-                let choices = self
-                    .authorities
-                    .iter()
-                    .enumerate()
-                    .map(|(index, authority)| (index, authority.stake as f32))
-                    .collect::<Vec<_>>();
-                choices
-                    .choose_weighted(&mut rng, |item| item.1)
-                    .expect("Weighted choice error: stake values incorrect!")
-                    .0 as AuthorityIndex
+                self.elect_leader_stake_based(round, offset)
             }
         }
+    }
+
+    pub fn elect_leader_stake_based(&self, round: u64, offset: u64) -> AuthorityIndex {
+        assert!((offset as usize) < self.authorities.len());
+
+        // if genesis, always return index 0 - TODO: this needs to be removed.
+        if round == 0 {
+            return 0;
+        }
+
+        // To ensure that we elect different leaders for the same round (using different offset) we are
+        // using as seed the round number to shuffle in a weighted way the results, but skip based on the offset
+        // TODO: use a cache in case this proves to be computationally expensive
+        let mut seed_bytes = [0u8; 32];
+        seed_bytes[32 - 8..].copy_from_slice(&(round).to_le_bytes());
+        let mut rng = StdRng::from_seed(seed_bytes);
+
+        let choices = self
+            .authorities
+            .iter()
+            .enumerate()
+            .map(|(index, authority)| (index as AuthorityIndex, authority.stake as f32))
+            .collect::<Vec<_>>();
+
+        let leader_index = *choices
+            .choose_multiple_weighted(&mut rng, self.authorities.len(), |item| item.1)
+            .expect("Weighted choice error: stake values incorrect!")
+            .skip(offset as usize)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()[0];
+
+        leader_index
     }
 
     pub fn random_authority(&self, rng: &mut impl Rng) -> AuthorityIndex {
@@ -499,5 +519,20 @@ mod test {
         assert_eq!(Some(1..3), b.add(4));
         assert_eq!(Some(4..5), b.add(6));
         assert_eq!(Some(6..7), b.finish());
+    }
+
+    #[test]
+    fn stake_aware_leader_election() {
+        let authorities_stake = vec![100, 200, 300, 400, 500];
+        let num_of_authorities = authorities_stake.len();
+        let committee = Committee::new_test(authorities_stake);
+
+        let mut elected_leaders = HashSet::new();
+        for offset in 0..num_of_authorities {
+            assert!(
+                elected_leaders.insert(committee.elect_leader_stake_based(10, offset as u64)),
+                "Leader already elected for another offset - that shouldn't happen"
+            );
+        }
     }
 }

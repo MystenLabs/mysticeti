@@ -37,7 +37,7 @@ fn direct_commit() {
             if let LeaderStatus::Commit(block) = leader {
                 let leader_round = wave_length;
                 let leader_offset = i as u64;
-                let expected = committee.elect_leader(leader_round + leader_offset);
+                let expected = committee.elect_leader(leader_round, leader_offset);
                 assert_eq!(block.author(), expected);
             } else {
                 panic!("Expected a committed leader")
@@ -109,7 +109,7 @@ fn multiple_direct_commit() {
         for (i, leader) in sequence.iter().enumerate() {
             if let LeaderStatus::Commit(block) = leader {
                 let leader_offset = i as u64;
-                let expected = committee.elect_leader(leader_round + leader_offset);
+                let expected = committee.elect_leader(leader_round, leader_offset);
                 assert_eq!(block.author(), expected);
             } else {
                 panic!("Expected a committed leader")
@@ -130,7 +130,7 @@ fn direct_commit_partial_round() {
     let number_of_leaders = committee.quorum_threshold() as usize;
 
     let first_leader_round = wave_length;
-    let first_leader = committee.elect_leader(first_leader_round);
+    let first_leader = committee.elect_leader(first_leader_round, 0);
     let last_committed = BlockReference::new_test(first_leader, first_leader_round);
 
     let enough_blocks = 2 * wave_length - 1;
@@ -153,7 +153,7 @@ fn direct_commit_partial_round() {
     for (i, leader) in sequence.iter().enumerate() {
         if let LeaderStatus::Commit(block) = leader {
             let leader_offset = (i + 1) % committee.len();
-            let expected = committee.elect_leader(first_leader_round + leader_offset as u64);
+            let expected = committee.elect_leader(first_leader_round, leader_offset as u64);
             assert_eq!(block.author(), expected);
         } else {
             panic!("Expected a committed leader")
@@ -193,7 +193,7 @@ fn direct_commit_late_call() {
         for (j, leader) in leaders.iter().enumerate() {
             if let LeaderStatus::Commit(block) = leader {
                 let leader_offset = j as u64;
-                let expected = committee.elect_leader(leader_round + leader_offset);
+                let expected = committee.elect_leader(leader_round, leader_offset);
                 assert_eq!(block.author(), expected);
             } else {
                 panic!("Expected a committed leader")
@@ -247,7 +247,7 @@ fn no_leader() {
 
     // Add enough blocks to reach the decision round of wave 1 (but without its leader).
     let leader_round_1 = wave_length;
-    let leader_1 = committee.elect_leader(leader_round_1);
+    let leader_1 = committee.elect_leader(leader_round_1, 0);
 
     let connections = committee
         .authorities()
@@ -281,7 +281,7 @@ fn no_leader() {
     for (i, leader) in sequence.iter().enumerate() {
         let leader_round = wave_length;
         let leader_offset = i as u64;
-        let expected_leader = committee.elect_leader(leader_round + leader_offset);
+        let expected_leader = committee.elect_leader(leader_round, leader_offset);
         if i == 0 {
             if let LeaderStatus::Skip(leader, round) = sequence[i] {
                 assert_eq!(leader, expected_leader);
@@ -316,7 +316,7 @@ fn direct_skip() {
     // Filter out that leader.
     let references_without_leader_1: Vec<_> = references_1
         .into_iter()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Add enough blocks to reach the decision round of wave 1.
@@ -346,7 +346,7 @@ fn direct_skip() {
     for (i, leader) in sequence.iter().enumerate() {
         let leader_round = wave_length;
         let leader_offset = i as u64;
-        let expected_leader = committee.elect_leader(leader_round + leader_offset);
+        let expected_leader = committee.elect_leader(leader_round, leader_offset);
         if i == 0 {
             if let LeaderStatus::Skip(leader, round) = sequence[i] {
                 assert_eq!(leader, expected_leader);
@@ -382,7 +382,7 @@ fn indirect_commit() {
     let references_without_leader_1: Vec<_> = references_1
         .iter()
         .cloned()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Only 2f+1 validators vote for the that leader.
@@ -455,7 +455,7 @@ fn indirect_commit() {
     assert_eq!(sequence.len(), 2 * number_of_leaders);
 
     let leader_round = wave_length;
-    let leader = committee.elect_leader(leader_round);
+    let leader = committee.elect_leader(leader_round, 0);
     if let LeaderStatus::Commit(ref block) = sequence[0] {
         assert_eq!(block.author(), leader);
     } else {
@@ -478,7 +478,7 @@ fn indirect_skip() {
     let references_2 = build_dag(&committee, &mut block_writer, None, leader_round_2);
 
     // Filter out the first leader of wave 2.
-    let leader_2 = committee.elect_leader(leader_round_2);
+    let leader_2 = committee.elect_leader(leader_round_2, 0);
     let references_without_leader_2: Vec<_> = references_2
         .iter()
         .cloned()
@@ -536,7 +536,7 @@ fn indirect_skip() {
     for n in 0..number_of_leaders {
         let leader_round_1 = wave_length;
         let leader_offset = n as u64;
-        let leader_1 = committee.elect_leader(leader_round_1 + leader_offset);
+        let leader_1 = committee.elect_leader(leader_round_1, leader_offset);
         if let LeaderStatus::Commit(ref block) = sequence[n] {
             assert_eq!(block.author(), leader_1);
         } else {
@@ -564,7 +564,7 @@ fn indirect_skip() {
                 panic!("Expected a skipped leader")
             }
         } else {
-            let leader_2 = committee.elect_leader(leader_round_2 + leader_offset);
+            let leader_2 = committee.elect_leader(leader_round_2, leader_offset);
             if let LeaderStatus::Commit(ref block) = sequence[number_of_leaders + n] {
                 assert_eq!(block.author(), leader_2);
             } else {
@@ -577,7 +577,7 @@ fn indirect_skip() {
     for n in 0..number_of_leaders {
         let leader_round_3 = 3 * wave_length;
         let leader_offset = n as u64;
-        let leader_3 = committee.elect_leader(leader_round_3 + leader_offset);
+        let leader_3 = committee.elect_leader(leader_round_3, leader_offset);
         if let LeaderStatus::Commit(ref block) = sequence[2 * number_of_leaders + n] {
             assert_eq!(block.author(), leader_3);
         } else {
@@ -604,7 +604,7 @@ fn undecided() {
     let references_1_without_leader: Vec<_> = references_1
         .iter()
         .cloned()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Create a dag layer where only one authority votes for that leader.

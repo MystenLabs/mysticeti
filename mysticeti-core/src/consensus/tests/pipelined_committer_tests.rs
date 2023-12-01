@@ -34,7 +34,7 @@ fn direct_commit() {
 
     assert_eq!(sequence.len(), 1);
     if let LeaderStatus::Commit(ref block) = sequence[0] {
-        assert_eq!(block.author(), committee.elect_leader(1));
+        assert_eq!(block.author(), committee.elect_leader(1, 0));
     } else {
         panic!("Expected a committed leader")
     };
@@ -99,7 +99,7 @@ fn multiple_direct_commit() {
         assert_eq!(sequence.len(), 1);
         let leader_round = n as u64;
         if let LeaderStatus::Commit(ref block) = sequence[0] {
-            assert_eq!(block.author(), committee.elect_leader(leader_round));
+            assert_eq!(block.author(), committee.elect_leader(leader_round, 0));
         } else {
             panic!("Expected a committed leader")
         }
@@ -138,7 +138,7 @@ fn direct_commit_late_call() {
     for (i, leader_block) in sequence.iter().enumerate() {
         let leader_round = 1 + i as u64;
         if let LeaderStatus::Commit(ref block) = leader_block {
-            assert_eq!(block.author(), committee.elect_leader(leader_round));
+            assert_eq!(block.author(), committee.elect_leader(leader_round, 0));
         } else {
             panic!("Expected a committed leader")
         };
@@ -184,7 +184,7 @@ fn no_leader() {
 
     // Add enough blocks to reach the decision round of the first leader (but without the leader).
     let leader_round_1 = 1;
-    let leader_1 = committee.elect_leader(leader_round_1);
+    let leader_1 = committee.elect_leader(leader_round_1, 0);
 
     let genesis: Vec<_> = committee
         .authorities()
@@ -243,7 +243,7 @@ fn direct_skip() {
     // Filter out that leader.
     let references_without_leader_1: Vec<_> = references_1
         .into_iter()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Add enough blocks to reach the decision round of the first leader.
@@ -271,7 +271,7 @@ fn direct_skip() {
 
     assert_eq!(sequence.len(), 1);
     if let LeaderStatus::Skip(leader, round) = sequence[0] {
-        assert_eq!(leader, committee.elect_leader(leader_round_1));
+        assert_eq!(leader, committee.elect_leader(leader_round_1, 0));
         assert_eq!(round, leader_round_1);
     } else {
         panic!("Expected to directly skip the leader");
@@ -295,7 +295,7 @@ fn indirect_commit() {
     let references_without_leader_1: Vec<_> = references_1
         .iter()
         .cloned()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Only 2f+1 validators vote for the 1st leader.
@@ -370,7 +370,7 @@ fn indirect_commit() {
     assert_eq!(sequence.len(), 5);
 
     let leader_round = 1;
-    let leader = committee.elect_leader(leader_round);
+    let leader = committee.elect_leader(leader_round, 0);
     if let LeaderStatus::Commit(ref block) = sequence[0] {
         assert_eq!(block.author(), leader);
     } else {
@@ -395,7 +395,7 @@ fn indirect_skip() {
     let references_without_leader_4: Vec<_> = references_4
         .iter()
         .cloned()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_4))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_4, 0))
         .collect();
 
     // Only f+1 validators connect to the 4th leader.
@@ -448,7 +448,7 @@ fn indirect_skip() {
     // Ensure we commit the first 3 leaders.
     for i in 0..=2 {
         let leader_round = i + 1;
-        let leader = committee.elect_leader(leader_round);
+        let leader = committee.elect_leader(leader_round, 0);
         if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
             assert_eq!(block.author(), leader);
         } else {
@@ -458,7 +458,7 @@ fn indirect_skip() {
 
     // Ensure we skip the leader of wave 1 (first pipeline) but commit the others.
     if let LeaderStatus::Skip(leader, round) = sequence[3] {
-        assert_eq!(leader, committee.elect_leader(leader_round_4));
+        assert_eq!(leader, committee.elect_leader(leader_round_4, 0));
         assert_eq!(round, leader_round_4);
     } else {
         panic!("Expected a skipped leader")
@@ -466,7 +466,7 @@ fn indirect_skip() {
 
     for i in 4..=6 {
         let leader_round = i + 1;
-        let leader = committee.elect_leader(leader_round);
+        let leader = committee.elect_leader(leader_round, 0);
         if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
             assert_eq!(block.author(), leader);
         } else {
@@ -492,7 +492,7 @@ fn undecided() {
     let references_1_without_leader: Vec<_> = references_1
         .iter()
         .cloned()
-        .filter(|x| x.authority != committee.elect_leader(leader_round_1))
+        .filter(|x| x.authority != committee.elect_leader(leader_round_1, 0))
         .collect();
 
     // Create a dag layer where only one authority votes for the first leader.

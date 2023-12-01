@@ -3,12 +3,13 @@
 
 use std::{collections::VecDeque, sync::Arc};
 
+use crate::types::AuthorityRound;
 use crate::{
     block_store::BlockStore,
     committee::Committee,
     consensus::base_committer::BaseCommitterOptions,
     metrics::Metrics,
-    types::{format_authority_round, AuthorityIndex, BlockReference, RoundNumber},
+    types::{format_authority_round, AuthorityIndex, RoundNumber},
 };
 
 use super::{base_committer::BaseCommitter, LeaderStatus, DEFAULT_WAVE_LENGTH};
@@ -26,7 +27,7 @@ impl UniversalCommitter {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
-    pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
+    pub fn try_commit(&self, last_decided: AuthorityRound) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
         // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round = last_decided.round();
@@ -34,12 +35,21 @@ impl UniversalCommitter {
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = VecDeque::new();
-        for round in (last_decided_round..=highest_known_round).rev() {
+        'outer: for round in (last_decided_round..=highest_known_round.saturating_sub(2)).rev() {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;
                 };
+
+                // now that we reached the last committed leader we can stop the commit rule
+                if (round, leader) == last_decided_round_authority {
+                    tracing::debug!(
+                        "Leader of round {round} -> {leader} - reached last committed, now exit"
+                    );
+                    break 'outer;
+                }
+
                 tracing::debug!(
                     "Trying to decide {} with {committer}",
                     format_authority_round(leader, round)
@@ -51,28 +61,34 @@ impl UniversalCommitter {
                 tracing::debug!("Outcome of direct rule: {status}");
 
                 // If we can't directly decide the leader, try to indirectly decide it.
-                if !status.is_decided() {
-                    status = committer.try_indirect_decide(leader, round, leaders.iter());
-                    self.update_metrics(&status, false);
+                if status.is_decided() {
+                    leaders.push_front((status.clone(), true));
+                } else {
+                    status = committer.try_indirect_decide(
+                        leader,
+                        round,
+                        leaders.iter().map(|(x, _)| x),
+                    );
+                    leaders.push_front((status.clone(), false));
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
-
-                leaders.push_front(status);
             }
         }
 
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
-            // Skip all leaders before the last decided round.
-            .skip_while(|x| (x.round(), x.authority()) != last_decided_round_authority)
-            // Skip the last decided leader.
-            .skip(1)
             // Filter out all the genesis.
-            .filter(|x| x.round() > 0)
+            .filter(|(x, _)| x.round() > 0)
             // Stop the sequence upon encountering an undecided leader.
-            .take_while(|x| x.is_decided())
-            .inspect(|x| tracing::debug!("Decided {x}"))
+            .take_while(|(x, _)| x.is_decided())
+            // We want to report metrics at this point to ensure that the decisions are reported only once
+            // hence we increase our accuracy
+            .inspect(|(x, direct_decided)| {
+                self.update_metrics(x, *direct_decided);
+                tracing::debug!("Decided {x}");
+            })
+            .map(|(x, _)| x)
             .collect()
     }
 

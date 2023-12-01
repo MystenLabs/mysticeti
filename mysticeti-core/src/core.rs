@@ -10,7 +10,8 @@ use crate::runtime::timestamp_utc;
 use crate::state::CoreRecoveredState;
 use crate::threshold_clock::ThresholdClockAggregator;
 use crate::types::{
-    AuthorityIndex, AuthoritySet, BaseStatement, BlockReference, RoundNumber, StatementBlock,
+    AuthorityIndex, AuthorityRound, AuthoritySet, BaseStatement, BlockReference, RoundNumber,
+    StatementBlock,
 };
 use crate::wal::{WalPosition, WalSyncer, WalWriter};
 use crate::{
@@ -39,7 +40,7 @@ pub struct Core<H: BlockHandler> {
     authority: AuthorityIndex,
     threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
-    last_commit_leader: BlockReference,
+    last_decided_leader: AuthorityRound,
     wal_writer: WalWriter,
     block_store: BlockStore,
     pub(crate) metrics: Arc<Metrics>,
@@ -133,7 +134,7 @@ impl<H: BlockHandler> Core<H> {
             authority,
             threshold_clock,
             committee,
-            last_commit_leader: last_committed_leader.unwrap_or_default(),
+            last_decided_leader: last_committed_leader.unwrap_or_default().into(),
             wal_writer,
             block_store,
             metrics,
@@ -332,31 +333,29 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
-        let sequence: Vec<_> = self
-            .committer
-            .try_commit(self.last_commit_leader)
-            .into_iter()
-            .filter_map(|leader| leader.into_decided_block())
-            .collect();
+        let sequence: Vec<_> = self.committer.try_commit(self.last_decided_leader);
 
         if let Some(last) = sequence.last() {
-            self.last_commit_leader = *last.reference();
+            self.last_decided_leader = last.clone().into_decided_author_round();
             self.metrics.commit_round.set(last.round() as i64);
         }
 
         // todo: should ideally come from execution result of epoch smart contract
-        if self.last_commit_leader.round() > self.rounds_in_epoch {
+        if self.last_decided_leader.round() > self.rounds_in_epoch {
             self.epoch_manager.epoch_change_begun();
         }
 
         sequence
+            .into_iter()
+            .filter_map(|leader| leader.into_committed_block())
+            .collect()
     }
 
     pub fn cleanup(&self) {
-        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 100;
+        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 500;
 
         self.block_store.cleanup(
-            self.last_commit_leader
+            self.last_decided_leader
                 .round()
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );
@@ -372,7 +371,7 @@ impl<H: BlockHandler> Core<H> {
         let quorum_round = self.threshold_clock.get_round();
 
         // Leader round we check if we have a leader block
-        if quorum_round > self.last_commit_leader.round().max(period - 1) {
+        if quorum_round > self.last_decided_leader.round().max(period - 1) {
             let leader_round = quorum_round - 1;
             let mut leaders = self.committer.get_leaders(leader_round);
             leaders.retain(|leader| connected_authorities.contains(*leader));

@@ -300,6 +300,28 @@ impl BlockStore {
         }
         parents.contains(earlier_block)
     }
+
+    // Returns all the ancestors of the later_block to the `earlier_round`, assuming that there is
+    // a path to them.
+    pub fn linked_to_round(
+        &self,
+        later_block: &Data<StatementBlock>,
+        earlier_round: RoundNumber,
+    ) -> Vec<Data<StatementBlock>> {
+        let mut parents = vec![later_block.clone()];
+        for r in (earlier_round..later_block.round()).rev() {
+            parents = self
+                .get_blocks_by_round(r)
+                .into_iter()
+                .filter(|block| {
+                    parents
+                        .iter()
+                        .any(|x| x.includes().contains(block.reference()))
+                })
+                .collect();
+        }
+        parents
+    }
 }
 
 impl BlockStoreInner {

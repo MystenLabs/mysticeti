@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::committee::Committee;
+use crate::committee::{Authority, Committee};
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -26,11 +26,13 @@ use crate::{
     consensus::universal_committer::UniversalCommitter,
 };
 use crate::{config::Parameters, consensus::linearizer::CommittedSubDag};
+use itertools::Itertools;
 use minibytes::Bytes;
 use std::collections::{HashSet, VecDeque};
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -82,7 +84,7 @@ impl<H: BlockHandler> Core<H> {
             unprocessed_blocks,
             last_committed_leader,
         } = recovered;
-        let mut threshold_clock = ThresholdClockAggregator::new(0);
+        let mut threshold_clock = ThresholdClockAggregator::new(0, metrics.clone());
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {
                 if let MetaStatement::Include(include) = pending_block {
@@ -171,7 +173,10 @@ impl<H: BlockHandler> Core<H> {
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
-        for (position, processed) in processed.into_iter() {
+        for (position, processed) in processed
+            .into_iter()
+            .sorted_by(|b1, b2| b1.1.round().cmp(&b2.1.round()))
+        {
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending
@@ -307,6 +312,15 @@ impl<H: BlockHandler> Core<H> {
         Some(block)
     }
 
+    pub fn leaders(&self, leader_round: RoundNumber) -> Vec<&Authority> {
+        let leaders = self.committer.get_leaders(leader_round);
+
+        leaders
+            .iter()
+            .map(|leader_id| self.committee.authority_safe(*leader_id))
+            .collect()
+    }
+
     pub fn wal_syncer(&self) -> WalSyncer {
         self.wal_writer
             .syncer()
@@ -373,10 +387,46 @@ impl<H: BlockHandler> Core<H> {
         // Leader round we check if we have a leader block
         if quorum_round > self.last_decided_leader.round().max(period - 1) {
             let leader_round = quorum_round - 1;
-            let mut leaders = self.committer.get_leaders(leader_round);
-            leaders.retain(|leader| connected_authorities.contains(*leader));
-            self.block_store
-                .all_blocks_exists_at_authority_round(&leaders, leader_round)
+            let leaders = self.committer.get_leaders(leader_round);
+            if leaders.is_empty() {
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["non_leader_round"])
+                    .inc();
+                return true;
+            }
+
+            let connected_leaders: Vec<_> = leaders
+                .iter()
+                .filter(|leader| connected_authorities.contains(**leader))
+                .cloned()
+                .collect();
+
+            if connected_leaders.is_empty() {
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["leader_not_connected"])
+                    .inc();
+                return true;
+            }
+
+            if self
+                .block_store
+                .all_blocks_exists_at_authority_round(&connected_leaders, leader_round)
+            {
+                // time to receive leader
+                let now = Instant::now();
+                tracing::debug!(
+                    "Leader receive time for round {}: {:?} , {:?}",
+                    leader_round,
+                    now.duration_since(self.threshold_clock.last_quorum_ts()),
+                    leaders
+                );
+
+                return true;
+            }
+
+            false
         } else {
             false
         }

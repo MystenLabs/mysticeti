@@ -69,6 +69,25 @@ impl Hash for BlockReference {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct AuthorityRound {
+    pub authority: AuthorityIndex,
+    pub round: RoundNumber,
+}
+
+impl AuthorityRound {
+    pub fn new(authority: AuthorityIndex, round: RoundNumber) -> Self {
+        Self { authority, round }
+    }
+    pub fn round(&self) -> RoundNumber {
+        self.round
+    }
+
+    pub fn authority(&self) -> AuthorityIndex {
+        self.authority
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 // Important. Adding fields here requires updating BlockDigest::new, and StatementBlock::verify
 pub struct StatementBlock {
@@ -682,6 +701,33 @@ impl fmt::Display for BaseStatement {
                 "+{}:{}:{}",
                 range.block, range.offset_start_inclusive, range.offset_end_exclusive
             ),
+        }
+    }
+}
+
+impl From<BlockReference> for AuthorityRound {
+    fn from(value: BlockReference) -> Self {
+        AuthorityRound::new(value.authority, value.round)
+    }
+}
+
+impl fmt::Debug for AuthorityRound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for AuthorityRound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.authority < 26 {
+            write!(
+                f,
+                "{}{}",
+                format_authority_index(self.authority),
+                self.round
+            )
+        } else {
+            write!(f, "[{:02}]{}", self.authority, self.round)
         }
     }
 }

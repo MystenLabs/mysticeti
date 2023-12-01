@@ -1,12 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::types::AuthorityRound;
 use crate::{
     consensus::{
         universal_committer::UniversalCommitterBuilder, LeaderStatus, DEFAULT_WAVE_LENGTH,
     },
     test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
-    types::{BlockReference, StatementBlock},
+    types::StatementBlock,
 };
 
 /// Commit one leader.
@@ -28,7 +29,7 @@ fn direct_commit() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -60,12 +61,12 @@ fn idempotence() {
     .build();
 
     // Commit one block.
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let committed = committer.try_commit(last_committed);
 
     // Ensure we don't commit it again.
     let last = committed.into_iter().last().unwrap();
-    let last_committed = BlockReference::new_test(last.authority(), last.round());
+    let last_committed = AuthorityRound::new(last.authority(), last.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());
@@ -78,7 +79,7 @@ fn multiple_direct_commit() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
-    let mut last_committed = BlockReference::new_test(0, 0);
+    let mut last_committed = AuthorityRound::new(0, 0);
     for n in 1..=10 {
         let enough_blocks = n + (wave_length - 1);
         let mut block_writer = TestBlockWriter::new(&committee);
@@ -105,7 +106,7 @@ fn multiple_direct_commit() {
         }
 
         let last = sequence.into_iter().last().unwrap();
-        last_committed = BlockReference::new_test(last.authority(), last.round());
+        last_committed = AuthorityRound::new(last.authority(), last.round());
     }
 }
 
@@ -130,7 +131,7 @@ fn direct_commit_late_call() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -166,7 +167,7 @@ fn no_genesis_commit() {
         .with_pipeline(true)
         .build();
 
-        let last_committed = BlockReference::new_test(0, 0);
+        let last_committed = AuthorityRound::new(0, 0);
         let sequence = committer.try_commit(last_committed);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
@@ -214,7 +215,7 @@ fn no_leader() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -265,7 +266,7 @@ fn direct_skip() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -364,7 +365,7 @@ fn indirect_commit() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 5);
@@ -440,7 +441,7 @@ fn indirect_skip() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 7);
@@ -525,7 +526,7 @@ fn undecided() {
     .with_pipeline(true)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());

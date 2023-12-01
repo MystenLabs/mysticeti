@@ -3,6 +3,7 @@
 
 use std::fmt::Display;
 
+use crate::types::AuthorityRound;
 use crate::{
     data::Data,
     types::{format_authority_round, AuthorityIndex, RoundNumber, StatementBlock},
@@ -57,7 +58,15 @@ impl LeaderStatus {
         }
     }
 
-    pub fn into_decided_block(self) -> Option<Data<StatementBlock>> {
+    pub fn into_decided_author_round(self) -> AuthorityRound {
+        match self {
+            Self::Commit(block) => AuthorityRound::new(block.author(), block.round()),
+            Self::Skip(authority, round) => AuthorityRound::new(authority, round),
+            Self::Undecided(..) => panic!("Decided block is either Commit or Skip"),
+        }
+    }
+
+    pub fn into_committed_block(self) -> Option<Data<StatementBlock>> {
         match self {
             Self::Commit(block) => Some(block),
             Self::Skip(..) => None,

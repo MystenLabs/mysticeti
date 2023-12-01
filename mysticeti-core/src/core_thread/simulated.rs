@@ -9,10 +9,10 @@ use crate::data::Data;
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
-    syncer: Mutex<Syncer<H, S, C>>,
+    syncer: RwLock<Syncer<H, S, C>>,
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -20,7 +20,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
 {
     pub fn start(syncer: Syncer<H, S, C>) -> Self {
         Self {
-            syncer: Mutex::new(syncer),
+            syncer: RwLock::new(syncer),
         }
     }
 
@@ -33,25 +33,40 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
     ) {
-        self.syncer.lock().add_blocks(blocks, connected_authorities);
+        self.syncer
+            .write()
+            .add_blocks(blocks, connected_authorities);
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
         self.syncer
-            .lock()
+            .write()
             .force_new_block(round, connected_authorities);
     }
 
     pub async fn cleanup(&self) {
-        self.syncer.lock().core().cleanup();
+        self.syncer.write().core().cleanup();
     }
 
     pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
         self.syncer
-            .lock()
+            .write()
             .core()
             .block_manager()
             .missing_blocks()
             .to_vec()
+    }
+
+    pub async fn processed(&self, refs: Vec<BlockReference>) -> HashSet<BlockReference> {
+        let lock = self.syncer.read();
+        refs.into_iter()
+            .filter_map(|block_id| {
+                if lock.core().block_manager().exists_or_pending(block_id) {
+                    Some(block_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }

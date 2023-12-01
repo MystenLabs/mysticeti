@@ -44,6 +44,8 @@ pub struct Parameters {
     pub shutdown_grace_period: Duration,
     pub number_of_leaders: usize,
     pub enable_pipelining: bool,
+    pub enable_cleanup: bool,
+    pub synchronizer_parameters: SynchronizerParameters,
 }
 
 impl Default for Parameters {
@@ -55,11 +57,39 @@ impl Default for Parameters {
             rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
             shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             number_of_leaders: Self::DEFAULT_NUMBER_OF_LEADERS,
-            enable_pipelining: true,
+            enable_pipelining: false,
+            enable_cleanup: true,
+            synchronizer_parameters: SynchronizerParameters::default(),
         }
     }
 }
 
+// TODO: A central controller will eventually dynamically update these parameters.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SynchronizerParameters {
+    /// The maximum number of helpers per authority.
+    pub maximum_helpers_per_authority: usize,
+    /// The number of blocks to send in a single batch.
+    pub batch_size: usize,
+    /// The sampling precision with which to re-evaluate the sync strategy.
+    pub sample_precision: Duration,
+    /// The interval at which to send stream blocks authored by other nodes.
+    pub stream_interval: Duration,
+    /// Threshold number of missing block from an authority to open a new stream.
+    pub new_stream_threshold: usize,
+}
+
+impl Default for SynchronizerParameters {
+    fn default() -> Self {
+        Self {
+            maximum_helpers_per_authority: 2,
+            batch_size: 100,
+            sample_precision: Duration::from_millis(250),
+            stream_interval: Duration::from_secs(1),
+            new_stream_threshold: 10,
+        }
+    }
+}
 impl Parameters {
     pub const DEFAULT_FILENAME: &'static str = "parameters.yaml";
 

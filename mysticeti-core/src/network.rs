@@ -35,6 +35,8 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
     Block(Data<StatementBlock>),
+    // Sending multiple blocks at once
+    Blocks(Vec<Data<StatementBlock>>),
     /// Request a few specific block references (this is not indented for large requests).
     RequestBlocks(Vec<BlockReference>),
     /// Indicate that a requested block is not found.
@@ -51,6 +53,7 @@ pub struct Connection {
     pub peer_id: usize,
     pub sender: mpsc::Sender<NetworkMessage>,
     pub receiver: mpsc::Receiver<NetworkMessage>,
+    pub latency_last_value_receiver: tokio::sync::watch::Receiver<Duration>,
 }
 
 impl Network {
@@ -192,6 +195,7 @@ struct WorkerConnection {
     receiver: mpsc::Receiver<NetworkMessage>,
     peer_id: usize,
     latency_sender: HistogramSender<Duration>,
+    latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
 }
 
 impl Worker {
@@ -281,12 +285,19 @@ impl Worker {
             receiver,
             peer_id,
             latency_sender,
+            latency_last_value_sender,
         } = connection;
         tracing::debug!("Connected to {}", peer_id);
         let (reader, writer) = stream.into_split();
         let (pong_sender, pong_receiver) = mpsc::channel(16);
-        let write_fut =
-            Self::handle_write_stream(writer, receiver, pong_receiver, latency_sender).boxed();
+        let write_fut = Self::handle_write_stream(
+            writer,
+            receiver,
+            pong_receiver,
+            latency_sender,
+            latency_last_value_sender,
+        )
+        .boxed();
         let read_fut = Self::handle_read_stream(reader, sender, pong_sender).boxed();
         let (r, _, _) = select_all([write_fut, read_fut]).await;
         tracing::debug!("Disconnected from {}", peer_id);
@@ -298,6 +309,7 @@ impl Worker {
         mut receiver: mpsc::Receiver<NetworkMessage>,
         mut pong_receiver: mpsc::Receiver<i64>,
         latency_sender: HistogramSender<Duration>,
+        latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
     ) -> io::Result<()> {
         let start = Instant::now();
         let mut ping_deadline = start + PING_INTERVAL;
@@ -341,7 +353,9 @@ impl Worker {
                                 let time = start.elapsed().as_micros() as u64;
                                 match time.checked_sub(our_ping) {
                                     Some(delay) => {
-                                        latency_sender.observe(Duration::from_micros(delay));
+                                        let d = Duration::from_micros(delay);
+                                        latency_sender.observe(d);
+                                        latency_last_value_sender.send(d).ok();
                                     },
                                     None => {
                                         tracing::warn!("Invalid ping: {ping}, greater then current time {time}");
@@ -415,17 +429,22 @@ impl Worker {
     async fn make_connection(&self) -> Option<WorkerConnection> {
         let (network_in_sender, network_in_receiver) = mpsc::channel(16);
         let (network_out_sender, network_out_receiver) = mpsc::channel(16);
+        let (latency_last_value_sender, latency_last_value_receiver) =
+            tokio::sync::watch::channel(Duration::from_millis(0));
         let connection = Connection {
             peer_id: self.peer_id,
             sender: network_out_sender,
             receiver: network_in_receiver,
+            latency_last_value_receiver,
         };
+
         self.connection_sender.send(connection).await.ok()?;
         Some(WorkerConnection {
             sender: network_in_sender,
             receiver: network_out_receiver,
             peer_id: self.peer_id,
             latency_sender: self.latency_sender.clone(),
+            latency_last_value_sender,
         })
     }
 }

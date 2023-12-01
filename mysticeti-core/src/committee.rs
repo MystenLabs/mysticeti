@@ -113,6 +113,11 @@ impl Committee {
         (own_genesis_block, other_blocks)
     }
 
+    pub fn authority_safe(&self, authority_index: AuthorityIndex) -> &Authority {
+        self.authorities
+            .get(authority_index as usize)
+            .unwrap_or_else(|| panic!("Authority with id {} not exists", authority_index))
+    }
     pub fn is_valid(&self, amount: Stake) -> bool {
         amount > self.validity_threshold
     }
@@ -191,17 +196,23 @@ impl Committee {
 pub struct Authority {
     stake: Stake,
     public_key: PublicKey,
+    hostname: String,
 }
 
 impl Authority {
-    pub fn new(stake: Stake, public_key: PublicKey) -> Self {
-        Self { stake, public_key }
+    pub fn new(stake: Stake, public_key: PublicKey, hostname: String) -> Self {
+        Self {
+            stake,
+            public_key,
+            hostname,
+        }
     }
 
     pub fn test_from_stake(stake: Stake) -> Self {
         Self {
             stake,
             public_key: dummy_public_key(),
+            hostname: "".to_string(),
         }
     }
 
@@ -211,6 +222,10 @@ impl Authority {
 
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    pub fn hostname(&self) -> String {
+        self.hostname.clone()
     }
 }
 

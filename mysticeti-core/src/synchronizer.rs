@@ -4,10 +4,15 @@
 use std::{collections::HashMap, env, sync::Arc, time::Duration};
 
 use futures::future::join_all;
+use itertools::Itertools;
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::Sender;
 
 use crate::commit_observer::CommitObserver;
+use crate::committee::{Authority, Committee};
+use crate::config::SynchronizerParameters;
 use crate::{
     block_handler::BlockHandler,
     metrics::Metrics,
@@ -16,35 +21,6 @@ use crate::{
     runtime::{sleep, Handle, JoinHandle},
     types::{AuthorityIndex, BlockReference, RoundNumber},
 };
-
-// TODO: A central controller will eventually dynamically update these parameters.
-pub struct SynchronizerParameters {
-    /// The maximum number of helpers (across all nodes).
-    pub absolute_maximum_helpers: usize,
-    /// The maximum number of helpers per authority.
-    pub maximum_helpers_per_authority: usize,
-    /// The number of blocks to send in a single batch.
-    pub batch_size: usize,
-    /// The sampling precision with which to re-evaluate the sync strategy.
-    pub sample_precision: Duration,
-    /// The interval at which to send stream blocks authored by other nodes.
-    pub stream_interval: Duration,
-    /// Threshold number of missing block from an authority to open a new stream.
-    pub new_stream_threshold: usize,
-}
-
-impl Default for SynchronizerParameters {
-    fn default() -> Self {
-        Self {
-            absolute_maximum_helpers: 10,
-            maximum_helpers_per_authority: 2,
-            batch_size: 10,
-            sample_precision: Duration::from_secs(5),
-            stream_interval: Duration::from_secs(1),
-            new_stream_threshold: 10,
-        }
-    }
-}
 
 pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver> {
     /// The sender to the network.
@@ -70,13 +46,14 @@ where
         sender: mpsc::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
     ) -> Self {
         Self {
             sender,
             inner,
             own_blocks: None,
             other_blocks: Vec::new(),
-            parameters: SynchronizerParameters::default(),
+            parameters,
             metrics,
         }
     }
@@ -96,27 +73,53 @@ where
 
     pub async fn send_blocks(
         &mut self,
-        peer: AuthorityIndex,
+        peer: &Authority,
         references: Vec<BlockReference>,
     ) -> Option<()> {
+        const CHUNK_SIZE: usize = 10;
+
         let mut missing = Vec::new();
+        let mut to_send = vec![];
         for reference in references {
             let stored_block = self.inner.block_store.get_block(reference);
             let found = stored_block.is_some();
+
             match stored_block {
-                // TODO: Should we be able to send more than one block in a single network message?
-                Some(block) => self.sender.send(NetworkMessage::Block(block)).await.ok()?,
+                Some(block) => to_send.push(block),
                 None => missing.push(reference),
             }
+
+            if to_send.len() >= CHUNK_SIZE {
+                self.send(peer, NetworkMessage::Blocks(std::mem::take(&mut to_send)))?;
+            }
+
             self.metrics
                 .block_sync_requests_received
-                .with_label_values(&[&peer.to_string(), &found.to_string()])
+                .with_label_values(&[&peer.hostname().to_string(), &found.to_string()])
                 .inc();
         }
-        self.sender
-            .send(NetworkMessage::BlockNotFound(missing))
-            .await
-            .ok()
+
+        // send any leftovers
+        if !to_send.is_empty() {
+            self.send(peer, NetworkMessage::Blocks(std::mem::take(&mut to_send)))?;
+        }
+
+        self.send(peer, NetworkMessage::BlockNotFound(missing))
+    }
+
+    fn send(&self, peer: &Authority, message: NetworkMessage) -> Option<()> {
+        match self.sender.try_reserve() {
+            Err(TrySendError::Full(_)) => {
+                tracing::error!("Channel full to {}, dropping message", peer.hostname());
+            }
+            Err(TrySendError::Closed(_)) => {
+                return None;
+            }
+            Ok(permit) => {
+                permit.send(message);
+            }
+        }
+        Some(())
     }
 
     pub async fn disseminate_own_blocks(&mut self, round: RoundNumber) {
@@ -143,11 +146,14 @@ where
         loop {
             let notified = inner.notify.notified();
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+
+            // if we have no more to send, then wait, otherwise keep sending blocks.
+            if blocks.is_empty() {
+                notified.await;
+            } else {
+                round = blocks.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
-            notified.await
         }
     }
 
@@ -193,7 +199,11 @@ where
 }
 
 enum BlockFetcherMessage {
-    RegisterAuthority(AuthorityIndex, mpsc::Sender<NetworkMessage>),
+    RegisterAuthority(
+        AuthorityIndex,
+        Sender<NetworkMessage>,
+        tokio::sync::watch::Receiver<Duration>,
+    ),
     RemoveAuthority(AuthorityIndex),
 }
 
@@ -207,13 +217,14 @@ impl BlockFetcher {
         id: AuthorityIndex,
         inner: Arc<NetworkSyncerInner<B, C>>,
         metrics: Arc<Metrics>,
+        committee: Arc<Committee>,
     ) -> Self
     where
         B: BlockHandler + 'static,
         C: CommitObserver + 'static,
     {
         let (sender, receiver) = mpsc::channel(100);
-        let worker = BlockFetcherWorker::new(id, inner, receiver, metrics);
+        let worker = BlockFetcherWorker::new(id, inner, receiver, metrics, committee);
         let handle = Handle::current().spawn(worker.run());
         Self { sender, handle }
     }
@@ -221,10 +232,15 @@ impl BlockFetcher {
     pub async fn register_authority(
         &self,
         authority: AuthorityIndex,
-        sender: mpsc::Sender<NetworkMessage>,
+        sender: Sender<NetworkMessage>,
+        latency_receiver: tokio::sync::watch::Receiver<Duration>,
     ) {
         self.sender
-            .send(BlockFetcherMessage::RegisterAuthority(authority, sender))
+            .send(BlockFetcherMessage::RegisterAuthority(
+                authority,
+                sender,
+                latency_receiver,
+            ))
             .await
             .ok();
     }
@@ -246,10 +262,17 @@ struct BlockFetcherWorker<B: BlockHandler, C: CommitObserver> {
     id: AuthorityIndex,
     inner: Arc<NetworkSyncerInner<B, C>>,
     receiver: mpsc::Receiver<BlockFetcherMessage>,
-    senders: HashMap<AuthorityIndex, mpsc::Sender<NetworkMessage>>,
+    senders: HashMap<
+        AuthorityIndex,
+        (
+            Sender<NetworkMessage>,
+            tokio::sync::watch::Receiver<Duration>,
+        ),
+    >,
     parameters: SynchronizerParameters,
     metrics: Arc<Metrics>,
     enable: bool,
+    committee: Arc<Committee>,
 }
 
 impl<B, C> BlockFetcherWorker<B, C>
@@ -262,6 +285,7 @@ where
         inner: Arc<NetworkSyncerInner<B, C>>,
         receiver: mpsc::Receiver<BlockFetcherMessage>,
         metrics: Arc<Metrics>,
+        committee: Arc<Committee>,
     ) -> Self {
         let enable = env::var("USE_SYNCER").is_ok();
         Self {
@@ -272,6 +296,7 @@ where
             parameters: Default::default(),
             metrics,
             enable,
+            committee,
         }
     }
 
@@ -281,8 +306,8 @@ where
                 _ = sleep(self.parameters.sample_precision) => self.sync_strategy().await,
                 message = self.receiver.recv() => {
                     match message {
-                        Some(BlockFetcherMessage::RegisterAuthority(authority, sender)) => {
-                            self.senders.insert(authority, sender);
+                        Some(BlockFetcherMessage::RegisterAuthority(authority, sender, latency_receiver)) => {
+                            self.senders.insert(authority, (sender, latency_receiver));
                         },
                         Some(BlockFetcherMessage::RemoveAuthority(authority)) => {
                             self.senders.remove(&authority);
@@ -299,12 +324,17 @@ where
         if self.enable {
             return;
         }
-        let mut to_request = Vec::new();
+
+        let mut to_request: Vec<BlockReference> = Vec::new();
         let missing_blocks = self.inner.syncer.get_missing_blocks().await;
         for (authority, missing) in missing_blocks.into_iter().enumerate() {
+            let hostname = self
+                .committee
+                .authority_safe(authority as AuthorityIndex)
+                .hostname();
             self.metrics
                 .missing_blocks
-                .with_label_values(&[&authority.to_string()])
+                .with_label_values(&[&hostname])
                 .inc_by(missing.len() as u64);
 
             // TODO: If we are missing many blocks from the same authority
@@ -312,8 +342,14 @@ where
             // we have a network partition. We should try to find an other peer from which
             // to (temporarily) sync the blocks from that authority.
 
-            to_request.extend(missing.iter().cloned().collect::<Vec<_>>());
+            to_request.extend(missing.into_iter().collect::<Vec<_>>());
         }
+
+        // just sort them by ascending order to help facilitate the processing once responses arrive
+        to_request = to_request
+            .into_iter()
+            .sorted_by(|b1, b2| Ord::cmp(&b1.round, &b2.round))
+            .collect::<Vec<_>>();
 
         for chunks in to_request.chunks(net_sync::MAXIMUM_BLOCK_REQUEST) {
             let Some((peer, permit)) = self.sample_peer(&[self.id]) else {
@@ -322,9 +358,11 @@ where
             let message = NetworkMessage::RequestBlocks(chunks.to_vec());
             permit.send(message);
 
+            let hostname = self.committee.authority_safe(peer).hostname();
+
             self.metrics
                 .block_sync_requests_sent
-                .with_label_values(&[&peer.to_string()])
+                .with_label_values(&[&hostname])
                 .inc();
         }
     }
@@ -333,17 +371,33 @@ where
         &self,
         except: &[AuthorityIndex],
     ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
-        let mut senders = self
+        static MILLIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
+        // Exclude synchronizing from anyone that has a latency of over 2 seconds.
+        static CUT_OFF_MILLIS: u128 = Duration::from_secs(2).as_millis();
+        let senders = self
             .senders
             .iter()
-            .filter(|&(index, _)| !except.contains(index))
+            .filter(|&(index, (_, latency_receiver))| {
+                !except.contains(index) && latency_receiver.borrow().as_millis() <= CUT_OFF_MILLIS
+            })
+            .map(|(index, (sender, latency_receiver))| {
+                (
+                    index,
+                    sender,
+                    MILLIS_IN_MINUTE.saturating_sub(latency_receiver.borrow().as_millis()) as f64,
+                )
+            })
             .collect::<Vec<_>>();
 
-        senders.shuffle(&mut thread_rng());
+        static NUMBER_OF_PEERS: usize = 10;
+        let senders = senders
+            .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
+            .expect("Weighted choice error: latency values incorrect!")
+            .collect::<Vec<_>>();
 
-        for (peer, sender) in senders {
+        for (peer, sender, _latency) in senders {
             if let Ok(permit) = sender.try_reserve() {
-                return Some((*peer, permit));
+                return Some((**peer, permit));
             }
         }
         None

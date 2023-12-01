@@ -1,14 +1,17 @@
 use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
+use crate::committee::Authority;
+use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
+use crate::data::Data;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::AuthorityIndex;
-use crate::types::{format_authority_index, AuthoritySet};
+use crate::types::AuthoritySet;
+use crate::types::{AuthorityIndex, StatementBlock};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
@@ -83,6 +86,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         shutdown_grace_period: Duration,
         block_verifier: impl BlockVerifier,
         metrics: Arc<Metrics>,
+        leader_timeout: Duration,
+        parameters: SynchronizerParameters,
+        cleanup_enabled: bool,
     ) -> Self {
         let authority_index = core.authority();
         let handle = Handle::current();
@@ -110,7 +116,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             notify,
             syncer,
             block_store,
-            committee,
+            committee: committee.clone(),
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
             epoch_closing_time,
@@ -120,6 +126,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             authority_index,
             inner.clone(),
             metrics.clone(),
+            committee,
         ));
         let main_task = handle.spawn(Self::run(
             network,
@@ -129,6 +136,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             block_fetcher,
             Arc::new(block_verifier),
             metrics.clone(),
+            leader_timeout,
+            parameters,
+            cleanup_enabled,
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
@@ -158,6 +168,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_fetcher: Arc<BlockFetcher>,
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
+        leader_timeout: Duration,
+        parameters: SynchronizerParameters,
+        cleanup_enabled: bool,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
@@ -165,8 +178,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             inner.clone(),
             epoch_close_signal,
             shutdown_grace_period,
+            leader_timeout,
         ));
-        let cleanup_task = handle.spawn(Self::cleanup_task(inner.clone()));
+        let cleanup_task = if cleanup_enabled {
+            handle.spawn(Self::cleanup_task(inner.clone()))
+        } else {
+            handle.spawn(async { None })
+        };
         while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
             let peer_id = connection.peer_id;
             if let Some(task) = connections.remove(&peer_id) {
@@ -176,7 +194,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 
             let sender = connection.sender.clone();
             let authority = peer_id as AuthorityIndex;
-            block_fetcher.register_authority(authority, sender).await;
+            block_fetcher
+                .register_authority(
+                    authority,
+                    sender,
+                    connection.latency_last_value_receiver.clone(),
+                )
+                .await;
             inner.connected_authorities.lock().insert(authority);
 
             let task = handle.spawn(Self::connection_task(
@@ -185,6 +209,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 block_fetcher.clone(),
                 block_verifier.clone(),
                 metrics.clone(),
+                parameters.clone(),
             ));
             connections.insert(peer_id, task);
         }
@@ -207,6 +232,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_fetcher: Arc<BlockFetcher>,
         block_verifier: Arc<impl BlockVerifier>,
         metrics: Arc<Metrics>,
+        parameters: SynchronizerParameters,
     ) -> Option<()> {
         let last_seen = inner
             .block_store
@@ -217,52 +243,48 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .await
             .ok()?;
 
-        let mut disseminator =
-            BlockDisseminator::new(connection.sender.clone(), inner.clone(), metrics.clone());
+        let mut disseminator = BlockDisseminator::new(
+            connection.sender.clone(),
+            inner.clone(),
+            metrics.clone(),
+            parameters,
+        );
 
-        let peer = format_authority_index(connection.peer_id as AuthorityIndex);
+        let authority = inner
+            .committee
+            .authority_safe(connection.peer_id as AuthorityIndex);
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
                     disseminator.disseminate_own_blocks(round).await
                 }
+                NetworkMessage::Blocks(blocks) => {
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks, authority)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 NetworkMessage::Block(block) => {
-                    tracing::debug!("Received {} from {}", block.reference(), peer);
-                    // Verify blocks baesd on consensus rules
-                    if let Err(e) = block.verify(&inner.committee) {
-                        tracing::warn!(
-                            "Rejected incorrect block {} based on consensus rules from {}: {:?}",
-                            block.reference(),
-                            peer,
-                            e
-                        );
-                        // Terminate connection on receiving incorrect block
+                    if Self::process_blocks(
+                        &inner,
+                        &block_verifier,
+                        &metrics,
+                        vec![block],
+                        authority,
+                    )
+                    .await
+                    .is_err()
+                    {
                         break;
                     }
-                    // Verify blocks based on customized validation rules
-                    if let Err(e) = block_verifier.verify(&block).await {
-                        tracing::warn!(
-                            "Rejected incorrect block {} based on validation rules from {}: {:?}",
-                            block.reference(),
-                            peer,
-                            e
-                        );
-                        // Terminate connection on receiving incorrect block
-                        break;
-                    }
-                    let connected_authorities =
-                        inner.connected_authorities.lock().authorities.clone();
-                    inner
-                        .syncer
-                        .add_blocks(vec![block], connected_authorities)
-                        .await;
                 }
                 NetworkMessage::RequestBlocks(references) => {
                     if references.len() > MAXIMUM_BLOCK_REQUEST {
                         // Terminate connection on receiving invalid message.
                         break;
                     }
-                    let authority = connection.peer_id as AuthorityIndex;
                     if disseminator
                         .send_blocks(authority, references)
                         .await
@@ -283,12 +305,88 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         None
     }
 
+    async fn process_blocks(
+        inner: &Arc<NetworkSyncerInner<H, C>>,
+        block_verifier: &Arc<impl BlockVerifier>,
+        metrics: &Arc<Metrics>,
+        blocks: Vec<Data<StatementBlock>>,
+        authority: &Authority,
+    ) -> Result<(), eyre::Report> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        let now = timestamp_utc();
+        let processed = inner
+            .syncer
+            .processed(blocks.iter().map(|block| *block.reference()).collect())
+            .await;
+
+        let mut to_process = Vec::new();
+        for block in blocks.into_iter() {
+            // skip the processing if already processed.
+            if processed.contains(block.reference()) {
+                tracing::debug!("Skip block {} as is already processed", block.reference());
+                continue;
+            }
+            tracing::debug!(
+                "Received {} from {}",
+                block.reference(),
+                authority.hostname()
+            );
+
+            metrics
+                .block_receive_latency
+                .with_label_values(&[&authority.hostname(), "network_receive"])
+                .observe(
+                    now.checked_sub(block.meta_creation_time())
+                        .unwrap_or_default()
+                        .as_secs_f64(),
+                );
+
+            // Verify blocks based on consensus rules
+            if let Err(e) = block.verify(&inner.committee) {
+                tracing::warn!(
+                    "Rejected incorrect block {} based on consensus rules from {}: {:?}",
+                    block.reference(),
+                    authority.hostname(),
+                    e
+                );
+                // Terminate connection on receiving incorrect block
+                return Err(e);
+            }
+            // Verify blocks based on customized validation rules
+            if let Err(e) = block_verifier.verify(&block).await {
+                tracing::warn!(
+                    "Rejected incorrect block {} based on validation rules from {}: {:?}",
+                    block.reference(),
+                    authority.hostname(),
+                    e
+                );
+                // Terminate connection on receiving incorrect block
+                return Err(eyre::Report::msg(""));
+            }
+
+            to_process.push(block);
+        }
+
+        if !to_process.is_empty() {
+            let connected_authorities = inner.connected_authorities.lock().authorities.clone();
+            inner
+                .syncer
+                .add_blocks(to_process, connected_authorities)
+                .await;
+        }
+
+        Ok(())
+    }
+
     async fn leader_timeout_task(
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
+        leader_timeout: Duration,
     ) -> Option<()> {
-        let leader_timeout = Duration::from_secs(1);
         loop {
             let notified = inner.notify.notified();
             let round = inner

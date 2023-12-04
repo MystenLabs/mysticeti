@@ -40,7 +40,7 @@ pub struct Core<H: BlockHandler> {
     last_own_block: OwnBlockData,
     block_handler: H,
     authority: AuthorityIndex,
-    threshold_clock: ThresholdClockAggregator,
+    pub threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
     last_decided_leader: AuthorityRound,
     wal_writer: WalWriter,
@@ -209,16 +209,15 @@ impl<H: BlockHandler> Core<H> {
             .push_back((position, MetaStatement::Payload(statements)));
     }
 
-    pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
-        let _timer = self
-            .metrics
-            .utilization_timer
-            .utilization_timer("Core::try_new_block");
-        let clock_round = self.threshold_clock.get_round();
+    pub fn try_new_block_by_round(
+        &mut self,
+        clock_round: RoundNumber,
+    ) -> Option<Data<StatementBlock>> {
         if clock_round <= self.last_proposed() {
             return None;
         }
 
+        // will attempt to create all the possible blocks
         let mut includes = vec![];
         let mut statements = vec![];
 
@@ -309,7 +308,18 @@ impl<H: BlockHandler> Core<H> {
         }
 
         tracing::debug!("Created block {block:?}");
+
         Some(block)
+    }
+
+    pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
+        let _timer = self
+            .metrics
+            .utilization_timer
+            .utilization_timer("Core::try_new_block");
+        let clock_round = self.threshold_clock.get_round();
+
+        self.try_new_block_by_round(clock_round)
     }
 
     pub fn leaders(&self, leader_round: RoundNumber) -> Vec<&Authority> {
@@ -386,6 +396,18 @@ impl<H: BlockHandler> Core<H> {
 
         // Leader round we check if we have a leader block
         if quorum_round > self.last_decided_leader.round().max(period - 1) {
+            // if we do have more rounds that we haven't proposed for, then we consider it ready to propose.
+            // Then on the propose we'll try to iterate from the older to most recent round we can propose
+            // to send a block.
+            if quorum_round - self.last_proposed() > 1 {
+                tracing::debug!(
+                    "Recent quorum {}, last proposed {}, ready to propose",
+                    quorum_round,
+                    self.last_proposed()
+                );
+                return true;
+            }
+
             let leader_round = quorum_round - 1;
             let leaders = self.committer.get_leaders(leader_round);
             if leaders.is_empty() {

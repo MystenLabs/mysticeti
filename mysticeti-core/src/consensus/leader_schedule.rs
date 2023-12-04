@@ -111,13 +111,13 @@ impl LeaderSwapTable {
         &self,
         leader: &AuthorityIndex,
         leader_round: RoundNumber,
+        offset: u64,
     ) -> Option<AuthorityIndex> {
         if self.bad_nodes.contains_key(leader) {
             let mut seed_bytes = [0u8; 32];
             seed_bytes[32 - 8..].copy_from_slice(&leader_round.to_le_bytes());
             let mut rng = StdRng::from_seed(seed_bytes);
-            let good_node = self
-                .good_nodes
+            let good_node = self.good_nodes[offset as usize..]
                 .choose(&mut rng)
                 .expect("There should be at least one good node available");
             trace!(
@@ -194,12 +194,12 @@ impl LeaderSchedule {
                 // start with base zero 0.
                 let next_leader = ((round + offset) % self.committee.len() as u64) as AuthorityIndex;
                 let table = self.leader_swap_table.read();
-                table.swap(&next_leader, round).unwrap_or(next_leader)
+                table.swap(&next_leader, round, offset).unwrap_or(next_leader)
             } else {
                 // Elect the leader in a stake-weighted choice seeded by the round
                 let leader = self.committee.elect_leader(round, offset);
                 let table = self.leader_swap_table.read();
-                table.swap(&leader, round).unwrap_or(leader)
+                table.swap(&leader, round, offset).unwrap_or(leader)
             }
         }
     }

@@ -221,7 +221,7 @@ impl Linearizer {
     }
 
     fn update_reputation_scores(&mut self, height: u64, to_commit: &Vec<Data<StatementBlock>>) {
-        static NUM_SUB_DAGS_PER_SCHEDULE: u64 = 200;
+        static NUM_SUB_DAGS_PER_SCHEDULE: u64 = 300;
 
         // always reset when it is the first for the new window
         if height % NUM_SUB_DAGS_PER_SCHEDULE == 1 {

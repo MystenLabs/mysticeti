@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::commit_observer::CommitObserverRecoveredState;
+use crate::consensus::reputation_scores::ReputationScores;
 use crate::metrics::{Metrics, UtilizationTimerExt};
 use crate::state::{CoreRecoveredState, RecoveredStateBuilder};
 use crate::types::{AuthorityIndex, BlockDigest, BlockReference, RoundNumber, StatementBlock};
@@ -556,6 +557,8 @@ pub struct CommitData {
     pub sub_dag: Vec<BlockReference>,
     // Height of the commit, corresponds to CommittedSubDag::height
     pub height: u64,
+    // the reputation scores
+    pub reputation_scores: ReputationScores,
 }
 
 impl From<&CommittedSubDag> for CommitData {
@@ -565,6 +568,7 @@ impl From<&CommittedSubDag> for CommitData {
             leader: value.anchor,
             sub_dag,
             height: value.height,
+            reputation_scores: value.reputation_scores.clone(),
         }
     }
 }

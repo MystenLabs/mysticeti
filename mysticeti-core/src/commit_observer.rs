@@ -81,7 +81,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
     ) -> Self {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         let mut observer = Self {
-            commit_interpreter: Linearizer::new(block_store),
+            commit_interpreter: Linearizer::new(block_store, committee.clone()),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],
@@ -218,10 +218,11 @@ impl SimpleCommitObserver {
         last_sent_height: u64,
         recover_state: CommitObserverRecoveredState,
         metrics: Arc<Metrics>,
+        committee: Arc<Committee>,
     ) -> Self {
         let mut observer = Self {
             block_store: block_store.clone(),
-            commit_interpreter: Linearizer::new(block_store),
+            commit_interpreter: Linearizer::new(block_store, committee),
             sender,
             metrics,
         };

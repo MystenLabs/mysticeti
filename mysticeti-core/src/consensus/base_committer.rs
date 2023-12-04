@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::{fmt::Display, sync::Arc};
 
+use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::types::Stake;
 use crate::{
     block_store::BlockStore,
@@ -50,14 +51,29 @@ pub struct BaseCommitter {
     block_store: BlockStore,
     /// The options used by this committer
     options: BaseCommitterOptions,
+    leader_schedule: LeaderSchedule,
 }
 
 impl BaseCommitter {
     pub fn new(committee: Arc<Committee>, block_store: BlockStore) -> Self {
         Self {
+            committee: committee.clone(),
+            block_store,
+            options: BaseCommitterOptions::default(),
+            leader_schedule: LeaderSchedule::new(committee, LeaderSwapTable::default()),
+        }
+    }
+
+    pub fn new_with_schedule(
+        committee: Arc<Committee>,
+        block_store: BlockStore,
+        leader_schedule: LeaderSchedule,
+    ) -> Self {
+        Self {
             committee,
             block_store,
             options: BaseCommitterOptions::default(),
+            leader_schedule,
         }
     }
 
@@ -95,7 +111,7 @@ impl BaseCommitter {
         }
 
         let offset = self.options.leader_offset as RoundNumber;
-        Some(self.committee.elect_leader(round, offset))
+        Some(self.leader_schedule.elect_leader(round, offset))
     }
 
     /// Find which block is supported at (author, round) by the given block.

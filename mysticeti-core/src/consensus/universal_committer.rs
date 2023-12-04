@@ -3,6 +3,7 @@
 
 use std::{collections::VecDeque, sync::Arc};
 
+use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::types::AuthorityRound;
 use crate::{
     block_store::BlockStore,
@@ -127,10 +128,28 @@ pub struct UniversalCommitterBuilder {
     wave_length: RoundNumber,
     number_of_leaders: usize,
     pipeline: bool,
+    leader_schedule: LeaderSchedule,
 }
 
 impl UniversalCommitterBuilder {
     pub fn new(committee: Arc<Committee>, block_store: BlockStore, metrics: Arc<Metrics>) -> Self {
+        Self {
+            committee: committee.clone(),
+            block_store,
+            metrics,
+            wave_length: DEFAULT_WAVE_LENGTH,
+            number_of_leaders: 1,
+            pipeline: false,
+            leader_schedule: LeaderSchedule::new(committee, LeaderSwapTable::default()),
+        }
+    }
+
+    pub fn new_with_schedule(
+        committee: Arc<Committee>,
+        block_store: BlockStore,
+        metrics: Arc<Metrics>,
+        leader_schedule: LeaderSchedule,
+    ) -> Self {
         Self {
             committee,
             block_store,
@@ -138,6 +157,7 @@ impl UniversalCommitterBuilder {
             wave_length: DEFAULT_WAVE_LENGTH,
             number_of_leaders: 1,
             pipeline: false,
+            leader_schedule,
         }
     }
 
@@ -166,9 +186,12 @@ impl UniversalCommitterBuilder {
                     round_offset,
                     leader_offset: leader_offset as RoundNumber,
                 };
-                let committer =
-                    BaseCommitter::new(self.committee.clone(), self.block_store.clone())
-                        .with_options(options);
+                let committer = BaseCommitter::new_with_schedule(
+                    self.committee.clone(),
+                    self.block_store.clone(),
+                    self.leader_schedule.clone(),
+                )
+                .with_options(options);
                 committers.push(committer);
             }
         }

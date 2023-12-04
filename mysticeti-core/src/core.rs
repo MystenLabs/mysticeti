@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::committee::{Authority, Committee};
+use crate::consensus::leader_schedule::LeaderSchedule;
 use crate::crypto::Signer;
 use crate::data::Data;
 use crate::epoch_close::EpochManager;
@@ -75,6 +76,7 @@ impl<H: BlockHandler> Core<H> {
         mut wal_writer: WalWriter,
         options: CoreOptions,
         signer: Signer,
+        leader_schedule: LeaderSchedule,
     ) -> Self {
         let CoreRecoveredState {
             block_store,
@@ -122,11 +124,15 @@ impl<H: BlockHandler> Core<H> {
 
         let epoch_manager = EpochManager::new();
 
-        let committer =
-            UniversalCommitterBuilder::new(committee.clone(), block_store.clone(), metrics.clone())
-                .with_number_of_leaders(parameters.number_of_leaders)
-                .with_pipeline(parameters.enable_pipelining)
-                .build();
+        let committer = UniversalCommitterBuilder::new_with_schedule(
+            committee.clone(),
+            block_store.clone(),
+            metrics.clone(),
+            leader_schedule,
+        )
+        .with_number_of_leaders(parameters.number_of_leaders)
+        .with_pipeline(parameters.enable_pipelining)
+        .build();
 
         let mut this = Self {
             block_manager,
@@ -399,6 +405,7 @@ impl<H: BlockHandler> Core<H> {
             // if we do have more rounds that we haven't proposed for, then we consider it ready to propose.
             // Then on the propose we'll try to iterate from the older to most recent round we can propose
             // to send a block.
+            /*
             if quorum_round - self.last_proposed() > 1 {
                 tracing::debug!(
                     "Recent quorum {}, last proposed {}, ready to propose",
@@ -406,7 +413,7 @@ impl<H: BlockHandler> Core<H> {
                     self.last_proposed()
                 );
                 return true;
-            }
+            }*/
 
             let leader_round = quorum_round - 1;
             let leaders = self.committer.get_leaders(leader_round);

@@ -85,6 +85,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 .core
                 .ready_new_block(self.commit_period, connected_authorities.clone())
         {
+            /*
             let mut block_created = false;
             for clock_round in
                 self.core().last_proposed() + 1..=self.core().threshold_clock.get_round()
@@ -104,6 +105,9 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             }
 
             if !block_created {
+                return;
+            }*/
+            if self.core.try_new_block().is_none() {
                 return;
             }
 

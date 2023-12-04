@@ -134,6 +134,13 @@ impl Committee {
         total_stake
     }
 
+    pub fn total_stake(&self) -> Stake {
+        self.authorities
+            .iter()
+            .map(|authority| authority.stake)
+            .sum()
+    }
+
     pub fn elect_leader(&self, round: u64, offset: u64) -> AuthorityIndex {
         cfg_if::cfg_if! {
             // TODO: we need to differentiate in tests the leader strategy so for some type of testing (ex sim tests)

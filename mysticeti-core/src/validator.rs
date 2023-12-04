@@ -19,6 +19,7 @@ use crate::block_validator::{AcceptAllBlockVerifier, BlockVerifier};
 use crate::commit_observer::{
     CommitObserver, CommitObserverRecoveredState, SimpleCommitObserver, TestCommitObserver,
 };
+use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::consensus::linearizer::CommittedSubDag;
 use crate::crypto::Signer;
 use crate::metrics::MetricReporter;
@@ -141,6 +142,8 @@ impl Validator<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>
             commit_observer_recovered,
         );
 
+        let leader_schedule = LeaderSchedule::new(committee.clone(), LeaderSwapTable::default());
+
         Validator::start_internal(
             authority,
             committee,
@@ -155,6 +158,7 @@ impl Validator<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>
             block_handler,
             commit_observer,
             AcceptAllBlockVerifier,
+            leader_schedule,
         )
         .await
     }
@@ -182,6 +186,8 @@ impl Validator<SimpleBlockHandler> {
         let reporter_handle = reporter.start();
         let (block_handler, tx_sender) = SimpleBlockHandler::new();
 
+        let leader_schedule = LeaderSchedule::new(committee.clone(), LeaderSwapTable::default());
+
         let commit_observer = SimpleCommitObserver::new(
             core_recovered.block_store.clone(),
             consumer.sender,
@@ -189,6 +195,7 @@ impl Validator<SimpleBlockHandler> {
             commit_observer_recovered,
             metrics.clone(),
             committee.clone(),
+            leader_schedule.clone(),
         );
 
         let validator = Validator::start_internal(
@@ -205,6 +212,7 @@ impl Validator<SimpleBlockHandler> {
             block_handler,
             commit_observer,
             block_verifier,
+            leader_schedule,
         )
         .await?;
 
@@ -228,6 +236,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         block_handler: B,
         commit_observer: C,
         block_verifier: impl BlockVerifier,
+        leader_schedule: LeaderSchedule,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -247,6 +256,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             wal_writer,
             CoreOptions::default(),
             signer,
+            leader_schedule,
         );
 
         let network = Network::load(

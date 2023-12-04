@@ -4,6 +4,7 @@
 use crate::block_store::{BlockStore, CommitData};
 use crate::commit_observer::CommitObserverRecoveredState;
 use crate::committee::Committee;
+use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::consensus::reputation_scores::ReputationScores;
 use crate::{
     data::Data,
@@ -112,10 +113,15 @@ pub struct Linearizer {
     /// the latest reputation scores
     reputation_scores: ReputationScores,
     committee: Arc<Committee>,
+    leader_schedule: LeaderSchedule,
 }
 
 impl Linearizer {
-    pub fn new(block_store: BlockStore, committee: Arc<Committee>) -> Self {
+    pub fn new(
+        block_store: BlockStore,
+        committee: Arc<Committee>,
+        leader_schedule: LeaderSchedule,
+    ) -> Self {
         Self {
             block_store,
             committed: Default::default(),
@@ -123,6 +129,7 @@ impl Linearizer {
             last_committed_leader: BlockReference::default(),
             reputation_scores: ReputationScores::new(&committee),
             committee,
+            leader_schedule,
         }
     }
 
@@ -171,6 +178,8 @@ impl Linearizer {
         // update the reputation scores
         self.update_reputation_scores(self.last_height, &to_commit);
 
+        self.update_leader_schedule();
+
         CommittedSubDag::new(
             leader_block_ref,
             to_commit,
@@ -197,6 +206,18 @@ impl Linearizer {
             self.last_committed_leader = leader_ref;
         }
         committed
+    }
+
+    fn update_leader_schedule(&mut self) {
+        if self.reputation_scores.final_of_schedule {
+            let table = LeaderSwapTable::new(
+                self.committee.clone(),
+                self.last_committed_leader.round,
+                &self.reputation_scores,
+                20,
+            );
+            self.leader_schedule.update_leader_swap_table(table);
+        }
     }
 
     fn update_reputation_scores(&mut self, height: u64, to_commit: &Vec<Data<StatementBlock>>) {

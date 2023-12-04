@@ -7,6 +7,7 @@ use crate::block_validator::AcceptAllBlockVerifier;
 use crate::commit_observer::TestCommitObserver;
 use crate::committee::Committee;
 use crate::config::Parameters;
+use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::core::{Core, CoreOptions};
 use crate::crypto::dummy_signer;
 use crate::data::Data;
@@ -126,6 +127,7 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 wal_writer,
                 CoreOptions::test(),
                 dummy_signer(),
+                LeaderSchedule::new(committee.clone(), LeaderSwapTable::default()),
             );
             let commit_observer = TestCommitObserver::new(
                 core.block_store().clone(),

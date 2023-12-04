@@ -185,12 +185,6 @@ impl LeaderSchedule {
     /// according to the provided LeaderSwapTable. Providing a different table can potentially produce
     /// a different leader for the same round.
     pub fn elect_leader(&self, round: RoundNumber, offset: u64) -> AuthorityIndex {
-        assert_eq!(
-            round % 2,
-            0,
-            "We should never attempt to do a leader election for odd rounds"
-        );
-        // TODO: split the leader election logic for testing from the production code.
         cfg_if::cfg_if! {
             if #[cfg(test)] {
                 // We apply round robin in leader election. Since we expect round to be an even number,

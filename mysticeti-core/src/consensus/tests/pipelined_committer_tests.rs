@@ -20,7 +20,7 @@ fn direct_commit() {
     let mut block_writer = TestBlockWriter::new(&committee);
     build_dag(&committee, &mut block_writer, None, wave_length);
 
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -51,7 +51,7 @@ fn idempotence() {
     let mut block_writer = TestBlockWriter::new(&committee);
     build_dag(&committee, &mut block_writer, None, 5);
 
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -85,7 +85,7 @@ fn multiple_direct_commit() {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-        let committer = UniversalCommitterBuilder::new(
+        let mut committer = UniversalCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
             test_metrics(),
@@ -122,7 +122,7 @@ fn direct_commit_late_call() {
     let mut block_writer = TestBlockWriter::new(&committee);
     build_dag(&committee, &mut block_writer, None, enough_blocks);
 
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -158,7 +158,7 @@ fn no_genesis_commit() {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, r);
 
-        let committer = UniversalCommitterBuilder::new(
+        let mut committer = UniversalCommitterBuilder::new(
             committee.clone(),
             block_writer.into_block_store(),
             test_metrics(),
@@ -206,7 +206,7 @@ fn no_leader() {
     );
 
     // Ensure no blocks are committed.
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -257,7 +257,7 @@ fn direct_skip() {
     );
 
     // Ensure the omitted leader is skipped.
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -356,7 +356,7 @@ fn indirect_commit() {
     );
 
     // Ensure we commit the first leaders.
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -432,7 +432,7 @@ fn indirect_skip() {
     );
 
     // Ensure we commit the first 3 leaders, skip the 4th, and commit the last 2 leaders.
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),
@@ -517,7 +517,7 @@ fn undecided() {
     );
 
     // Ensure no blocks are committed.
-    let committer = UniversalCommitterBuilder::new(
+    let mut committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
         test_metrics(),

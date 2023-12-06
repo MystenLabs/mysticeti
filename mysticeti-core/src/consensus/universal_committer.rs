@@ -4,6 +4,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
+use crate::consensus::linearizer::Linearizer;
 use crate::types::AuthorityRound;
 use crate::{
     block_store::BlockStore,
@@ -22,13 +23,17 @@ pub struct UniversalCommitter {
     block_store: BlockStore,
     committers: Vec<BaseCommitter>,
     metrics: Arc<Metrics>,
+    /// the latest reputation scores
+    leader_schedule: LeaderSchedule,
+    committee: Arc<Committee>,
+    linearizer: Linearizer,
 }
 
 impl UniversalCommitter {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
-    pub fn try_commit(&self, last_decided: AuthorityRound) -> Vec<LeaderStatus> {
+    pub fn try_commit(&mut self, last_decided: AuthorityRound) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
         // let last_decided_round = max(last_decided.round(), 1); // Skip genesis.
         let last_decided_round = last_decided.round();
@@ -76,6 +81,48 @@ impl UniversalCommitter {
             }
         }
 
+        let mut committed_leaders = Vec::new();
+        for (leader, direct_decided) in leaders {
+            if leader.round() == 0 {
+                continue;
+            }
+            if leader.is_decided() {
+                tracing::debug!("Decided {leader}");
+                committed_leaders.push(leader.clone());
+                self.update_metrics(&leader, direct_decided);
+
+                // we only care here about the actually committed blocks not skipped ones
+                if let Some(block) = leader.into_committed_block() {
+                    // try to linearise and update scores
+                    let sub_dags = self.linearizer.handle_commit(vec![block]);
+                    let sub_dag = sub_dags
+                        .first()
+                        .expect("Should have produced at least one committed sub dag");
+
+                    // update now the leader schedule
+                    if sub_dag.reputation_scores.final_of_schedule {
+                        let table = LeaderSwapTable::new(
+                            self.committee.clone(),
+                            sub_dag.anchor.round(),
+                            &sub_dag.reputation_scores,
+                            20,
+                        );
+                        self.leader_schedule.update_leader_swap_table(table);
+
+                        // for now just break when the schedule table is updated so the next leaders
+                        // will need to get re-calculated on the next commit.
+                        break;
+                    }
+                }
+            } else {
+                // break when we come across an undecided leader
+                break;
+            }
+        }
+
+        committed_leaders
+
+        /*
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
@@ -90,7 +137,7 @@ impl UniversalCommitter {
                 tracing::debug!("Decided {x}");
             })
             .map(|(x, _)| x)
-            .collect()
+            .collect()*/
     }
 
     /// Return list of leaders for the round. Syncer may give those leaders some extra time.
@@ -196,10 +243,15 @@ impl UniversalCommitterBuilder {
             }
         }
 
+        let linearizer = Linearizer::new(self.block_store.clone(), self.committee.clone());
+
         UniversalCommitter {
             block_store: self.block_store,
             committers,
             metrics: self.metrics,
+            linearizer,
+            leader_schedule: self.leader_schedule.clone(),
+            committee: self.committee.clone(),
         }
     }
 }

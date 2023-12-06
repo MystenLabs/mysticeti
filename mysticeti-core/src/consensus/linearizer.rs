@@ -4,7 +4,6 @@
 use crate::block_store::{BlockStore, CommitData};
 use crate::commit_observer::CommitObserverRecoveredState;
 use crate::committee::Committee;
-use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::consensus::reputation_scores::ReputationScores;
 use crate::{
     data::Data,
@@ -108,28 +107,19 @@ pub struct Linearizer {
     committed: HashSet<BlockReference>,
     /// Keep track of the height of last linearized commit
     last_height: u64,
-    /// Keeps the last committed leader
-    last_committed_leader: BlockReference,
     /// the latest reputation scores
     reputation_scores: ReputationScores,
     committee: Arc<Committee>,
-    leader_schedule: LeaderSchedule,
 }
 
 impl Linearizer {
-    pub fn new(
-        block_store: BlockStore,
-        committee: Arc<Committee>,
-        leader_schedule: LeaderSchedule,
-    ) -> Self {
+    pub fn new(block_store: BlockStore, committee: Arc<Committee>) -> Self {
         Self {
             block_store,
             committed: Default::default(),
             last_height: Default::default(),
-            last_committed_leader: BlockReference::default(),
             reputation_scores: ReputationScores::new(&committee),
             committee,
-            leader_schedule,
         }
     }
 
@@ -178,8 +168,6 @@ impl Linearizer {
         // update the reputation scores
         self.update_reputation_scores(self.last_height, &to_commit);
 
-        self.update_leader_schedule();
-
         CommittedSubDag::new(
             leader_block_ref,
             to_commit,
@@ -195,29 +183,14 @@ impl Linearizer {
     ) -> Vec<CommittedSubDag> {
         let mut committed = vec![];
         for leader_block in committed_leaders {
-            let leader_ref = *leader_block.reference();
             // Collect the sub-dag generated using each of these leaders as anchor.
             let mut sub_dag = self.collect_sub_dag(leader_block);
 
             // [Optional] sort the sub-dag using a deterministic algorithm.
             sub_dag.sort();
             committed.push(sub_dag);
-
-            self.last_committed_leader = leader_ref;
         }
         committed
-    }
-
-    fn update_leader_schedule(&mut self) {
-        if self.reputation_scores.final_of_schedule {
-            let table = LeaderSwapTable::new(
-                self.committee.clone(),
-                self.last_committed_leader.round,
-                &self.reputation_scores,
-                20,
-            );
-            self.leader_schedule.update_leader_swap_table(table);
-        }
     }
 
     fn update_reputation_scores(&mut self, height: u64, to_commit: &Vec<Data<StatementBlock>>) {

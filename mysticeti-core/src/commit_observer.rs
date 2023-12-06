@@ -5,7 +5,6 @@ use crate::block_store::{BlockStore, CommitData};
 use crate::committee::{
     Committee, ProcessedTransactionHandler, QuorumThreshold, TransactionAggregator,
 };
-use crate::consensus::leader_schedule::{LeaderSchedule, LeaderSwapTable};
 use crate::consensus::linearizer::{CommittedSubDag, Linearizer};
 use crate::data::Data;
 use crate::metrics::Metrics;
@@ -82,11 +81,7 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitObserver<H> {
     ) -> Self {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         let mut observer = Self {
-            commit_interpreter: Linearizer::new(
-                block_store,
-                committee.clone(),
-                LeaderSchedule::new(committee.clone(), LeaderSwapTable::default()),
-            ),
+            commit_interpreter: Linearizer::new(block_store, committee.clone()),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],
@@ -224,11 +219,10 @@ impl SimpleCommitObserver {
         recover_state: CommitObserverRecoveredState,
         metrics: Arc<Metrics>,
         committee: Arc<Committee>,
-        leader_schedule: LeaderSchedule,
     ) -> Self {
         let mut observer = Self {
             block_store: block_store.clone(),
-            commit_interpreter: Linearizer::new(block_store, committee, leader_schedule),
+            commit_interpreter: Linearizer::new(block_store, committee),
             sender,
             metrics,
         };

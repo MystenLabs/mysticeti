@@ -195,7 +195,6 @@ impl Validator<SimpleBlockHandler> {
             commit_observer_recovered,
             metrics.clone(),
             committee.clone(),
-            leader_schedule.clone(),
         );
 
         let validator = Validator::start_internal(

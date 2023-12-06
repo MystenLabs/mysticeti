@@ -41,7 +41,8 @@ impl UniversalCommitter {
 
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = VecDeque::new();
-        'outer: for round in (last_decided_round..=highest_known_round.saturating_sub(2)).rev() {
+        'outer: for round in (last_decided_round + 1..=highest_known_round.saturating_sub(2)).rev()
+        {
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {

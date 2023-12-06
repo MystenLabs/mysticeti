@@ -50,7 +50,7 @@ pub struct BaseCommitter {
     /// Keep all block data
     block_store: BlockStore,
     /// The options used by this committer
-    options: BaseCommitterOptions,
+    pub options: BaseCommitterOptions,
     leader_schedule: LeaderSchedule,
 }
 

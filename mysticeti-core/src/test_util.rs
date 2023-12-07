@@ -159,7 +159,15 @@ pub fn committee_and_syncers(
             .into_iter()
             .zip(commit_observers)
             .map(|(core, commit_observer)| {
-                Syncer::new(core, 3, Default::default(), commit_observer, test_metrics())
+                let (quorum_sender, _quorum_receiver) = tokio::sync::watch::channel(0);
+                Syncer::new(
+                    core,
+                    3,
+                    Default::default(),
+                    commit_observer,
+                    test_metrics(),
+                    quorum_sender,
+                )
             })
             .collect(),
     )

@@ -10,8 +10,8 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::AuthoritySet;
 use crate::types::{AuthorityIndex, StatementBlock};
+use crate::types::{AuthoritySet, RoundNumber};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metered_channel, metrics::Metrics};
 use crate::{block_store::BlockStore, synchronizer::BlockDisseminator};
@@ -25,6 +25,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
+use tokio::sync::watch::Receiver;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
@@ -79,6 +80,7 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 }
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         network: Network,
         core: Core<H>,
@@ -98,14 +100,16 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
         let epoch_closing_time = core.epoch_closing_time();
+        let (quorum_sender, quorum_receiver) = tokio::sync::watch::channel(0 as RoundNumber);
         let mut syncer = Syncer::new(
             core,
             commit_period,
             notify.clone(),
             commit_observer,
             metrics.clone(),
+            quorum_sender,
         );
-        syncer.force_new_block(0, Default::default());
+        syncer.force_new_block(1, Default::default());
         let syncer = CoreThreadDispatcher::start(syncer);
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
@@ -139,6 +143,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             metrics.clone(),
             parameters,
             cleanup_enabled,
+            quorum_receiver,
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
         Self {
@@ -159,7 +164,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         };
         inner.syncer.stop()
     }
-
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         mut network: Network,
         inner: Arc<NetworkSyncerInner<H, C>>,
@@ -171,6 +176,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         metrics: Arc<Metrics>,
         parameters: SynchronizerParameters,
         cleanup_enabled: bool,
+        quorum_received: Receiver<RoundNumber>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
@@ -179,6 +185,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             epoch_close_signal,
             shutdown_grace_period,
             leader_timeout,
+            quorum_received,
         ));
         let cleanup_task = if cleanup_enabled {
             handle.spawn(Self::cleanup_task(inner.clone()))
@@ -392,14 +399,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         mut epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
         leader_timeout: Duration,
+        mut quorum_receiver: Receiver<RoundNumber>,
     ) -> Option<()> {
+        let mut round = *quorum_receiver.borrow();
+        let mut timed_out = false;
         loop {
-            let notified = inner.notify.notified();
-            let round = inner
-                .block_store
-                .last_own_block_ref()
-                .map(|b| b.round())
-                .unwrap_or_default();
+            //let notified = inner.notify.notified();
+
             let closing_time = inner.epoch_closing_time.load(Ordering::Relaxed);
             let shutdown_duration = if closing_time != 0 {
                 shutdown_grace_period.saturating_sub(
@@ -412,15 +418,21 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 return None;
             }
             select! {
-                _sleep = runtime::sleep(leader_timeout) => {
+                _sleep = runtime::sleep(leader_timeout), if !timed_out => {
                     tracing::debug!("Timeout {round}");
                     // todo - more then one round timeout can happen, need to fix this
                     let connected_authorities = inner.connected_authorities.lock().authorities.clone();
                     inner.syncer.force_new_block(round, connected_authorities).await;
+                    timed_out = true;
                 }
-                _notified = notified => {
+                _changed = quorum_receiver.changed() => {
+                    // restart loop as we have received a new quorum
+                    round = *quorum_receiver.borrow();
+                    timed_out = false;
+                }
+                //_notified = notified => {
                     // restart loop
-                }
+                //}
                 _epoch_shutdown = runtime::sleep(shutdown_duration) => {
                     tracing::info!("Shutting down sync after epoch close");
                     epoch_close_signal.close();

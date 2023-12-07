@@ -10,6 +10,7 @@ use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use itertools::Itertools;
 use std::sync::Arc;
+use tokio::sync::watch::Sender;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
@@ -18,6 +19,7 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     signals: S,
     commit_observer: C,
     metrics: Arc<Metrics>,
+    quorum_sender: Sender<RoundNumber>,
 }
 
 pub trait SyncerSignals: Send + Sync {
@@ -31,6 +33,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         signals: S,
         commit_observer: C,
         metrics: Arc<Metrics>,
+        quorum_sender: Sender<RoundNumber>,
     ) -> Self {
         Self {
             core,
@@ -39,6 +42,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             signals,
             commit_observer,
             metrics,
+            quorum_sender,
         }
     }
 
@@ -56,7 +60,16 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .into_iter()
             .sorted_by(|b1, b2| b1.round().cmp(&b2.round()))
         {
+            let current_round = self.core().threshold_clock.get_round();
             self.core.add_blocks(vec![block]);
+
+            // we got a new quorum of blocks. Let leader timeout task know about it.
+            if self.core().threshold_clock.get_round() > current_round {
+                self.quorum_sender
+                    .send(self.core().threshold_clock.get_round())
+                    .ok();
+            }
+
             self.try_new_block(connected_authorities.clone());
         }
     }
@@ -66,7 +79,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         round: RoundNumber,
         connected_authorities: AuthoritySet,
     ) -> bool {
-        if self.core.last_proposed() == round {
+        if self.core.last_proposed() < round {
             self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
             self.try_new_block(connected_authorities);

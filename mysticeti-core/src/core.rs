@@ -37,7 +37,7 @@ pub struct Core<H: BlockHandler> {
     last_own_block: OwnBlockData,
     block_handler: H,
     authority: AuthorityIndex,
-    threshold_clock: ThresholdClockAggregator,
+    pub threshold_clock: ThresholdClockAggregator,
     committee: Arc<Committee>,
     last_decided_leader: AuthorityRound,
     wal_writer: WalWriter,

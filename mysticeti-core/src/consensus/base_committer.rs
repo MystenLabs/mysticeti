@@ -142,7 +142,10 @@ impl BaseCommitter {
     }
 
     /// Check whether the specified block (`potential_certificate`) is a certificate for
-    /// the specified leader (`leader_block`).
+    /// the specified leader (`leader_block`). An `all_votes` map can be provided as a cache to quickly
+    /// skip checking against the block store on whether a reference is a vote. This is done for efficiency.
+    /// Bear in mind that the `all_votes` should refer to votes considered to the same `leader_block` and it can't
+    /// be reused for different leaders.
     fn is_certificate(
         &self,
         potential_certificate: &Data<StatementBlock>,

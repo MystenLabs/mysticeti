@@ -168,7 +168,8 @@ impl Committee {
             .expect("Weighted choice error: stake values incorrect!")
             .skip(offset as usize)
             .map(|(index, _)| index)
-            .collect::<Vec<_>>()[0];
+            .next()
+            .unwrap();
 
         leader_index
     }

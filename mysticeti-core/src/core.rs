@@ -453,7 +453,7 @@ impl<H: BlockHandler> Core<H> {
                     .ready_new_block
                     .with_label_values(&["leader_not_connected"])
                     .inc();
-                return true;
+                //return true;
             }
 
             if self

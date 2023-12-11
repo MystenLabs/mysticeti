@@ -273,7 +273,11 @@ impl<H: BlockHandler> Core<H> {
                 match statement {
                     MetaStatement::Include(include) => {
                         if !references_in_block.contains(&include) {
-                            includes.push(include);
+                            // Include only blocks from up to 2 rounds ago to ensure that we are not hurting performance during sync
+                            // Ex for clock_round = 10, then for include.round < 8 will not get included
+                            if include.round().saturating_add(2) >= clock_round {
+                                includes.push(include);
+                            }
                         }
                     }
                     MetaStatement::Payload(payload) => {

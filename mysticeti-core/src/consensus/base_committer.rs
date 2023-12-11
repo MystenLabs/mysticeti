@@ -1,8 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::{fmt::Display, sync::Arc};
 
+use crate::types::Stake;
 use crate::{
     block_store::BlockStore,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -110,12 +112,12 @@ impl BaseCommitter {
             return None;
         }
         for include in from.includes() {
-            // Weak links may point to blocks with lower round numbers than strong links.
-            if include.round() < round {
-                continue;
-            }
             if include.author_round() == (author, round) {
                 return Some(*include);
+            }
+            // Weak links may point to blocks with lower round numbers than strong links.
+            if include.round() <= round {
+                continue;
             }
             let include = self
                 .block_store
@@ -140,21 +142,32 @@ impl BaseCommitter {
     }
 
     /// Check whether the specified block (`potential_certificate`) is a certificate for
-    /// the specified leader (`leader_block`).
+    /// the specified leader (`leader_block`). An `all_votes` map can be provided as a cache to quickly
+    /// skip checking against the block store on whether a reference is a vote. This is done for efficiency.
+    /// Bear in mind that the `all_votes` should refer to votes considered to the same `leader_block` and it can't
+    /// be reused for different leaders.
     fn is_certificate(
         &self,
         potential_certificate: &Data<StatementBlock>,
         leader_block: &Data<StatementBlock>,
+        all_votes: &mut HashMap<BlockReference, bool>,
     ) -> bool {
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
-            let potential_vote = self
-                .block_store
-                .get_block(*reference)
-                .expect("We should have the whole sub-dag by now");
+            let is_vote = if let Some(is_vote) = all_votes.get(reference) {
+                *is_vote
+            } else {
+                let potential_vote = self
+                    .block_store
+                    .get_block(*reference)
+                    .expect("We should have the whole sub-dag by now");
+                let is_vote = self.is_vote(&potential_vote, leader_block);
+                all_votes.insert(*reference, is_vote);
+                is_vote
+            };
 
-            if self.is_vote(&potential_vote, leader_block) {
-                tracing::trace!("[{self}] {potential_vote:?} is a vote for {leader_block:?}");
+            if is_vote {
+                tracing::trace!("[{self}] {reference} is a vote for {leader_block:?}");
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
@@ -181,19 +194,16 @@ impl BaseCommitter {
         // are in the decision round of the target leader and are linked to the anchor.
         let wave = self.wave_number(leader_round);
         let decision_round = self.decision_round(wave);
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
-        let potential_certificates: Vec<_> = decision_blocks
-            .iter()
-            .filter(|block| self.block_store.linked(anchor, block))
-            .collect();
+        let potential_certificates = self.block_store.linked_to_round(anchor, decision_round);
 
         // Use those potential certificates to determine which (if any) of the target leader
         // blocks can be committed.
         let mut certified_leader_blocks: Vec<_> = leader_blocks
             .into_iter()
             .filter(|leader_block| {
+                let mut all_votes = HashMap::new();
                 potential_certificates.iter().any(|potential_certificate| {
-                    self.is_certificate(potential_certificate, leader_block)
+                    self.is_certificate(potential_certificate, leader_block, &mut all_votes)
                 })
             })
             .collect();
@@ -245,10 +255,26 @@ impl BaseCommitter {
     ) -> bool {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
+        // quickly reject if there isn't enough stake to support the leader from the potential certificates
+        let total_stake: Stake = decision_blocks
+            .iter()
+            .map(|b| self.committee.get_stake(b.author()).unwrap())
+            .sum();
+        if total_stake < self.committee.quorum_threshold() {
+            tracing::debug!(
+                "Not enough support for: {}. Stake not enough: {} < {}",
+                leader_block.round(),
+                total_stake,
+                self.committee.quorum_threshold()
+            );
+            return false;
+        }
+
         let mut certificate_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
+        let mut all_votes = HashMap::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
-            if self.is_certificate(decision_block, leader_block) {
+            if self.is_certificate(decision_block, leader_block, &mut all_votes) {
                 tracing::trace!(
                     "[{self}] {decision_block:?} is a certificate for leader {leader_block:?}"
                 );

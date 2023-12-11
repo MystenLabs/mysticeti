@@ -300,6 +300,31 @@ impl BlockStore {
         }
         parents.contains(earlier_block)
     }
+
+    // Returns all the ancestors of the later_block to the `earlier_round`, assuming that there is
+    // a path to them.
+    pub fn linked_to_round(
+        &self,
+        later_block: &Data<StatementBlock>,
+        earlier_round: RoundNumber,
+    ) -> Vec<Data<StatementBlock>> {
+        let mut parents = vec![later_block.clone()];
+        for r in (earlier_round..later_block.round()).rev() {
+            parents = self
+                .get_blocks_by_round(r)
+                .into_iter()
+                .filter(|block| {
+                    parents
+                        .iter()
+                        .any(|x| x.includes().contains(block.reference()))
+                })
+                .collect();
+            if parents.is_empty() {
+                break;
+            }
+        }
+        parents
+    }
 }
 
 impl BlockStoreInner {
@@ -550,11 +575,74 @@ impl From<&CommittedSubDag> for CommitData {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::crypto::SignatureBytes;
+    use crate::test_util::{committee, TestBlockWriter};
+    use crate::types::EpochStatus;
 
     #[test]
     fn own_block_serialization_test() {
         let next_entry = WalPosition::default();
         let serialized = bincode::serialize(&next_entry).unwrap();
         assert_eq!(serialized.len(), OWN_BLOCK_HEADER_SIZE);
+    }
+
+    #[test]
+    fn linked_to_round_test() {
+        // GIVEN
+        let committee = committee(4);
+        let mut block_writer = TestBlockWriter::new(&committee);
+
+        let mut references = Vec::new();
+        for round in 1..=4 {
+            let block = Data::new(StatementBlock::new(
+                0,
+                round,
+                references.clone(),
+                vec![],
+                0,
+                EpochStatus::default(),
+                0,
+                SignatureBytes::default(),
+            ));
+            references = vec![*block.reference()];
+            block_writer.add_block(block.clone());
+        }
+
+        let binding = block_writer.block_store().get_blocks_by_round(4);
+        let last_block = binding.first().unwrap();
+
+        // WHEN
+        let blocks_round_1 = block_writer.block_store().linked_to_round(last_block, 1);
+
+        // THEN
+        assert_eq!(blocks_round_1.len(), 1);
+        assert_eq!(blocks_round_1.first().unwrap().author(), 0);
+
+        // AND create now a new chain of blocks, independent, for another authority
+        let mut references = Vec::new();
+        for round in 1..=4 {
+            let block = Data::new(StatementBlock::new(
+                1,
+                round,
+                references.clone(),
+                vec![],
+                0,
+                EpochStatus::default(),
+                0,
+                SignatureBytes::default(),
+            ));
+            references = vec![*block.reference()];
+            block_writer.add_block(block.clone());
+        }
+
+        // WHEN
+        let binding = block_writer.block_store().get_blocks_by_round(4);
+        let last_block = binding.iter().filter(|b| b.author() == 1).next().unwrap();
+
+        let blocks_round_1 = block_writer.block_store().linked_to_round(last_block, 1);
+
+        // THEN it should give us only the block of authority 1
+        assert_eq!(blocks_round_1.len(), 1);
+        assert_eq!(blocks_round_1.first().unwrap().author(), 1);
     }
 }

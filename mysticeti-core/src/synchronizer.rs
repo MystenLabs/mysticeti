@@ -396,7 +396,7 @@ where
         except: &[AuthorityIndex],
     ) -> Option<(AuthorityIndex, metered_channel::Permit<NetworkMessage>)> {
         static MILIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
-        let mut senders = self
+        let senders = self
             .senders
             .iter()
             .filter(|&(index, _)| !except.contains(index))
@@ -409,17 +409,15 @@ where
             })
             .collect::<Vec<_>>();
 
-        //static NUMBER_OF_PEERS: usize = 6;
-        /*
+        static NUMBER_OF_PEERS: usize = 6;
         let senders = senders
             .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
             .expect("Weighted choice error: latency values incorrect!")
-            .collect::<Vec<_>>();*/
-        senders.shuffle(&mut thread_rng());
+            .collect::<Vec<_>>();
 
         for (peer, sender, _latency) in senders {
             if let Ok(permit) = sender.try_reserve() {
-                return Some((*peer, permit));
+                return Some((**peer, permit));
             }
         }
         None

@@ -40,6 +40,10 @@ pub enum NetworkMessage {
     Blocks(Vec<Data<StatementBlock>>),
     /// Request a few specific block references (this is not indented for large requests).
     RequestBlocks(Vec<BlockReference>),
+    // Requesting from the author of the proposed blocks all the missing inclusion references
+    MissingInclusions(Vec<BlockReference>),
+    // The response to the missing inclusions
+    MissingInclusionsResponse(Vec<Data<StatementBlock>>),
     /// Indicate that a requested block is not found.
     BlockNotFound(Vec<BlockReference>),
 }

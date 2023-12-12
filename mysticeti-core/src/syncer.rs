@@ -6,9 +6,10 @@ use crate::core::Core;
 use crate::data::Data;
 use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
-use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
+use crate::types::{AuthoritySet, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use itertools::Itertools;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::watch::Sender;
 
@@ -50,18 +51,19 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         &mut self,
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
-    ) {
+    ) -> Vec<BlockReference> {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
 
+        let mut missing_blocks = HashSet::new();
         for block in blocks
             .into_iter()
             .sorted_by(|b1, b2| b1.round().cmp(&b2.round()))
         {
             let current_round = self.core().threshold_clock.get_round();
-            self.core.add_blocks(vec![block]);
+            missing_blocks.extend(self.core.add_blocks(vec![block]));
 
             // we got a new quorum of blocks. Let leader timeout task know about it.
             if self.core().threshold_clock.get_round() > current_round {
@@ -72,6 +74,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
 
             self.try_new_block(connected_authorities.clone());
         }
+
+        missing_blocks.into_iter().collect()
     }
 
     pub fn force_new_block(

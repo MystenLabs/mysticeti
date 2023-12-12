@@ -84,6 +84,7 @@ where
         peer: AuthorityIndex,
         peer_addr: SocketAddr,
         references: Vec<BlockReference>,
+        missing_inclusions: bool,
     ) -> Option<()> {
         let mut missing = Vec::new();
         const CHUNK_SIZE: usize = 10;
@@ -98,10 +99,17 @@ where
             }
 
             if to_send.len() >= CHUNK_SIZE {
-                self.send(
-                    peer_addr,
-                    NetworkMessage::Blocks(std::mem::take(&mut to_send)),
-                )?;
+                if missing_inclusions {
+                    self.send(
+                        peer_addr,
+                        NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
+                    )?;
+                } else {
+                    self.send(
+                        peer_addr,
+                        NetworkMessage::Blocks(std::mem::take(&mut to_send)),
+                    )?;
+                }
             }
 
             self.metrics
@@ -112,10 +120,17 @@ where
 
         // send any leftovers
         if !to_send.is_empty() {
-            self.send(
-                peer_addr,
-                NetworkMessage::Blocks(std::mem::take(&mut to_send)),
-            )?;
+            if missing_inclusions {
+                self.send(
+                    peer_addr,
+                    NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
+                )?;
+            } else {
+                self.send(
+                    peer_addr,
+                    NetworkMessage::Blocks(std::mem::take(&mut to_send)),
+                )?;
+            }
         }
 
         self.send(peer_addr, NetworkMessage::BlockNotFound(missing))
@@ -170,7 +185,9 @@ where
                 notified.await;
             } else {
                 round = blocks.last().unwrap().round();
-                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
+                for block in blocks {
+                    to.send(NetworkMessage::Block(block)).await.ok()?;
+                }
             }
         }
     }

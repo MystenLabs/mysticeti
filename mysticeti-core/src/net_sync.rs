@@ -4,13 +4,14 @@ use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::data::Data;
+use crate::metered_channel::Sender;
 use crate::metrics::LatencyHistogramVecExt;
 use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{AuthorityIndex, StatementBlock};
+use crate::types::{AuthorityIndex, BlockReference, StatementBlock};
 use crate::types::{AuthoritySet, RoundNumber};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metered_channel, metrics::Metrics};
@@ -283,7 +284,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     }
                 }
                 NetworkMessage::Block(block) => {
-                    if Self::process_blocks(
+                    if let Ok(missing_blocks) = Self::process_blocks(
                         &inner,
                         &block_verifier,
                         &metrics,
@@ -291,8 +292,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         connection.peer,
                     )
                     .await
-                    .is_err()
                     {
+                        Self::request_missing_blocks(missing_blocks, &connection.sender);
+                    } else {
                         break;
                     }
                 }
@@ -303,7 +305,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     }
                     let authority = connection.peer_id as AuthorityIndex;
                     if disseminator
-                        .send_blocks(authority, connection.peer, references)
+                        .send_blocks(authority, connection.peer, references, false)
                         .await
                         .is_none()
                     {
@@ -312,6 +314,31 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
+                }
+                NetworkMessage::MissingInclusions(references) => {
+                    let authority = connection.peer_id as AuthorityIndex;
+                    if disseminator
+                        .send_blocks(authority, connection.peer, references, true)
+                        .await
+                        .is_none()
+                    {
+                        break;
+                    }
+                }
+                NetworkMessage::MissingInclusionsResponse(blocks) => {
+                    // do not feedback loop request further missing blocks.
+                    if Self::process_blocks(
+                        &inner,
+                        &block_verifier,
+                        &metrics,
+                        blocks,
+                        connection.peer,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
                 }
             }
 
@@ -331,15 +358,24 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         None
     }
 
+    fn request_missing_blocks(
+        missing_blocks: Vec<BlockReference>,
+        sender: &Sender<NetworkMessage>,
+    ) {
+        if let Ok(permit) = sender.try_reserve() {
+            permit.send(NetworkMessage::MissingInclusions(missing_blocks))
+        }
+    }
+
     async fn process_blocks(
         inner: &Arc<NetworkSyncerInner<H, C>>,
         block_verifier: &Arc<impl BlockVerifier>,
         metrics: &Arc<Metrics>,
         blocks: Vec<Data<StatementBlock>>,
         peer: SocketAddr,
-    ) -> Result<(), eyre::Report> {
+    ) -> Result<Vec<BlockReference>, eyre::Report> {
         if blocks.is_empty() {
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let now = timestamp_utc();
@@ -389,9 +425,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
 
         let connected_authorities = inner.connected_authorities.lock().authorities.clone();
-        inner.syncer.add_blocks(blocks, connected_authorities).await;
-
-        Ok(())
+        Ok(inner.syncer.add_blocks(blocks, connected_authorities).await)
     }
 
     async fn leader_timeout_task(

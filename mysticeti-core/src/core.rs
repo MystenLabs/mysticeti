@@ -162,14 +162,15 @@ impl<H: BlockHandler> Core<H> {
         self
     }
 
-    // Note that generally when you update this function you also want to change genesis initialization above
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+    // Note that generally when you update this function you also want to change genesis initialization above.
+    // Returns all the missing reference blocks
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> HashSet<BlockReference> {
         let _guard = self
             .metrics
             .code_scope_latency
             .latency_histogram(&["Core::add_blocks"]);
 
-        let processed = self
+        let (processed, missing_references) = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
@@ -197,7 +198,7 @@ impl<H: BlockHandler> Core<H> {
             .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
 
-        result
+        missing_references
     }
 
     fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
@@ -273,11 +274,7 @@ impl<H: BlockHandler> Core<H> {
                 match statement {
                     MetaStatement::Include(include) => {
                         if !references_in_block.contains(&include) {
-                            // Include only blocks from up to 2 rounds ago to ensure that we are not hurting performance during sync
-                            // Ex for clock_round = 10, then for include.round < 8 will not get included
-                            if include.round().saturating_add(2) >= clock_round {
-                                includes.push(include);
-                            }
+                            includes.push(include);
                         }
                     }
                     MetaStatement::Payload(payload) => {

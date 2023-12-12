@@ -36,12 +36,12 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         &self,
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
-    ) {
+    ) -> Vec<BlockReference> {
         let _guard = self
             .metrics
             .code_scope_latency
             .latency_histogram(&["CoreThreadDispatcher::add_blocks"]);
-        self.syncer.lock().add_blocks(blocks, connected_authorities);
+        self.syncer.lock().add_blocks(blocks, connected_authorities)
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {

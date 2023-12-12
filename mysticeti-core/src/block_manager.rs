@@ -43,9 +43,15 @@ impl BlockManager {
         &mut self,
         blocks: Vec<Data<StatementBlock>>,
         block_writer: &mut impl BlockWriter,
-    ) -> Vec<(WalPosition, Data<StatementBlock>)> {
+    ) -> (
+        Vec<(WalPosition, Data<StatementBlock>)>,
+        HashSet<BlockReference>,
+    ) {
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
         let mut newly_blocks_processed: Vec<(WalPosition, Data<StatementBlock>)> = vec![];
+
+        // missing references that we see them for first time
+        let mut missing_referrences = HashSet::new();
         while let Some(block) = blocks.pop_front() {
             // Update the highest known round number.
 
@@ -62,10 +68,16 @@ impl BlockManager {
                 // If we are missing a reference then we insert into pending and update the waiting index
                 if !self.block_store.block_exists(*included_reference) {
                     processed = false;
-                    self.block_references_waiting
+
+                    // we inserted the missing reference for the first time.
+                    if self
+                        .block_references_waiting
                         .entry(*included_reference)
                         .or_default()
-                        .insert(*block_reference);
+                        .insert(*block_reference)
+                    {
+                        missing_referrences.insert(*block_reference);
+                    }
                     if !self.blocks_pending.contains_key(included_reference) {
                         self.missing[included_reference.authority as usize]
                             .insert(*included_reference);
@@ -107,7 +119,7 @@ impl BlockManager {
             }
         }
 
-        newly_blocks_processed
+        (newly_blocks_processed, missing_referrences)
     }
 
     pub fn missing_blocks(&self) -> &[HashSet<BlockReference>] {
@@ -141,7 +153,7 @@ mod tests {
             );
             let mut processed_blocks = HashSet::new();
             for block in iter {
-                let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);
+                let (processed, _) = bm.add_blocks(vec![block.clone()], &mut block_writer);
                 print!("Adding {:?}:", block.reference());
                 for (_, p) in processed {
                     print!("{:?},", p.reference());

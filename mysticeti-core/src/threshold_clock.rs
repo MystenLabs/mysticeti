@@ -1,6 +1,9 @@
 use std::cmp::Ordering;
+use std::sync::Arc;
+use std::time::Instant;
 
 use crate::committee::{Committee, QuorumThreshold, StakeAggregator};
+use crate::metrics::Metrics;
 use crate::types::{BlockReference, RoundNumber, StatementBlock};
 
 // A block is threshold clock valid if:
@@ -34,13 +37,17 @@ pub fn threshold_clock_valid_non_genesis(block: &StatementBlock, committee: &Com
 pub struct ThresholdClockAggregator {
     aggregator: StakeAggregator<QuorumThreshold>,
     round: RoundNumber,
+    last_quorum_ts: Instant,
+    metrics: Arc<Metrics>,
 }
 
 impl ThresholdClockAggregator {
-    pub fn new(round: RoundNumber) -> Self {
+    pub fn new(round: RoundNumber, metrics: Arc<Metrics>) -> Self {
         Self {
             aggregator: StakeAggregator::new(),
             round,
+            last_quorum_ts: Instant::now(),
+            metrics,
         }
     }
 
@@ -59,6 +66,19 @@ impl ThresholdClockAggregator {
                     self.aggregator.clear();
                     // We have seen 2f+1 blocks for current round, advance
                     self.round = block.round + 1;
+
+                    // now record the time of receipt from last quorum
+                    let now = Instant::now();
+                    self.metrics
+                        .quorum_receive_latency
+                        .observe(now.duration_since(self.last_quorum_ts).as_secs_f64());
+                    tracing::debug!(
+                        "Time since last quorum for round {}: {}",
+                        self.round,
+                        self.last_quorum_ts.elapsed().as_secs_f64()
+                    );
+
+                    self.last_quorum_ts = now;
                 }
             }
         }
@@ -75,7 +95,7 @@ impl ThresholdClockAggregator {
 
 #[cfg(test)]
 mod tests {
-
+    use crate::test_util::test_metrics;
     use crate::types::Dag;
 
     use super::*;
@@ -115,7 +135,8 @@ mod tests {
     #[test]
     fn test_threshold_clock_aggregator() {
         let committee = Committee::new_test(vec![1, 1, 1, 1]);
-        let mut aggregator = ThresholdClockAggregator::new(0);
+        let metrics = test_metrics();
+        let mut aggregator = ThresholdClockAggregator::new(0, metrics);
 
         aggregator.add_block(BlockReference::new_test(0, 0), &committee);
         assert_eq!(aggregator.get_round(), 0);

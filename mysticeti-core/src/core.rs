@@ -82,7 +82,7 @@ impl<H: BlockHandler> Core<H> {
             unprocessed_blocks,
             last_committed_leader,
         } = recovered;
-        let mut threshold_clock = ThresholdClockAggregator::new(0);
+        let mut threshold_clock = ThresholdClockAggregator::new(0, metrics.clone());
         let last_own_block = if let Some(own_block) = last_own_block {
             for (_, pending_block) in pending.iter() {
                 if let MetaStatement::Include(include) = pending_block {

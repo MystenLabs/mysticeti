@@ -158,37 +158,36 @@ where
         }
 
         let handle = Handle::current().spawn(Self::stream_own_blocks(
-            self.committee.authority_safe(self.peer).clone(),
             self.sender.clone(),
             self.inner.clone(),
             round,
             self.parameters.batch_size,
-            self.metrics.clone(),
         ));
         self.own_blocks = Some(handle);
     }
 
     async fn stream_own_blocks(
-        _peer: Authority,
         to: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut round: RoundNumber,
         batch_size: usize,
-        _metrics: Arc<Metrics>,
     ) -> Option<()> {
+        // continue not from where the node left off - let that to the synchronizer to fetch the missing blocks - but keep sending
+        // from the latest block only.
+        round = inner
+            .block_store
+            .last_own_block_ref()
+            .map(|block| block.round)
+            .unwrap_or(0)
+            .saturating_sub(1);
         loop {
             let notified = inner.notify.notified();
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
-
-            // if we have no more to send, then wait, otherwise keep sending blocks.
-            if blocks.is_empty() {
-                notified.await;
-            } else {
-                round = blocks.last().unwrap().round();
-                for block in blocks {
-                    to.send(NetworkMessage::Block(block)).await.ok()?;
-                }
+            for block in blocks {
+                round = block.round();
+                to.send(NetworkMessage::Block(block)).await.ok()?;
             }
+            notified.await
         }
     }
 

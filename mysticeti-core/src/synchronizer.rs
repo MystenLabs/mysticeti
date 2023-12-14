@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
 use crate::commit_observer::CommitObserver;
-use crate::committee::{Authority, Committee};
+use crate::committee::Committee;
 use crate::config::SynchronizerParameters;
 use crate::{
     block_handler::BlockHandler,
@@ -37,8 +37,8 @@ pub struct BlockDisseminator<H: BlockHandler, C: CommitObserver + 'static> {
     /// Metrics.
     metrics: Arc<Metrics>,
     /// The peer id
-    peer: AuthorityIndex,
-    committee: Arc<Committee>,
+    _peer: AuthorityIndex,
+    _committee: Arc<Committee>,
 }
 
 impl<H, C> BlockDisseminator<H, C>
@@ -47,8 +47,8 @@ where
     C: CommitObserver + 'static,
 {
     pub fn new(
-        peer: AuthorityIndex,
-        committee: Arc<Committee>,
+        _peer: AuthorityIndex,
+        _committee: Arc<Committee>,
         sender: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
         metrics: Arc<Metrics>,
@@ -61,8 +61,8 @@ where
             other_blocks: Vec::new(),
             parameters,
             metrics,
-            peer,
-            committee,
+            _peer,
+            _committee,
         }
     }
 
@@ -84,7 +84,6 @@ where
         peer: AuthorityIndex,
         peer_addr: SocketAddr,
         references: Vec<BlockReference>,
-        missing_inclusions: bool,
     ) -> Option<()> {
         let mut missing = Vec::new();
         const CHUNK_SIZE: usize = 10;
@@ -99,17 +98,10 @@ where
             }
 
             if to_send.len() >= CHUNK_SIZE {
-                if missing_inclusions {
-                    self.send(
-                        peer_addr,
-                        NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
-                    )?;
-                } else {
-                    self.send(
-                        peer_addr,
-                        NetworkMessage::Blocks(std::mem::take(&mut to_send)),
-                    )?;
-                }
+                self.send(
+                    peer_addr,
+                    NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
+                )?;
             }
 
             self.metrics
@@ -120,17 +112,10 @@ where
 
         // send any leftovers
         if !to_send.is_empty() {
-            if missing_inclusions {
-                self.send(
-                    peer_addr,
-                    NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
-                )?;
-            } else {
-                self.send(
-                    peer_addr,
-                    NetworkMessage::Blocks(std::mem::take(&mut to_send)),
-                )?;
-            }
+            self.send(
+                peer_addr,
+                NetworkMessage::MissingInclusionsResponse(std::mem::take(&mut to_send)),
+            )?;
         }
 
         self.send(peer_addr, NetworkMessage::BlockNotFound(missing))
@@ -169,12 +154,12 @@ where
     async fn stream_own_blocks(
         to: metered_channel::Sender<NetworkMessage>,
         inner: Arc<NetworkSyncerInner<H, C>>,
-        mut round: RoundNumber,
+        _round: RoundNumber,
         batch_size: usize,
     ) -> Option<()> {
         // continue not from where the node left off - let that to the synchronizer to fetch the missing blocks - but keep sending
         // from the latest block only.
-        round = inner
+        let mut round = inner
             .block_store
             .last_own_block_ref()
             .map(|block| block.round)
@@ -183,9 +168,9 @@ where
         loop {
             let notified = inner.notify.notified();
             let blocks = inner.block_store.get_own_blocks(round, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+            if !blocks.is_empty() {
+                round = blocks.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
             notified.await
         }
@@ -223,9 +208,9 @@ where
             let blocks = inner
                 .block_store
                 .get_others_blocks(round, author, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+            if !blocks.is_empty() {
+                round = blocks.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
             sleep(stream_interval).await;
         }

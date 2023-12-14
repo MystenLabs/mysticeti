@@ -270,25 +270,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Blocks(blocks) => {
-                    if Self::process_blocks(
-                        &inner,
-                        &block_verifier,
-                        &metrics,
-                        blocks,
-                        connection.peer,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
-                    }
-                }
-                NetworkMessage::Block(block) => {
                     if let Ok(missing_blocks) = Self::process_blocks(
                         &inner,
                         &block_verifier,
                         &metrics,
-                        vec![block],
+                        blocks,
                         connection.peer,
                     )
                     .await
@@ -305,7 +291,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     }
                     let authority = connection.peer_id as AuthorityIndex;
                     if disseminator
-                        .send_blocks(authority, connection.peer, references, false)
+                        .send_blocks(authority, connection.peer, references)
                         .await
                         .is_none()
                     {
@@ -318,7 +304,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::MissingInclusions(references) => {
                     let authority = connection.peer_id as AuthorityIndex;
                     if disseminator
-                        .send_blocks(authority, connection.peer, references, true)
+                        .send_blocks(authority, connection.peer, references)
                         .await
                         .is_none()
                     {

@@ -8,7 +8,6 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{AuthoritySet, BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::watch::Sender;
 
@@ -56,10 +55,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
 
-        let mut missing_blocks = HashSet::new();
-
         let current_round = self.core().threshold_clock.get_round();
-        missing_blocks.extend(self.core.add_blocks(blocks));
+        let missing_blocks = self.core.add_blocks(blocks);
 
         // we got a new quorum of blocks. Let leader timeout task know about it.
         if self.core().threshold_clock.get_round() > current_round {

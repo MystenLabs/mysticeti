@@ -69,10 +69,12 @@ impl BlockManager {
                 if !self.block_store.block_exists(*included_reference) {
                     processed = false;
 
-                    // we inserted the missing reference for the first time.
+                    // we inserted the missing reference for the first time and the block has not been
+                    // fetched already.
                     if !self
                         .block_references_waiting
                         .contains_key(included_reference)
+                        && !self.blocks_pending.contains_key(included_reference)
                     {
                         missing_referrences.insert(*included_reference);
                     }

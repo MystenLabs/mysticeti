@@ -70,14 +70,17 @@ impl BlockManager {
                     processed = false;
 
                     // we inserted the missing reference for the first time.
-                    if self
+                    if !self
                         .block_references_waiting
+                        .contains_key(included_reference)
+                    {
+                        missing_referrences.insert(*included_reference);
+                    }
+
+                    self.block_references_waiting
                         .entry(*included_reference)
                         .or_default()
-                        .insert(*block_reference)
-                    {
-                        missing_referrences.insert(*block_reference);
-                    }
+                        .insert(*block_reference);
                     if !self.blocks_pending.contains_key(included_reference) {
                         self.missing[included_reference.authority as usize]
                             .insert(*included_reference);

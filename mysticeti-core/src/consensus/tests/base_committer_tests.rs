@@ -47,11 +47,16 @@ fn idempotence() {
     let committee = committee(4);
 
     let mut block_writer = TestBlockWriter::new(&committee);
-    build_dag(&committee, &mut block_writer, None, 5);
+    let all_blocks = build_dag(&committee, &mut block_writer, None, 5);
+    let last_round_blocks = all_blocks
+        .iter()
+        .filter(|b| b.round == 5)
+        .cloned()
+        .collect::<Vec<_>>();
 
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
-        block_writer.into_block_store(),
+        block_writer.block_store(),
         test_metrics(),
     )
     .build();
@@ -59,13 +64,18 @@ fn idempotence() {
     // Commit one block.
     let last_committed = AuthorityRound::new(0, 0);
     let committed = committer.try_commit(last_committed);
+    assert_eq!(committed.len(), 1);
 
     // Ensure we don't commit it again.
+    // add more rounds first , so we have something to commit after the last_committed
+    build_dag(&committee, &mut block_writer, Some(last_round_blocks), 8);
+
     let max = committed.into_iter().max().unwrap();
     let last_committed = AuthorityRound::new(max.authority(), max.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
-    assert!(sequence.is_empty());
+    assert_eq!(sequence.len(), 1);
+    assert_eq!(sequence.first().unwrap().round(), 6);
 }
 
 /// Commit one by one each leader as the dag progresses in ideal conditions.

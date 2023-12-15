@@ -169,11 +169,23 @@ impl<H: BlockHandler> Core<H> {
             .metrics
             .utilization_timer
             .utilization_timer("Core::add_blocks");
+        let now = timestamp_utc();
         let processed = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
         for (position, processed) in processed.into_iter() {
+            // report latency
+            let hostname = self.committee.authority_safe(processed.author()).hostname();
+            self.metrics
+                .add_block_latency
+                .with_label_values(&[&hostname])
+                .observe(
+                    now.checked_sub(processed.meta_creation_time())
+                        .unwrap_or_default()
+                        .as_secs_f64(),
+                );
+
             self.threshold_clock
                 .add_block(*processed.reference(), &self.committee);
             self.pending

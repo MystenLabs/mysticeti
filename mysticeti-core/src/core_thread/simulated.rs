@@ -9,10 +9,10 @@ use crate::data::Data;
 use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 
 pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
-    syncer: RwLock<Syncer<H, S, C>>,
+    syncer: Mutex<Syncer<H, S, C>>,
 }
 
 impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
@@ -20,7 +20,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
 {
     pub fn start(syncer: Syncer<H, S, C>) -> Self {
         Self {
-            syncer: RwLock::new(syncer),
+            syncer: Mutex::new(syncer),
         }
     }
 
@@ -33,24 +33,22 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
     ) {
-        self.syncer
-            .write()
-            .add_blocks(blocks, connected_authorities);
+        self.syncer.lock().add_blocks(blocks, connected_authorities);
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
         self.syncer
-            .write()
+            .lock()
             .force_new_block(round, connected_authorities);
     }
 
     pub async fn cleanup(&self) {
-        self.syncer.write().core().cleanup();
+        self.syncer.lock().core().cleanup();
     }
 
     pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
         self.syncer
-            .write()
+            .lock()
             .core()
             .block_manager()
             .missing_blocks()
@@ -58,7 +56,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
     }
 
     pub async fn processed(&self, refs: Vec<BlockReference>) -> HashSet<BlockReference> {
-        let lock = self.syncer.read();
+        let lock = self.syncer.lock();
         refs.into_iter()
             .filter_map(|block_id| {
                 if lock.core().block_manager().exists_or_pending(block_id) {

@@ -1,6 +1,5 @@
 use crate::block_validator::BlockVerifier;
 use crate::commit_observer::CommitObserver;
-use crate::committee::Authority;
 use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
@@ -259,7 +258,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Blocks(blocks) => {
-                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks, authority)
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks)
                         .await
                         .is_err()
                     {
@@ -267,15 +266,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     }
                 }
                 NetworkMessage::Block(block) => {
-                    if Self::process_blocks(
-                        &inner,
-                        &block_verifier,
-                        &metrics,
-                        vec![block],
-                        authority,
-                    )
-                    .await
-                    .is_err()
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, vec![block])
+                        .await
+                        .is_err()
                     {
                         break;
                     }
@@ -310,7 +303,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_verifier: &Arc<impl BlockVerifier>,
         metrics: &Arc<Metrics>,
         blocks: Vec<Data<StatementBlock>>,
-        authority: &Authority,
     ) -> Result<(), eyre::Report> {
         if blocks.is_empty() {
             return Ok(());
@@ -329,15 +321,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 tracing::debug!("Skip block {} as is already processed", block.reference());
                 continue;
             }
-            tracing::debug!(
-                "Received {} from {}",
-                block.reference(),
-                authority.hostname()
-            );
+
+            let hostname = inner.committee.authority_safe(block.author()).hostname();
+
+            tracing::debug!("Received {} from {}", block.reference(), hostname);
 
             metrics
                 .block_receive_latency
-                .with_label_values(&[&authority.hostname(), "network_receive"])
+                .with_label_values(&[&hostname])
                 .observe(
                     now.checked_sub(block.meta_creation_time())
                         .unwrap_or_default()
@@ -349,7 +340,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 tracing::warn!(
                     "Rejected incorrect block {} based on consensus rules from {}: {:?}",
                     block.reference(),
-                    authority.hostname(),
+                    hostname,
                     e
                 );
                 // Terminate connection on receiving incorrect block
@@ -360,7 +351,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 tracing::warn!(
                     "Rejected incorrect block {} based on validation rules from {}: {:?}",
                     block.reference(),
-                    authority.hostname(),
+                    hostname,
                     e
                 );
                 // Terminate connection on receiving incorrect block

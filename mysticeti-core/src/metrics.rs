@@ -80,6 +80,7 @@ pub struct Metrics {
     pub sub_dags_per_commit_count: HistogramSender<usize>,
     pub block_commit_latency: HistogramSender<Duration>,
     pub block_receive_latency: HistogramVec,
+    pub add_block_latency: HistogramVec,
 }
 
 pub struct MetricReporter {
@@ -377,8 +378,15 @@ impl Metrics {
 
             block_receive_latency: register_histogram_vec_with_registry!(
                 "block_receive_latency",
-                "The time it took for a block to reach our node",
-                &["authority", "proc"],
+                "The time it took for a block to reach our node. The metric is reported by block author.",
+                &["authority"],
+                registry
+            ).unwrap(),
+
+            add_block_latency: register_histogram_vec_with_registry!(
+                "add_block_latency",
+                "The time it took for a block to be successfully processed and stored in our node. The metric is reported by block author.",
+                &["authority"],
                 registry
             ).unwrap(),
 

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::{fmt::Display, sync::Arc};
 
-use crate::types::Stake;
+use crate::types::{AuthorityRound, Stake};
 use crate::{
     block_store::BlockStore,
     committee::{Committee, QuorumThreshold, StakeAggregator},
@@ -88,14 +88,17 @@ impl BaseCommitter {
     /// The leader-elect protocol is offset by `leader_offset` to ensure that different committers
     /// with different leader offsets elect different leaders for the same round number. This function
     /// returns `None` if there are no leaders for the specified round.
-    pub fn elect_leader(&self, round: RoundNumber) -> Option<AuthorityIndex> {
+    pub fn elect_leader(&self, round: RoundNumber) -> Option<AuthorityRound> {
         let wave = self.wave_number(round);
         if self.leader_round(wave) != round {
             return None;
         }
 
         let offset = self.options.leader_offset as RoundNumber;
-        Some(self.committee.elect_leader(round, offset))
+        Some(AuthorityRound::new(
+            self.committee.elect_leader(round, offset),
+            round,
+        ))
     }
 
     /// Find which block is supported at (author, round) by the given block.
@@ -181,18 +184,17 @@ impl BaseCommitter {
     fn decide_leader_from_anchor(
         &self,
         anchor: &Data<StatementBlock>,
-        leader: AuthorityIndex,
-        leader_round: RoundNumber,
+        leader: AuthorityRound,
     ) -> LeaderStatus {
         // Get the block(s) proposed by the leader. There could be more than one leader block
         // per round (produced by a Byzantine leader).
         let leader_blocks = self
             .block_store
-            .get_blocks_at_authority_round(leader, leader_round);
+            .get_blocks_at_authority_round(leader.authority, leader.round);
 
         // Get all blocks that could be potential certificates for the target leader. These blocks
         // are in the decision round of the target leader and are linked to the anchor.
-        let wave = self.wave_number(leader_round);
+        let wave = self.wave_number(leader.round);
         let decision_round = self.decision_round(wave);
         let potential_certificates = self.block_store.linked_to_round(anchor, decision_round);
 
@@ -217,7 +219,7 @@ impl BaseCommitter {
         // Otherwise skip it.
         match certified_leader_blocks.pop() {
             Some(certified_leader_block) => LeaderStatus::Commit(certified_leader_block.clone()),
-            None => LeaderStatus::Skip(leader, leader_round),
+            None => LeaderStatus::Skip(leader),
         }
     }
 
@@ -288,57 +290,52 @@ impl BaseCommitter {
 
     /// Apply the indirect decision rule to the specified leader to see whether we can indirect-commit
     /// or indirect-skip it.
-    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader, leader_round)))]
+    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader.authority, leader.round)))]
     pub fn try_indirect_decide<'a>(
         &self,
-        leader: AuthorityIndex,
-        leader_round: RoundNumber,
+        leader: AuthorityRound,
         leaders: impl Iterator<Item = &'a LeaderStatus>,
     ) -> LeaderStatus {
         // The anchor is the first committed leader with round higher than the decision round of the
         // target leader. We must stop the iteration upon encountering an undecided leader.
-        let anchors = leaders.filter(|x| leader_round + self.options.wave_length <= x.round());
+        let anchors = leaders.filter(|x| leader.round + self.options.wave_length <= x.round());
 
         for anchor in anchors {
             tracing::trace!(
                 "[{self}] Trying to indirect-decide {} using anchor {anchor}",
-                format_authority_round(leader, leader_round),
+                format_authority_round(leader.authority, leader.round),
             );
             match anchor {
                 LeaderStatus::Commit(anchor) => {
-                    return self.decide_leader_from_anchor(anchor, leader, leader_round);
+                    return self.decide_leader_from_anchor(anchor, leader);
                 }
                 LeaderStatus::Skip(..) => (),
                 LeaderStatus::Undecided(..) => break,
             }
         }
 
-        LeaderStatus::Undecided(leader, leader_round)
+        LeaderStatus::Undecided(leader)
     }
 
     /// Apply the direct decision rule to the specified leader to see whether we can direct-commit or
     /// direct-skip it.
-    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader, leader_round)))]
-    pub fn try_direct_decide(
-        &self,
-        leader: AuthorityIndex,
-        leader_round: RoundNumber,
-    ) -> LeaderStatus {
+    #[tracing::instrument(skip_all, fields(leader = %format_authority_round(leader.authority, leader.round)))]
+    pub fn try_direct_decide(&self, leader: AuthorityRound) -> LeaderStatus {
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
-        let voting_round = leader_round + 1;
-        if self.enough_leader_blame(voting_round, leader) {
-            return LeaderStatus::Skip(leader, leader_round);
+        let voting_round = leader.round + 1;
+        if self.enough_leader_blame(voting_round, leader.authority) {
+            return LeaderStatus::Skip(leader);
         }
 
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
         // certificates over the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
-        let wave = self.wave_number(leader_round);
+        let wave = self.wave_number(leader.round);
         let decision_round = self.decision_round(wave);
         let leader_blocks = self
             .block_store
-            .get_blocks_at_authority_round(leader, leader_round);
+            .get_blocks_at_authority_round(leader.authority, leader.round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))
@@ -350,13 +347,13 @@ impl BaseCommitter {
         if leaders_with_enough_support.len() > 1 {
             panic!(
                 "[{self}] More than one certified block for {}",
-                format_authority_round(leader, leader_round)
+                format_authority_round(leader.authority, leader.round)
             )
         }
 
         leaders_with_enough_support
             .pop()
-            .unwrap_or_else(|| LeaderStatus::Undecided(leader, leader_round))
+            .unwrap_or_else(|| LeaderStatus::Undecided(leader))
     }
 }
 

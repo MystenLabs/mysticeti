@@ -3,6 +3,7 @@
 
 use std::fmt::Display;
 
+use crate::types::AuthorityRound;
 use crate::{
     data::Data,
     types::{format_authority_round, AuthorityIndex, RoundNumber, StatementBlock},
@@ -28,36 +29,50 @@ pub const MINIMUM_WAVE_LENGTH: RoundNumber = 3;
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum LeaderStatus {
     Commit(Data<StatementBlock>),
-    Skip(AuthorityIndex, RoundNumber),
-    Undecided(AuthorityIndex, RoundNumber),
+    Skip(AuthorityRound),
+    Undecided(AuthorityRound),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Decision {
+    Direct,
+    Indirect,
 }
 
 impl LeaderStatus {
     pub fn round(&self) -> RoundNumber {
         match self {
             Self::Commit(block) => block.round(),
-            Self::Skip(_, round) => *round,
-            Self::Undecided(_, round) => *round,
+            Self::Skip(leader) => leader.round,
+            Self::Undecided(leader) => leader.round,
         }
     }
 
     pub fn authority(&self) -> AuthorityIndex {
         match self {
             Self::Commit(block) => block.author(),
-            Self::Skip(authority, _) => *authority,
-            Self::Undecided(authority, _) => *authority,
+            Self::Skip(leader) => leader.authority,
+            Self::Undecided(leader) => leader.authority,
         }
     }
 
     pub fn is_decided(&self) -> bool {
         match self {
             Self::Commit(_) => true,
-            Self::Skip(_, _) => true,
-            Self::Undecided(_, _) => false,
+            Self::Skip(_) => true,
+            Self::Undecided(_) => false,
         }
     }
 
-    pub fn into_decided_block(self) -> Option<Data<StatementBlock>> {
+    pub fn into_decided_author_round(self) -> AuthorityRound {
+        match self {
+            Self::Commit(block) => AuthorityRound::new(block.author(), block.round()),
+            Self::Skip(leader) => leader,
+            Self::Undecided(..) => panic!("Decided block is either Commit or Skip"),
+        }
+    }
+
+    pub fn into_committed_block(self) -> Option<Data<StatementBlock>> {
         match self {
             Self::Commit(block) => Some(block),
             Self::Skip(..) => None,
@@ -82,8 +97,16 @@ impl Display for LeaderStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Commit(block) => write!(f, "Commit({})", block.reference()),
-            Self::Skip(a, r) => write!(f, "Skip({})", format_authority_round(*a, *r)),
-            Self::Undecided(a, r) => write!(f, "Undecided({})", format_authority_round(*a, *r)),
+            Self::Skip(leader) => write!(
+                f,
+                "Skip({})",
+                format_authority_round(leader.authority, leader.round)
+            ),
+            Self::Undecided(leader) => write!(
+                f,
+                "Undecided({})",
+                format_authority_round(leader.authority, leader.round)
+            ),
         }
     }
 }

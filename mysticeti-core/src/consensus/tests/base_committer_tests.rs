@@ -1,12 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::types::AuthorityRound;
 use crate::{
     consensus::{
         universal_committer::UniversalCommitterBuilder, LeaderStatus, DEFAULT_WAVE_LENGTH,
     },
     test_util::{build_dag, build_dag_layer, committee, test_metrics, TestBlockWriter},
-    types::BlockReference,
 };
 
 /// Commit one leader.
@@ -25,7 +25,7 @@ fn direct_commit() {
     )
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -47,25 +47,35 @@ fn idempotence() {
     let committee = committee(4);
 
     let mut block_writer = TestBlockWriter::new(&committee);
-    build_dag(&committee, &mut block_writer, None, 5);
+    let all_blocks = build_dag(&committee, &mut block_writer, None, 5);
+    let last_round_blocks = all_blocks
+        .iter()
+        .filter(|b| b.round == 5)
+        .cloned()
+        .collect::<Vec<_>>();
 
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
-        block_writer.into_block_store(),
+        block_writer.block_store(),
         test_metrics(),
     )
     .build();
 
     // Commit one block.
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let committed = committer.try_commit(last_committed);
+    assert_eq!(committed.len(), 1);
 
     // Ensure we don't commit it again.
+    // add more rounds first , so we have something to commit after the last_committed
+    build_dag(&committee, &mut block_writer, Some(last_round_blocks), 8);
+
     let max = committed.into_iter().max().unwrap();
-    let last_committed = BlockReference::new_test(max.authority(), max.round());
+    let last_committed = AuthorityRound::new(max.authority(), max.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
-    assert!(sequence.is_empty());
+    assert_eq!(sequence.len(), 1);
+    assert_eq!(sequence.first().unwrap().round(), 6);
 }
 
 /// Commit one by one each leader as the dag progresses in ideal conditions.
@@ -75,7 +85,7 @@ fn multiple_direct_commit() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
-    let mut last_committed = BlockReference::new_test(0, 0);
+    let mut last_committed = AuthorityRound::new(0, 0);
     for n in 1..=10 {
         let enough_blocks = wave_length * (n + 1) - 1;
         let mut block_writer = TestBlockWriter::new(&committee);
@@ -101,7 +111,7 @@ fn multiple_direct_commit() {
         }
 
         let max = sequence.iter().max().unwrap();
-        last_committed = BlockReference::new_test(max.authority(), max.round());
+        last_committed = AuthorityRound::new(max.authority(), max.round());
     }
 }
 
@@ -125,7 +135,7 @@ fn direct_commit_late_call() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
@@ -160,7 +170,7 @@ fn no_genesis_commit() {
         .with_wave_length(wave_length)
         .build();
 
-        let last_committed = BlockReference::new_test(0, 0);
+        let last_committed = AuthorityRound::new(0, 0);
         let sequence = committer.try_commit(last_committed);
         tracing::info!("Commit sequence: {sequence:?}");
         assert!(sequence.is_empty());
@@ -207,14 +217,14 @@ fn no_leader() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
-    if let LeaderStatus::Skip(leader, round) = sequence[0] {
-        assert_eq!(leader, leader_1);
-        assert_eq!(round, leader_round_1);
+    if let LeaderStatus::Skip(leader) = sequence[0] {
+        assert_eq!(leader.authority, leader_1);
+        assert_eq!(leader.round, leader_round_1);
     } else {
         panic!("Expected to directly skip the leader");
     }
@@ -257,14 +267,14 @@ fn direct_skip() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
-    if let LeaderStatus::Skip(leader, round) = sequence[0] {
-        assert_eq!(leader, committee.elect_leader(leader_round_1, 0));
-        assert_eq!(round, leader_round_1);
+    if let LeaderStatus::Skip(leader) = sequence[0] {
+        assert_eq!(leader.authority, committee.elect_leader(leader_round_1, 0));
+        assert_eq!(leader.round, leader_round_1);
     } else {
         panic!("Expected to directly skip the leader");
     }
@@ -353,7 +363,7 @@ fn indirect_commit() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 2);
@@ -429,7 +439,7 @@ fn indirect_skip() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 3);
@@ -445,9 +455,9 @@ fn indirect_skip() {
 
     // Ensure we skip the 2nd leader.
     let leader_round_2 = 2 * wave_length;
-    if let LeaderStatus::Skip(leader, round) = sequence[1] {
-        assert_eq!(leader, leader_2);
-        assert_eq!(round, leader_round_2);
+    if let LeaderStatus::Skip(leader) = sequence[1] {
+        assert_eq!(leader.authority, leader_2);
+        assert_eq!(leader.round, leader_round_2);
     } else {
         panic!("Expected a skipped leader")
     }
@@ -511,7 +521,7 @@ fn undecided() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = BlockReference::new_test(0, 0);
+    let last_committed = AuthorityRound::new(0, 0);
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());

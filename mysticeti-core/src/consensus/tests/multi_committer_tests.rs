@@ -283,9 +283,9 @@ fn no_leader() {
         let leader_offset = i as u64;
         let expected_leader = committee.elect_leader(leader_round, leader_offset);
         if i == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[i] {
-                assert_eq!(leader, expected_leader);
-                assert_eq!(round, leader_round_1);
+            if let LeaderStatus::Skip(leader) = sequence[i] {
+                assert_eq!(leader.authority, expected_leader);
+                assert_eq!(leader.round, leader_round_1);
             } else {
                 panic!("Expected to directly skip the leader");
             }
@@ -348,9 +348,9 @@ fn direct_skip() {
         let leader_offset = i as u64;
         let expected_leader = committee.elect_leader(leader_round, leader_offset);
         if i == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[i] {
-                assert_eq!(leader, expected_leader);
-                assert_eq!(round, leader_round_1);
+            if let LeaderStatus::Skip(leader) = sequence[i] {
+                assert_eq!(leader.authority, expected_leader);
+                assert_eq!(leader.round, leader_round_1);
             } else {
                 panic!("Expected to directly skip the leader");
             }
@@ -546,9 +546,9 @@ fn indirect_skip() {
 
     // Ensure we skip the first leader of wave 2 but commit the other leaders of wave 2.
     let leader_round_2 = 2 * wave_length;
-    if let LeaderStatus::Skip(leader, round) = sequence[number_of_leaders] {
-        assert_eq!(leader, leader_2);
-        assert_eq!(round, leader_round_2);
+    if let LeaderStatus::Skip(leader) = sequence[number_of_leaders] {
+        assert_eq!(leader.authority, leader_2);
+        assert_eq!(leader.round, leader_round_2);
     } else {
         panic!("Expected a skipped leader")
     }
@@ -557,9 +557,9 @@ fn indirect_skip() {
         let leader_round_2 = 2 * wave_length;
         let leader_offset = n as u64;
         if n == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[number_of_leaders + n] {
-                assert_eq!(leader, leader_2);
-                assert_eq!(round, leader_round_2);
+            if let LeaderStatus::Skip(leader) = sequence[number_of_leaders + n] {
+                assert_eq!(leader.authority, leader_2);
+                assert_eq!(leader.round, leader_round_2);
             } else {
                 panic!("Expected a skipped leader")
             }

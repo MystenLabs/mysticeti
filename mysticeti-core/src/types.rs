@@ -69,7 +69,7 @@ impl Hash for BlockReference {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default, Hash)]
 pub struct AuthorityRound {
     pub authority: AuthorityIndex,
     pub round: RoundNumber,

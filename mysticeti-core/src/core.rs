@@ -49,6 +49,7 @@ pub struct Core<H: BlockHandler> {
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: UniversalCommitter,
+    store_retain_rounds: u64,
 }
 
 pub struct CoreOptions {
@@ -142,6 +143,7 @@ impl<H: BlockHandler> Core<H> {
             signer,
             epoch_manager,
             rounds_in_epoch: parameters.rounds_in_epoch(),
+            store_retain_rounds: parameters.store_retain_rounds,
             committer,
         };
 
@@ -352,12 +354,10 @@ impl<H: BlockHandler> Core<H> {
     }
 
     pub fn cleanup(&self) {
-        const RETAIN_BELOW_COMMIT_ROUNDS: RoundNumber = 500;
-
         self.block_store.cleanup(
             self.last_decided_leader
                 .round()
-                .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
+                .saturating_sub(self.store_retain_rounds),
         );
 
         self.block_handler.cleanup();

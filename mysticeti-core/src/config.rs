@@ -44,6 +44,9 @@ pub struct Parameters {
     pub shutdown_grace_period: Duration,
     pub number_of_leaders: usize,
     pub enable_pipelining: bool,
+    // The number of rounds to be retained when periodically cleaning up the store from in memory
+    // block data and keeping only the indexes.
+    pub store_retain_rounds: u64,
 }
 
 impl Default for Parameters {
@@ -55,6 +58,7 @@ impl Default for Parameters {
             rounds_in_epoch: Self::DEFAULT_ROUNDS_IN_EPOCH,
             shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             number_of_leaders: Self::DEFAULT_NUMBER_OF_LEADERS,
+            store_retain_rounds: Self::DEFAULT_STORE_RETAIN_ROUNDS,
             enable_pipelining: true,
         }
     }
@@ -73,6 +77,8 @@ impl Parameters {
     pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
     pub const DEFAULT_NUMBER_OF_LEADERS: usize = 1;
+
+    pub const DEFAULT_STORE_RETAIN_ROUNDS: u64 = 500;
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

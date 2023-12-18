@@ -245,7 +245,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             metrics.clone(),
             core_recovered,
             wal_writer,
-            CoreOptions::default(),
+            CoreOptions { fsync: true },
             signer,
         );
 

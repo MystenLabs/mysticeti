@@ -52,7 +52,7 @@ pub struct Core<H: BlockHandler> {
 }
 
 pub struct CoreOptions {
-    fsync: bool,
+    pub fsync: bool,
 }
 
 #[derive(Debug)]

@@ -54,4 +54,17 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             .missing_blocks()
             .to_vec()
     }
+
+    pub async fn processed(&self, refs: Vec<BlockReference>) -> HashSet<BlockReference> {
+        let lock = self.syncer.lock();
+        refs.into_iter()
+            .filter_map(|block_id| {
+                if lock.core().block_manager().exists_or_pending(block_id) {
+                    Some(block_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }

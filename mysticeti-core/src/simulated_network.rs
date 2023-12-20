@@ -55,15 +55,20 @@ impl SimulatedNetwork {
     pub async fn connect(&self, a: usize, b: usize) {
         let (a_sender, a_receiver) = Self::latency_channel();
         let (b_sender, b_receiver) = Self::latency_channel();
+        // the watch channels are responsible for disseminating the calculated latency for each connection.
+        let (_al_sender, al_receiver) = tokio::sync::watch::channel(Duration::from_secs(0));
+        let (_bl_sender, bl_receiver) = tokio::sync::watch::channel(Duration::from_secs(0));
         let a_connection = Connection {
             peer_id: b,
             sender: b_sender,
             receiver: a_receiver,
+            latency_last_value_receiver: al_receiver,
         };
         let b_connection = Connection {
             peer_id: a,
             sender: a_sender,
             receiver: b_receiver,
+            latency_last_value_receiver: bl_receiver,
         };
         let a = &self.senders[a];
         let b = &self.senders[b];

@@ -206,6 +206,7 @@ pub fn simulated_network_syncers_with_epoch_duration(
         committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let (simulated_network, networks) = SimulatedNetwork::new(&committee);
     let mut network_syncers = vec![];
+    let parameters = Parameters::default();
     for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let node_context = OverrideNodeContext::enter(Some(core.authority()));
@@ -217,6 +218,9 @@ pub fn simulated_network_syncers_with_epoch_duration(
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             AcceptAllBlockVerifier,
             test_metrics(),
+            parameters.leader_timeout,
+            parameters.synchronizer_parameters.clone(),
+            parameters.enable_cleanup,
         );
         drop(node_context);
         network_syncers.push(network_syncer);
@@ -236,6 +240,7 @@ pub async fn network_syncers_with_epoch_duration(
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
+    let parameters = Parameters::default();
     for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let network_syncer = NetworkSyncer::start(
@@ -246,6 +251,9 @@ pub async fn network_syncers_with_epoch_duration(
             Parameters::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             AcceptAllBlockVerifier,
             test_metrics(),
+            parameters.leader_timeout,
+            parameters.synchronizer_parameters.clone(),
+            parameters.enable_cleanup,
         );
         network_syncers.push(network_syncer);
     }

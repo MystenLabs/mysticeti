@@ -34,11 +34,12 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
     SubscribeOwnFrom(RoundNumber), // subscribe from round number excluding
-    Block(Data<StatementBlock>),
-    // Sending multiple blocks at once
+    /// Sending multiple blocks at once
     Blocks(Vec<Data<StatementBlock>>),
     /// Request a few specific block references (this is not indented for large requests).
     RequestBlocks(Vec<BlockReference>),
+    /// The response to the request blocks
+    RequestBlocksResponse(Vec<Data<StatementBlock>>),
     /// Indicate that a requested block is not found.
     BlockNotFound(Vec<BlockReference>),
 }

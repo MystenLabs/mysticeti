@@ -9,7 +9,7 @@ use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
 use crate::syncer::{Syncer, SyncerSignals};
-use crate::types::{AuthorityIndex, StatementBlock};
+use crate::types::{AuthorityIndex, BlockReference, StatementBlock};
 use crate::types::{AuthoritySet, RoundNumber};
 use crate::wal::WalSyncer;
 use crate::{block_handler::BlockHandler, metrics::Metrics};
@@ -267,18 +267,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                     disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Blocks(blocks) => {
-                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks)
-                        .await
-                        .is_err()
+                    if let Ok(missing_blocks) =
+                        Self::process_blocks(&inner, &block_verifier, &metrics, blocks).await
                     {
-                        break;
-                    }
-                }
-                NetworkMessage::Block(block) => {
-                    if Self::process_blocks(&inner, &block_verifier, &metrics, vec![block])
-                        .await
-                        .is_err()
-                    {
+                        // we only want to request missing blocks when a validator is sending us their block
+                        // proposals, and not during a bulk catchup via our request (RequestBlocks) to avoid
+                        // overwhelming the peer.
+                        Self::request_missing_blocks(missing_blocks, &connection.sender);
+                    } else {
                         break;
                     }
                 }
@@ -291,6 +287,14 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                         .send_blocks(authority, references)
                         .await
                         .is_none()
+                    {
+                        break;
+                    }
+                }
+                NetworkMessage::RequestBlocksResponse(blocks) => {
+                    if Self::process_blocks(&inner, &block_verifier, &metrics, blocks)
+                        .await
+                        .is_err()
                     {
                         break;
                     }
@@ -312,9 +316,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         block_verifier: &Arc<impl BlockVerifier>,
         metrics: &Arc<Metrics>,
         blocks: Vec<Data<StatementBlock>>,
-    ) -> Result<(), eyre::Report> {
+    ) -> Result<Vec<BlockReference>, eyre::Report> {
         if blocks.is_empty() {
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let now = timestamp_utc();
@@ -372,13 +376,22 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
 
         if !to_process.is_empty() {
             let connected_authorities = inner.connected_authorities.lock().authorities.clone();
-            inner
+            return Ok(inner
                 .syncer
                 .add_blocks(to_process, connected_authorities)
-                .await;
+                .await);
         }
 
-        Ok(())
+        Ok(vec![])
+    }
+
+    fn request_missing_blocks(
+        missing_blocks: Vec<BlockReference>,
+        sender: &mpsc::Sender<NetworkMessage>,
+    ) {
+        if let Ok(permit) = sender.try_reserve() {
+            permit.send(NetworkMessage::RequestBlocks(missing_blocks))
+        }
     }
 
     async fn leader_timeout_task(

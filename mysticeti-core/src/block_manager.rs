@@ -39,18 +39,32 @@ impl BlockManager {
         }
     }
 
+    /// Attempts to process (accept) the provided blocks and stores them only when the causal history
+    /// is already present. If a block can't be processed, then it is parked in the `blocks_pending` map
+    /// and any missing references are recorded in the `block_references_waiting` and in the `missing` vector.
+    /// The method returns a tuple where the newly accepted/processed blocks are returned and the missing references
+    /// of the provided blocks. Keep in mind that the missing references are returned only the first one for a specific
+    /// provided block. If we attempt to add the same block again, then its missing references won't be returned again.
     pub fn add_blocks(
         &mut self,
-        blocks: Vec<Data<StatementBlock>>,
+        mut blocks: Vec<Data<StatementBlock>>,
         block_writer: &mut impl BlockWriter,
-    ) -> Vec<(WalPosition, Data<StatementBlock>)> {
+    ) -> (
+        Vec<(WalPosition, Data<StatementBlock>)>,
+        HashSet<BlockReference>,
+    ) {
+        // process the blocks in round order ascending to ensure that we do not create unnecessary missing references
+        blocks.sort_by_key(|b1| b1.round());
         let mut blocks: VecDeque<Data<StatementBlock>> = blocks.into();
         let mut newly_blocks_processed: Vec<(WalPosition, Data<StatementBlock>)> = vec![];
+        // missing references that we see them for first time
+        let mut missing_references = HashSet::new();
         while let Some(block) = blocks.pop_front() {
             // Update the highest known round number.
 
             // check whether we have already processed this block and skip it if so.
             let block_reference = block.reference();
+
             if self.block_store.block_exists(*block_reference)
                 || self.blocks_pending.contains_key(block_reference)
             {
@@ -62,6 +76,17 @@ impl BlockManager {
                 // If we are missing a reference then we insert into pending and update the waiting index
                 if !self.block_store.block_exists(*included_reference) {
                     processed = false;
+
+                    // we inserted the missing reference for the first time and the block has not been
+                    // fetched already.
+                    if !self
+                        .block_references_waiting
+                        .contains_key(included_reference)
+                        && !self.blocks_pending.contains_key(included_reference)
+                    {
+                        missing_references.insert(*included_reference);
+                    }
+
                     self.block_references_waiting
                         .entry(*included_reference)
                         .or_default()
@@ -107,7 +132,7 @@ impl BlockManager {
             }
         }
 
-        newly_blocks_processed
+        (newly_blocks_processed, missing_references)
     }
 
     pub fn missing_blocks(&self) -> &[HashSet<BlockReference>] {
@@ -145,7 +170,7 @@ mod tests {
             );
             let mut processed_blocks = HashSet::new();
             for block in iter {
-                let processed = bm.add_blocks(vec![block.clone()], &mut block_writer);
+                let (processed, _missing) = bm.add_blocks(vec![block.clone()], &mut block_writer);
                 print!("Adding {:?}:", block.reference());
                 for (_, p) in processed {
                     print!("{:?},", p.reference());
@@ -161,6 +186,45 @@ mod tests {
             assert_eq!(bm.block_store.len_expensive(), dag.len());
             println!("======");
         }
+    }
+
+    #[test]
+    fn test_block_manager_add_block_missing_references() {
+        let (metrics, _reporter) = Metrics::new(&Registry::new(), None);
+        let dag =
+            Dag::draw("A1:[A0, B0]; B1:[A0, B0]; B2:[A0, B1]; A2:[A1, B1]").add_genesis_blocks();
+        assert_eq!(dag.len(), 6); // 4 blocks in dag + 2 genesis
+
+        let mut block_writer = TestBlockWriter::new(&dag.committee());
+        let mut iter = dag.iter_rev();
+        let mut bm = BlockManager::new(
+            block_writer.block_store(),
+            &dag.committee(),
+            metrics.clone(),
+        );
+
+        let a2 = iter.next().unwrap();
+
+        // WHEN processing block A2 for first time we should get back 2 missing references
+        let (_processed, missing) = bm.add_blocks(vec![a2.clone()], &mut block_writer);
+        assert_eq!(missing.len(), 2);
+
+        // WHEN processing again block A2, then now missing should be empty
+        let (_processed, missing) = bm.add_blocks(vec![a2.clone()], &mut block_writer);
+        assert!(missing.is_empty());
+
+        // WHEN processing block B2, should now yield one missing blocks
+        let b2 = iter.next().unwrap();
+        let (_processed, missing) = bm.add_blocks(vec![b2.clone()], &mut block_writer);
+        assert_eq!(missing.len(), 1);
+
+        // Now processing all the rest of the blocks should yield as missing zero
+        let (_processed, missing) = bm.add_blocks(iter.cloned().collect(), &mut block_writer);
+
+        assert!(missing.is_empty());
+        assert_eq!(bm.block_references_waiting.len(), 0);
+        assert_eq!(bm.blocks_pending.len(), 0);
+        assert_eq!(bm.block_store.len_expensive(), dag.len());
     }
 
     fn rng(s: u8) -> StdRng {

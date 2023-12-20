@@ -189,9 +189,9 @@ where
             let blocks = inner
                 .block_store
                 .get_others_blocks(round, author, batch_size);
-            for block in blocks {
-                round = block.round();
-                to.send(NetworkMessage::Block(block)).await.ok()?;
+            if !blocks.is_empty() {
+                round = blocks.last().unwrap().round();
+                to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
             sleep(stream_interval).await;
         }

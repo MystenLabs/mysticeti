@@ -41,8 +41,8 @@ impl<
         &self,
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
-    ) {
-        self.syncer.lock().add_blocks(blocks, connected_authorities);
+    ) -> Vec<BlockReference> {
+        self.syncer.lock().add_blocks(blocks, connected_authorities)
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {

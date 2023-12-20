@@ -759,6 +759,7 @@ mod test {
     use super::*;
     use rand::prelude::SliceRandom;
     use rand::Rng;
+    use std::cmp::Ordering;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
@@ -833,6 +834,18 @@ mod test {
             RandomDagIter(self, v.into_iter())
         }
 
+        pub fn iter_rev(&self) -> DagIter {
+            let mut v: Vec<_> = self.0.keys().cloned().collect();
+            v.sort_by(|b1, b2| {
+                let ordering = b2.round.cmp(&b1.round);
+                if ordering == Ordering::Equal {
+                    return b1.authority.cmp(&b2.authority);
+                }
+                ordering
+            });
+            DagIter(self, v.into_iter())
+        }
+
         pub fn len(&self) -> usize {
             self.0.len()
         }
@@ -856,6 +869,17 @@ mod test {
     pub struct RandomDagIter<'a>(&'a Dag, std::vec::IntoIter<BlockReference>);
 
     impl<'a> Iterator for RandomDagIter<'a> {
+        type Item = &'a Data<StatementBlock>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let next = self.1.next()?;
+            Some(self.0 .0.get(&next).unwrap())
+        }
+    }
+
+    pub struct DagIter<'a>(&'a Dag, std::vec::IntoIter<BlockReference>);
+
+    impl<'a> Iterator for DagIter<'a> {
         type Item = &'a Data<StatementBlock>;
 
         fn next(&mut self) -> Option<Self::Item> {

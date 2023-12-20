@@ -9,27 +9,48 @@ use crate::runtime::timestamp_utc;
 use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use std::sync::Arc;
+use tokio::sync::watch::Sender;
 
-pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+pub struct Syncer<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver> {
     core: Core<H>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
     commit_observer: C,
     metrics: Arc<Metrics>,
+    round_advanced_signal: R,
 }
 
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
 }
 
-impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
+pub trait RoundAdvancedSignal: Send + Sync {
+    fn new_round(&mut self, round_number: RoundNumber);
+}
+
+impl RoundAdvancedSignal for Sender<RoundNumber> {
+    fn new_round(&mut self, round_number: RoundNumber) {
+        self.send(round_number).ok();
+    }
+}
+
+impl RoundAdvancedSignal for Option<RoundNumber> {
+    fn new_round(&mut self, round_number: RoundNumber) {
+        *self = Some(round_number)
+    }
+}
+
+impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver>
+    Syncer<H, S, R, C>
+{
     pub fn new(
         core: Core<H>,
         commit_period: u64,
         signals: S,
         commit_observer: C,
         metrics: Arc<Metrics>,
+        round_advanced_signal: R,
     ) -> Self {
         Self {
             core,
@@ -38,6 +59,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             signals,
             commit_observer,
             metrics,
+            round_advanced_signal,
         }
     }
 
@@ -50,8 +72,16 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
+        let previous_round = self.core().current_round();
         self.core.add_blocks(blocks);
-        self.try_new_block(connected_authorities.clone());
+        let new_round = self.core().current_round();
+
+        // we got a new quorum of blocks. Let leader timeout task know about it.
+        if new_round > previous_round {
+            self.round_advanced_signal.new_round(new_round);
+        }
+
+        self.try_new_block(connected_authorities);
     }
 
     pub fn force_new_block(
@@ -59,7 +89,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         round: RoundNumber,
         connected_authorities: AuthoritySet,
     ) -> bool {
-        if self.core.last_proposed() == round {
+        if self.core.last_proposed() < round {
             self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
             self.try_new_block(connected_authorities);
@@ -168,7 +198,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, TestCommitObserver> {
+    impl SimulatorState for Syncer<TestBlockHandler, bool, Option<RoundNumber>, TestCommitObserver> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {
@@ -184,15 +214,20 @@ mod tests {
                 }
             }
 
+            // New quorum has been received and round has advanced
+            if let Some(new_round) = self.round_advanced_signal {
+                self.round_advanced_signal = None;
+                Scheduler::schedule_event(
+                    ROUND_TIMEOUT,
+                    self.scheduler_state_id(),
+                    SyncerEvent::ForceNewBlock(new_round),
+                );
+            }
+
             // New block was created
             if self.signals {
                 self.signals = false;
                 let last_block = self.core.last_own_block().clone();
-                Scheduler::schedule_event(
-                    ROUND_TIMEOUT,
-                    self.scheduler_state_id(),
-                    SyncerEvent::ForceNewBlock(last_block.round()),
-                );
                 for authority in self.core.committee().authorities() {
                     if authority == self.core.authority() {
                         continue;
@@ -227,7 +262,7 @@ mod tests {
             simulator.schedule_event(
                 Duration::ZERO,
                 authority as usize,
-                SyncerEvent::ForceNewBlock(0),
+                SyncerEvent::ForceNewBlock(1),
             );
         }
         // Simulation awaits for first num_txn transactions proposed by each authority to certify

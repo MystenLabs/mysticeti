@@ -4,7 +4,7 @@
 use crate::block_handler::BlockHandler;
 use crate::commit_observer::CommitObserver;
 use crate::metrics::{Metrics, UtilizationTimerExt};
-use crate::syncer::{Syncer, SyncerSignals};
+use crate::syncer::{RoundAdvancedSignal, Syncer, SyncerSignals};
 use crate::types::AuthoritySet;
 use crate::types::{RoundNumber, StatementBlock};
 use crate::{data::Data, types::BlockReference};
@@ -12,14 +12,20 @@ use std::sync::Arc;
 use std::{collections::HashSet, thread};
 use tokio::sync::{mpsc, oneshot};
 
-pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+pub struct CoreThreadDispatcher<
+    H: BlockHandler,
+    S: SyncerSignals,
+    R: RoundAdvancedSignal,
+    C: CommitObserver,
+> {
     sender: mpsc::Sender<CoreThreadCommand>,
-    join_handle: thread::JoinHandle<Syncer<H, S, C>>,
+    join_handle: thread::JoinHandle<Syncer<H, S, R, C>>,
     metrics: Arc<Metrics>,
 }
 
-pub struct CoreThread<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
-    syncer: Syncer<H, S, C>,
+pub struct CoreThread<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver>
+{
+    syncer: Syncer<H, S, R, C>,
     receiver: mpsc::Receiver<CoreThreadCommand>,
 }
 
@@ -35,10 +41,14 @@ enum CoreThreadCommand {
     ),
 }
 
-impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
-    CoreThreadDispatcher<H, S, C>
+impl<
+        H: BlockHandler + 'static,
+        S: SyncerSignals + 'static,
+        R: RoundAdvancedSignal + 'static,
+        C: CommitObserver + 'static,
+    > CoreThreadDispatcher<H, S, R, C>
 {
-    pub fn start(syncer: Syncer<H, S, C>) -> Self {
+    pub fn start(syncer: Syncer<H, S, R, C>) -> Self {
         let (sender, receiver) = mpsc::channel(32);
         let metrics = syncer.core().metrics.clone();
         let core_thread = CoreThread { syncer, receiver };
@@ -53,7 +63,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         }
     }
 
-    pub fn stop(self) -> Syncer<H, S, C> {
+    pub fn stop(self) -> Syncer<H, S, R, C> {
         drop(self.sender);
         self.join_handle.join().unwrap()
     }
@@ -109,8 +119,10 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
     }
 }
 
-impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
-    pub fn run(mut self) -> Syncer<H, S, C> {
+impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver>
+    CoreThread<H, S, R, C>
+{
+    pub fn run(mut self) -> Syncer<H, S, R, C> {
         tracing::info!("Started core thread with tid {}", gettid::gettid());
         let metrics = self.syncer.core().metrics.clone();
         while let Some(command) = self.receiver.blocking_recv() {

@@ -340,6 +340,10 @@ impl<H: BlockHandler> Core<H> {
             .expect("Failed to create wal syncer")
     }
 
+    pub fn current_round(&self) -> RoundNumber {
+        self.threshold_clock.get_round()
+    }
+
     fn proposed_block_stats(&self, block: &Data<StatementBlock>) {
         self.metrics
             .proposed_block_size_bytes

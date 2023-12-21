@@ -372,14 +372,10 @@ where
         except: &[AuthorityIndex],
     ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
         static MILLIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
-        // Exclude synchronizing from anyone that has a latency of over 2 seconds.
-        static CUT_OFF_MILLIS: u128 = Duration::from_secs(2).as_millis();
         let senders = self
             .senders
             .iter()
-            .filter(|&(index, (_, latency_receiver))| {
-                !except.contains(index) && latency_receiver.borrow().as_millis() <= CUT_OFF_MILLIS
-            })
+            .filter(|&(index, _)| !except.contains(index))
             .map(|(index, (sender, latency_receiver))| {
                 (
                     index,
@@ -389,7 +385,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        static NUMBER_OF_PEERS: usize = 10;
+        static NUMBER_OF_PEERS: usize = 6;
         let senders = senders
             .choose_multiple_weighted(&mut thread_rng(), NUMBER_OF_PEERS, |item| item.2)
             .expect("Weighted choice error: latency values incorrect!")

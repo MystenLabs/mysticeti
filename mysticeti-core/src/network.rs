@@ -357,6 +357,12 @@ impl Worker {
                                         let d = Duration::from_micros(delay);
                                         latency_sender.observe(d);
                                         latency_last_value_sender.send(d).ok();
+
+                                        static CUT_OFF_LATENCY: u128 = 5_000;
+                                        if d.as_millis() >= CUT_OFF_LATENCY {
+                                            tracing::warn!("High latency connection: {:?}. Breaking now connection.", d);
+                                            return Ok(());
+                                        }
                                     },
                                     None => {
                                         tracing::warn!("Invalid ping: {ping}, greater then current time {time}");

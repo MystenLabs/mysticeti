@@ -434,8 +434,8 @@ impl Worker {
     }
 
     async fn make_connection(&self) -> Option<WorkerConnection> {
-        let (network_in_sender, network_in_receiver) = mpsc::channel(16);
-        let (network_out_sender, network_out_receiver) = mpsc::channel(16);
+        let (network_in_sender, network_in_receiver) = mpsc::channel(1_000);
+        let (network_out_sender, network_out_receiver) = mpsc::channel(1_000);
         let (latency_last_value_sender, latency_last_value_receiver) =
             tokio::sync::watch::channel(Duration::from_millis(0));
         let connection = Connection {

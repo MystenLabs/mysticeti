@@ -51,7 +51,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
         self.core.add_blocks(blocks);
-        self.try_new_block(connected_authorities);
+        self.try_new_block(connected_authorities.clone());
     }
 
     pub fn force_new_block(
@@ -82,6 +82,22 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             if self.core.try_new_block().is_none() {
                 return;
             }
+
+            if self.force_new_block {
+                let leaders = self
+                    .core
+                    .leaders(self.core.last_proposed().saturating_sub(1));
+                tracing::debug!(
+                    "Proposed with timeout for round {} missing {:?} ",
+                    self.core.last_proposed(),
+                    leaders
+                );
+                self.metrics
+                    .ready_new_block
+                    .with_label_values(&["leader_timeout"])
+                    .inc();
+            }
+
             self.signals.new_block_ready();
             self.force_new_block = false;
 

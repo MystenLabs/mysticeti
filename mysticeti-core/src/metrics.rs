@@ -9,9 +9,10 @@ use crate::stat::{histogram, DivUsize, HistogramSender, PreciseHistogram};
 use crate::types::{format_authority_index, AuthorityIndex};
 use prometheus::{
     register_counter_vec_with_registry, register_histogram_vec_with_registry,
-    register_int_counter_vec_with_registry, register_int_counter_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry, CounterVec,
-    HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    register_histogram_with_registry, register_int_counter_vec_with_registry,
+    register_int_counter_with_registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry, CounterVec, Histogram, HistogramVec, IntCounter,
+    IntCounterVec, IntGauge, IntGaugeVec, Registry,
 };
 use std::net::SocketAddr;
 use std::ops::AddAssign;
@@ -81,6 +82,8 @@ pub struct Metrics {
     pub block_commit_latency: HistogramSender<Duration>,
     pub block_receive_latency: HistogramVec,
     pub add_block_latency: HistogramVec,
+    pub quorum_receive_latency: Histogram,
+    pub ready_new_block: IntCounterVec,
 }
 
 pub struct MetricReporter {
@@ -388,6 +391,19 @@ impl Metrics {
                 "The time it took for a block to be successfully processed and stored in our node. The metric is reported by block author.",
                 &["authority"],
                 registry
+            ).unwrap(),
+
+            quorum_receive_latency: register_histogram_with_registry!(
+                "quorum_receive_latency",
+                "The time it took to reach a round quorum",
+                registry
+            ).unwrap(),
+
+            ready_new_block: register_int_counter_vec_with_registry!(
+                "ready_new_block",
+                "Report when it's ready to propose a new block",
+                &["type"],
+                registry,
             ).unwrap(),
 
             transaction_certified_latency,

@@ -90,7 +90,10 @@ where
             }
 
             if to_send.len() >= CHUNK_SIZE {
-                self.send(peer, NetworkMessage::Blocks(std::mem::take(&mut to_send)))?;
+                self.send(
+                    peer,
+                    NetworkMessage::RequestBlocksResponse(std::mem::take(&mut to_send)),
+                )?;
             }
 
             self.metrics
@@ -101,7 +104,10 @@ where
 
         // send any leftovers
         if !to_send.is_empty() {
-            self.send(peer, NetworkMessage::Blocks(std::mem::take(&mut to_send)))?;
+            self.send(
+                peer,
+                NetworkMessage::RequestBlocksResponse(std::mem::take(&mut to_send)),
+            )?;
         }
 
         self.send(peer, NetworkMessage::BlockNotFound(missing))

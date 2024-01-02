@@ -389,8 +389,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         missing_blocks: Vec<BlockReference>,
         sender: &mpsc::Sender<NetworkMessage>,
     ) {
-        if let Ok(permit) = sender.try_reserve() {
-            permit.send(NetworkMessage::RequestBlocks(missing_blocks))
+        if !missing_blocks.is_empty() {
+            if let Ok(permit) = sender.try_reserve() {
+                permit.send(NetworkMessage::RequestBlocks(missing_blocks))
+            }
         }
     }
 

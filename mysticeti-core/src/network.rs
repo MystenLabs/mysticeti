@@ -25,6 +25,7 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::runtime::Handle;
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -290,7 +291,7 @@ impl Worker {
         } = connection;
         tracing::debug!("Connected to {}", peer_id);
         let (reader, writer) = stream.into_split();
-        let (pong_sender, pong_receiver) = mpsc::channel(16);
+        let (pong_sender, pong_receiver) = mpsc::channel(150);
         let write_fut = Self::handle_write_stream(
             writer,
             receiver,
@@ -410,8 +411,18 @@ impl Worker {
                 let read = stream.read_exact(buf).await?;
                 assert_eq!(read, buf.len());
                 let pong = decode_ping(buf);
-                if pong_sender.send(pong).await.is_err() {
-                    return Ok(()); // write stream closed
+                let permit = pong_sender.try_reserve();
+                if let Err(err) = permit {
+                    match err {
+                        TrySendError::Full(_) => {
+                            tracing::error!("Pong sender channel is saturated. Will drop.");
+                        }
+                        TrySendError::Closed(_) => {
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    permit.unwrap().send(pong);
                 }
                 continue;
             }

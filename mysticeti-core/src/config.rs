@@ -49,6 +49,9 @@ pub struct Parameters {
     pub store_retain_rounds: u64,
     pub enable_cleanup: bool,
     pub synchronizer_parameters: SynchronizerParameters,
+    /// When detected connection latency is >= the `network_connection_max_latency`, then the connection breaks as best effort to fix any
+    /// transient connection issues.
+    pub network_connection_max_latency: Duration,
 }
 
 impl Default for Parameters {
@@ -61,6 +64,7 @@ impl Default for Parameters {
             shutdown_grace_period: Self::DEFAULT_SHUTDOWN_GRACE_PERIOD,
             number_of_leaders: Self::DEFAULT_NUMBER_OF_LEADERS,
             store_retain_rounds: Self::DEFAULT_STORE_RETAIN_ROUNDS,
+            network_connection_max_latency: Self::DEFAULT_NETWORK_CONNECTION_MAX_LATENCY,
             enable_pipelining: true,
             enable_cleanup: true,
             synchronizer_parameters: SynchronizerParameters::default(),
@@ -109,6 +113,8 @@ impl Parameters {
     pub const DEFAULT_NUMBER_OF_LEADERS: usize = 1;
 
     pub const DEFAULT_STORE_RETAIN_ROUNDS: u64 = 500;
+
+    pub const DEFAULT_NETWORK_CONNECTION_MAX_LATENCY: Duration = Duration::from_secs(5);
 
     pub fn new_for_benchmarks(ips: Vec<IpAddr>) -> Self {
         let benchmark_port_offset = ips.len() as u16;

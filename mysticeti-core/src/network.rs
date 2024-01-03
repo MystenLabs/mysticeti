@@ -76,7 +76,14 @@ impl Network {
     ) -> Self {
         let addresses = parameters.all_network_addresses().collect::<Vec<_>>();
         print_network_address_table(&addresses);
-        Self::from_socket_addresses(&addresses, our_id as usize, local_addr, metrics).await
+        Self::from_socket_addresses(
+            &addresses,
+            our_id as usize,
+            local_addr,
+            metrics,
+            parameters.network_connection_max_latency,
+        )
+        .await
     }
 
     pub fn connection_receiver(&mut self) -> &mut mpsc::Receiver<Connection> {
@@ -88,6 +95,7 @@ impl Network {
         our_id: usize,
         local_addr: SocketAddr,
         metrics: Arc<Metrics>,
+        network_connection_max_latency: Duration,
     ) -> Self {
         if our_id >= addresses.len() {
             panic!(
@@ -122,7 +130,8 @@ impl Network {
                     connection_sender: connection_sender.clone(),
                     bind_addr: translation_mode.bind_addr(local_addr),
                     active_immediately: id < our_id,
-                    latency_sender: metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone()
+                    latency_sender: metrics.connection_latency_sender.get(id).expect("Can not locate connection_latency_sender metric - did you initialize metrics with correct committee?").clone(),
+                    network_connection_max_latency
                 }
                 .run(receiver),
             );
@@ -190,6 +199,7 @@ struct Worker {
     bind_addr: Option<SocketAddr>,
     active_immediately: bool,
     latency_sender: HistogramSender<Duration>,
+    network_connection_max_latency: Duration,
 }
 
 struct WorkerConnection {
@@ -263,7 +273,7 @@ impl Worker {
             // todo - pass signal to break the main loop
             return Ok(());
         };
-        Self::handle_stream(stream, connection).await
+        Self::handle_stream(stream, connection, self.network_connection_max_latency).await
     }
 
     async fn handle_passive_stream(&self, mut stream: TcpStream) -> io::Result<()> {
@@ -278,10 +288,14 @@ impl Worker {
             // todo - pass signal to break the main loop
             return Ok(());
         };
-        Self::handle_stream(stream, connection).await
+        Self::handle_stream(stream, connection, self.network_connection_max_latency).await
     }
 
-    async fn handle_stream(stream: TcpStream, connection: WorkerConnection) -> io::Result<()> {
+    async fn handle_stream(
+        stream: TcpStream,
+        connection: WorkerConnection,
+        network_connection_max_latency: Duration,
+    ) -> io::Result<()> {
         let WorkerConnection {
             sender,
             receiver,
@@ -298,6 +312,7 @@ impl Worker {
             pong_receiver,
             latency_sender,
             latency_last_value_sender,
+            network_connection_max_latency,
         )
         .boxed();
         let read_fut = Self::handle_read_stream(reader, sender, pong_sender).boxed();
@@ -312,6 +327,7 @@ impl Worker {
         mut pong_receiver: mpsc::Receiver<i64>,
         latency_sender: HistogramSender<Duration>,
         latency_last_value_sender: tokio::sync::watch::Sender<Duration>,
+        network_connection_max_latency: Duration,
     ) -> io::Result<()> {
         let start = Instant::now();
         let mut ping_deadline = start + PING_INTERVAL;
@@ -359,8 +375,7 @@ impl Worker {
                                         latency_sender.observe(d);
                                         latency_last_value_sender.send(d).ok();
 
-                                        static CUT_OFF_LATENCY: u128 = 5_000;
-                                        if d.as_millis() >= CUT_OFF_LATENCY {
+                                        if d >= network_connection_max_latency {
                                             tracing::warn!("High latency connection: {:?}. Breaking now connection.", d);
                                             return Ok(());
                                         }
@@ -561,6 +576,7 @@ fn decode_ping(message: &[u8]) -> i64 {
 #[cfg(test)]
 mod test {
     use crate::committee::Committee;
+    use crate::config::Parameters;
     use crate::metrics::Metrics;
     use crate::test_util::networks_and_addresses;
     use prometheus::Registry;
@@ -574,7 +590,9 @@ mod test {
             .authorities()
             .map(|_| Metrics::new(&Registry::default(), Some(&committee)).0)
             .collect();
-        let (networks, addresses) = networks_and_addresses(&metrics).await;
+        let (networks, addresses) =
+            networks_and_addresses(&metrics, Parameters::DEFAULT_NETWORK_CONNECTION_MAX_LATENCY)
+                .await;
         for (mut network, address) in networks.into_iter().zip(addresses.iter()) {
             let mut waiting_peers: HashSet<_> = HashSet::from_iter(addresses.iter().copied());
             waiting_peers.remove(address);

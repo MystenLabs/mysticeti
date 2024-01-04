@@ -146,11 +146,26 @@ fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
     authority * 1_000_000
 }
 
+#[derive(Default)]
+pub struct SyncerSignalsMock {
+    pub new_round: Option<RoundNumber>,
+    pub new_block_ready: bool,
+}
+
+impl SyncerSignals for SyncerSignalsMock {
+    fn new_block_ready(&mut self) {
+        self.new_block_ready = true
+    }
+    fn new_round(&mut self, round_number: RoundNumber) {
+        self.new_round = Some(round_number)
+    }
+}
+
 pub fn committee_and_syncers(
     n: usize,
 ) -> (
     Arc<Committee>,
-    Vec<Syncer<TestBlockHandler, bool, TestCommitObserver>>,
+    Vec<Syncer<TestBlockHandler, SyncerSignalsMock, TestCommitObserver>>,
 ) {
     let (committee, cores, commit_observers, _) = committee_and_cores(n);
     (

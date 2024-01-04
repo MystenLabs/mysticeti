@@ -9,6 +9,8 @@ use crate::runtime::timestamp_utc;
 use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use std::sync::Arc;
+use tokio::sync::watch::Sender;
+use tokio::sync::Notify;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
@@ -19,8 +21,34 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     metrics: Arc<Metrics>,
 }
 
+pub struct Signals {
+    pub round_advanced_sender: Sender<RoundNumber>,
+    pub block_ready: Arc<Notify>,
+}
+
+impl Signals {
+    pub fn new(block_ready: Arc<Notify>, round_advanced_sender: Sender<RoundNumber>) -> Self {
+        Self {
+            round_advanced_sender,
+            block_ready,
+        }
+    }
+}
+
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
+
+    fn new_round(&mut self, round_number: RoundNumber);
+}
+
+impl SyncerSignals for Signals {
+    fn new_block_ready(&mut self) {
+        self.block_ready.notify_waiters();
+    }
+
+    fn new_round(&mut self, round_number: RoundNumber) {
+        self.round_advanced_sender.send(round_number).ok();
+    }
 }
 
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
@@ -50,8 +78,16 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
+        let previous_round = self.core().current_round();
         self.core.add_blocks(blocks);
-        self.try_new_block(connected_authorities.clone());
+        let new_round = self.core().current_round();
+
+        // we got a new quorum of blocks. Let leader timeout task know about it.
+        if new_round > previous_round {
+            self.signals.new_round(new_round);
+        }
+
+        self.try_new_block(connected_authorities);
     }
 
     pub fn force_new_block(
@@ -59,7 +95,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         round: RoundNumber,
         connected_authorities: AuthoritySet,
     ) -> bool {
-        if self.core.last_proposed() == round {
+        if self.core.last_proposed() < round {
             self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
             self.try_new_block(connected_authorities);
@@ -142,12 +178,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     }
 }
 
-impl SyncerSignals for bool {
-    fn new_block_ready(&mut self) {
-        *self = true;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,7 +185,7 @@ mod tests {
     use crate::commit_observer::TestCommitObserver;
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed};
+    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed, SyncerSignalsMock};
     use rand::Rng;
     use std::ops::Range;
     use std::time::Duration;
@@ -168,7 +198,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, TestCommitObserver> {
+    impl SimulatorState for Syncer<TestBlockHandler, SyncerSignalsMock, TestCommitObserver> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {
@@ -184,15 +214,20 @@ mod tests {
                 }
             }
 
-            // New block was created
-            if self.signals {
-                self.signals = false;
-                let last_block = self.core.last_own_block().clone();
+            // New quorum has been received and round has advanced
+            if let Some(new_round) = self.signals.new_round {
+                self.signals.new_round = None;
                 Scheduler::schedule_event(
                     ROUND_TIMEOUT,
                     self.scheduler_state_id(),
-                    SyncerEvent::ForceNewBlock(last_block.round()),
+                    SyncerEvent::ForceNewBlock(new_round),
                 );
+            }
+
+            // New block was created
+            if self.signals.new_block_ready {
+                self.signals.new_block_ready = false;
+                let last_block = self.core.last_own_block().clone();
                 for authority in self.core.committee().authorities() {
                     if authority == self.core.authority() {
                         continue;
@@ -227,7 +262,7 @@ mod tests {
             simulator.schedule_event(
                 Duration::ZERO,
                 authority as usize,
-                SyncerEvent::ForceNewBlock(0),
+                SyncerEvent::ForceNewBlock(1),
             );
         }
         // Simulation awaits for first num_txn transactions proposed by each authority to certify

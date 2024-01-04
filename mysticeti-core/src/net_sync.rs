@@ -406,7 +406,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             select! {
                 _sleep = runtime::sleep(leader_timeout), if !timed_out => {
                     tracing::debug!("Timeout {round}");
-                    // todo - more then one round timeout can happen, need to fix this
                     let connected_authorities = inner.connected_authorities.lock().authorities.clone();
                     inner.syncer.force_new_block(round, connected_authorities).await;
                     timed_out = true;

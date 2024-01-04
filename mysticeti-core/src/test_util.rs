@@ -30,6 +30,7 @@ use rand::SeedableRng;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub fn test_metrics() -> Arc<Metrics> {
     Metrics::new(&Registry::new(), None).0
@@ -180,7 +181,10 @@ pub fn committee_and_syncers(
     )
 }
 
-pub async fn networks_and_addresses(metrics: &[Arc<Metrics>]) -> (Vec<Network>, Vec<SocketAddr>) {
+pub async fn networks_and_addresses(
+    metrics: &[Arc<Metrics>],
+    network_connection_max_latency: Duration,
+) -> (Vec<Network>, Vec<SocketAddr>) {
     let host = Ipv4Addr::LOCALHOST;
     let addresses: Vec<_> = (0..metrics.len())
         .map(|i| SocketAddr::V4(SocketAddrV4::new(host, 5001 + i as u16)))
@@ -191,7 +195,13 @@ pub async fn networks_and_addresses(metrics: &[Arc<Metrics>]) -> (Vec<Network>, 
             .zip(metrics.iter())
             .enumerate()
             .map(|(i, (address, metrics))| {
-                Network::from_socket_addresses(&addresses, i, *address, metrics.clone())
+                Network::from_socket_addresses(
+                    &addresses,
+                    i,
+                    *address,
+                    metrics.clone(),
+                    network_connection_max_latency,
+                )
             });
     let networks = join_all(networks).await;
     (networks, addresses)
@@ -251,11 +261,12 @@ pub async fn network_syncers_with_epoch_duration(
     n: usize,
     rounds_in_epoch: RoundNumber,
 ) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitObserver>> {
+    let parameters = Parameters::default();
     let (_, cores, commit_observers, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
-    let (networks, _) = networks_and_addresses(&metrics).await;
+    let (networks, _) =
+        networks_and_addresses(&metrics, parameters.network_connection_max_latency).await;
     let mut network_syncers = vec![];
-    let parameters = Parameters::default();
     for ((network, core), commit_observer) in networks.into_iter().zip(cores).zip(commit_observers)
     {
         let network_syncer = NetworkSyncer::start(

@@ -59,7 +59,6 @@ impl UniversalCommitter {
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader);
-                self.update_metrics(&status, Decision::Direct);
                 tracing::debug!("Outcome of direct rule: {status}");
 
                 // If we can't directly decide the leader, try to indirectly decide it.

@@ -27,7 +27,7 @@ use tokio::sync::watch::Receiver;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
-pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
+pub const MAXIMUM_BLOCK_REQUEST: usize = 50;
 
 struct ConnectedAuthorities {
     metrics: Arc<Metrics>,
@@ -389,8 +389,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         missing_blocks: Vec<BlockReference>,
         sender: &mpsc::Sender<NetworkMessage>,
     ) {
-        if let Ok(permit) = sender.try_reserve() {
-            permit.send(NetworkMessage::RequestBlocks(missing_blocks))
+        if !missing_blocks.is_empty() {
+            for blocks in missing_blocks.chunks(MAXIMUM_BLOCK_REQUEST) {
+                if let Ok(permit) = sender.try_reserve() {
+                    permit.send(NetworkMessage::RequestBlocks(blocks.to_vec()))
+                }
+            }
         }
     }
 

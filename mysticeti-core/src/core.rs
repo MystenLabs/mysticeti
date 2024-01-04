@@ -165,14 +165,16 @@ impl<H: BlockHandler> Core<H> {
         self
     }
 
-    // Note that generally when you update this function you also want to change genesis initialization above
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+    // Note that generally when you update this function you also want to change genesis initialization above.
+    // The method returns the missing references in order to successfully process the provided blocks. The missing
+    // references though will be returned only the first time that a block is provided for processing.
+    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<BlockReference> {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Core::add_blocks");
         let now = timestamp_utc();
-        let processed = self
+        let (processed, missing_references) = self
             .block_manager
             .add_blocks(blocks, &mut (&mut self.wal_writer, &self.block_store));
         let mut result = Vec::with_capacity(processed.len());
@@ -201,7 +203,7 @@ impl<H: BlockHandler> Core<H> {
             .threshold_clock_round
             .set(self.threshold_clock.get_round() as i64);
         self.run_block_handler(&result);
-        result
+        missing_references.into_iter().collect()
     }
 
     fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {

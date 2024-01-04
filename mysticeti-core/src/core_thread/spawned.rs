@@ -24,7 +24,11 @@ pub struct CoreThread<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
 }
 
 enum CoreThreadCommand {
-    AddBlocks(Vec<Data<StatementBlock>>, AuthoritySet, oneshot::Sender<()>),
+    AddBlocks(
+        Vec<Data<StatementBlock>>,
+        AuthoritySet,
+        oneshot::Sender<Vec<BlockReference>>,
+    ),
     ForceNewBlock(RoundNumber, AuthoritySet, oneshot::Sender<()>),
     Cleanup(oneshot::Sender<()>),
     /// Request missing blocks that need to be synched.
@@ -62,7 +66,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
         &self,
         blocks: Vec<Data<StatementBlock>>,
         connected_authorities: AuthoritySet,
-    ) {
+    ) -> Vec<BlockReference> {
         let (sender, receiver) = oneshot::channel();
         self.send(CoreThreadCommand::AddBlocks(
             blocks,
@@ -70,7 +74,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
             sender,
         ))
         .await;
-        receiver.await.expect("core thread is not expected to stop");
+        receiver.await.expect("core thread is not expected to stop")
     }
 
     pub async fn force_new_block(&self, round: RoundNumber, connected_authorities: AuthoritySet) {
@@ -118,8 +122,8 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> CoreThread<H, S, C> {
             metrics.core_lock_dequeued.inc();
             match command {
                 CoreThreadCommand::AddBlocks(blocks, connected_authorities, sender) => {
-                    self.syncer.add_blocks(blocks, connected_authorities);
-                    sender.send(()).ok();
+                    let missing_blocks = self.syncer.add_blocks(blocks, connected_authorities);
+                    sender.send(missing_blocks).ok();
                 }
                 CoreThreadCommand::ForceNewBlock(round, connected_authorities, sender) => {
                     self.syncer.force_new_block(round, connected_authorities);

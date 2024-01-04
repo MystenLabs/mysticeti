@@ -8,7 +8,7 @@ use crate::network::{Connection, Network, NetworkMessage};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
-use crate::syncer::{Syncer, SyncerSignals};
+use crate::syncer::{Signals, Syncer};
 use crate::types::{AuthorityIndex, StatementBlock};
 use crate::types::{AuthoritySet, RoundNumber};
 use crate::wal::WalSyncer;
@@ -23,7 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::watch::{Receiver, Sender};
+use tokio::sync::watch::Receiver;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The maximum number of blocks that can be requested in a single message.
@@ -67,7 +67,7 @@ pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
 }
 
 pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
-    pub syncer: CoreThreadDispatcher<H, Arc<Notify>, Sender<RoundNumber>, C>,
+    pub syncer: CoreThreadDispatcher<H, Signals, C>,
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
     committee: Arc<Committee>,
@@ -93,20 +93,20 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     ) -> Self {
         let authority_index = core.authority();
         let handle = Handle::current();
-        let notify = Arc::new(Notify::new());
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
         let epoch_closing_time = core.epoch_closing_time();
+        let notify = Arc::new(Notify::new());
         let (round_advanced_sender, round_advanced_receiver) =
             tokio::sync::watch::channel(0 as RoundNumber);
+        let signals = Signals::new(notify.clone(), round_advanced_sender);
         let mut syncer = Syncer::new(
             core,
             commit_period,
-            notify.clone(),
+            signals,
             commit_observer,
             metrics.clone(),
-            round_advanced_sender,
         );
         syncer.force_new_block(1, Default::default());
         let syncer = CoreThreadDispatcher::start(syncer);
@@ -117,9 +117,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let connected_authorities =
             Arc::new(Mutex::new(ConnectedAuthorities::new(metrics.clone())));
         let inner = Arc::new(NetworkSyncerInner {
-            notify,
             syncer,
             block_store,
+            notify,
             committee: committee.clone(),
             stop: stop_sender.clone(),
             epoch_close_signal: epoch_sender.clone(),
@@ -154,7 +154,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         }
     }
 
-    pub async fn shutdown(self) -> Syncer<H, Arc<Notify>, Sender<RoundNumber>, C> {
+    pub async fn shutdown(self) -> Syncer<H, Signals, C> {
         drop(self.stop);
         // todo - wait for network shutdown as well
         self.main_task.await.ok();
@@ -477,12 +477,6 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncerInner<
     }
 }
 
-impl SyncerSignals for Arc<Notify> {
-    fn new_block_ready(&mut self) {
-        self.notify_waiters();
-    }
-}
-
 pub struct AsyncWalSyncer {
     wal_syncer: WalSyncer,
     stop: mpsc::Sender<()>,
@@ -581,17 +575,13 @@ mod sim_tests {
     use crate::future_simulator::SimulatedExecutorState;
     use crate::runtime;
     use crate::simulator_tracing::setup_simulator_tracing;
-    use crate::syncer::Syncer;
+    use crate::syncer::{Signals, Syncer};
     use crate::test_util::{
         check_commits, print_stats, rng_at_seed, simulated_network_syncers,
         simulated_network_syncers_with_epoch_duration,
     };
-    use crate::types::RoundNumber;
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::watch::Sender;
-    use tokio::sync::Notify;
 
     #[test]
     fn test_epoch_close() {
@@ -616,7 +606,7 @@ mod sim_tests {
 
     async fn wait_for_epoch_to_close(
         network_syncers: Vec<NetworkSyncer<TestBlockHandler, TestCommitObserver>>,
-    ) -> Vec<Syncer<TestBlockHandler, Arc<Notify>, Sender<RoundNumber>, TestCommitObserver>> {
+    ) -> Vec<Syncer<TestBlockHandler, Signals, TestCommitObserver>> {
         let mut any_closed = false;
         while !any_closed {
             for net_sync in network_syncers.iter() {

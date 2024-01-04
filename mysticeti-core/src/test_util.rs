@@ -18,7 +18,7 @@ use crate::net_sync::NetworkSyncer;
 use crate::network::Network;
 #[cfg(feature = "simulator")]
 use crate::simulated_network::SimulatedNetwork;
-use crate::syncer::{RoundAdvancedSignal, Syncer, SyncerSignals};
+use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{
     format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock,
 };
@@ -146,11 +146,26 @@ fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
     authority * 1_000_000
 }
 
+#[derive(Default)]
+pub struct SyncerSignalsMock {
+    pub new_round: Option<RoundNumber>,
+    pub new_block_ready: bool,
+}
+
+impl SyncerSignals for SyncerSignalsMock {
+    fn new_block_ready(&mut self) {
+        self.new_block_ready = true
+    }
+    fn new_round(&mut self, round_number: RoundNumber) {
+        self.new_round = Some(round_number)
+    }
+}
+
 pub fn committee_and_syncers(
     n: usize,
 ) -> (
     Arc<Committee>,
-    Vec<Syncer<TestBlockHandler, bool, Option<RoundNumber>, TestCommitObserver>>,
+    Vec<Syncer<TestBlockHandler, SyncerSignalsMock, TestCommitObserver>>,
 ) {
     let (committee, cores, commit_observers, _) = committee_and_cores(n);
     (
@@ -159,14 +174,7 @@ pub fn committee_and_syncers(
             .into_iter()
             .zip(commit_observers)
             .map(|(core, commit_observer)| {
-                Syncer::new(
-                    core,
-                    3,
-                    Default::default(),
-                    commit_observer,
-                    test_metrics(),
-                    None,
-                )
+                Syncer::new(core, 3, Default::default(), commit_observer, test_metrics())
             })
             .collect(),
     )
@@ -274,8 +282,8 @@ pub fn rng_at_seed(seed: u64) -> StdRng {
     StdRng::from_seed(seed)
 }
 
-pub fn check_commits<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal>(
-    syncers: &[Syncer<H, S, R, TestCommitObserver>],
+pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
+    syncers: &[Syncer<H, S, TestCommitObserver>],
 ) {
     let commits = syncers
         .iter()
@@ -299,8 +307,8 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal>(
 }
 
 #[allow(dead_code)]
-pub fn print_stats<S: SyncerSignals, R: RoundAdvancedSignal>(
-    syncers: &[Syncer<TestBlockHandler, S, R, TestCommitObserver>],
+pub fn print_stats<S: SyncerSignals>(
+    syncers: &[Syncer<TestBlockHandler, S, TestCommitObserver>],
     reporters: &mut [MetricReporter],
 ) {
     assert_eq!(syncers.len(), reporters.len());

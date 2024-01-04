@@ -6,34 +6,25 @@ use std::collections::HashSet;
 use crate::block_handler::BlockHandler;
 use crate::commit_observer::CommitObserver;
 use crate::data::Data;
-use crate::syncer::{RoundAdvancedSignal, Syncer, SyncerSignals};
+use crate::syncer::{Syncer, SyncerSignals};
 use crate::types::{AuthoritySet, BlockReference};
 use crate::types::{RoundNumber, StatementBlock};
 use parking_lot::Mutex;
 
-pub struct CoreThreadDispatcher<
-    H: BlockHandler,
-    S: SyncerSignals,
-    R: RoundAdvancedSignal,
-    C: CommitObserver,
-> {
-    syncer: Mutex<Syncer<H, S, R, C>>,
+pub struct CoreThreadDispatcher<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
+    syncer: Mutex<Syncer<H, S, C>>,
 }
 
-impl<
-        H: BlockHandler + 'static,
-        S: SyncerSignals + 'static,
-        R: RoundAdvancedSignal + 'static,
-        C: CommitObserver + 'static,
-    > CoreThreadDispatcher<H, S, R, C>
+impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 'static>
+    CoreThreadDispatcher<H, S, C>
 {
-    pub fn start(syncer: Syncer<H, S, R, C>) -> Self {
+    pub fn start(syncer: Syncer<H, S, C>) -> Self {
         Self {
             syncer: Mutex::new(syncer),
         }
     }
 
-    pub fn stop(self) -> Syncer<H, S, R, C> {
+    pub fn stop(self) -> Syncer<H, S, C> {
         self.syncer.into_inner()
     }
 

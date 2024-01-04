@@ -10,47 +10,54 @@ use crate::types::{AuthoritySet, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
 use std::sync::Arc;
 use tokio::sync::watch::Sender;
+use tokio::sync::Notify;
 
-pub struct Syncer<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver> {
+pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
     force_new_block: bool,
     commit_period: u64,
     signals: S,
     commit_observer: C,
     metrics: Arc<Metrics>,
-    round_advanced_signal: R,
+}
+
+pub struct Signals {
+    pub round_advanced_sender: Sender<RoundNumber>,
+    pub block_ready: Arc<Notify>,
+}
+
+impl Signals {
+    pub fn new(block_ready: Arc<Notify>, round_advanced_sender: Sender<RoundNumber>) -> Self {
+        Self {
+            round_advanced_sender,
+            block_ready,
+        }
+    }
 }
 
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
-}
 
-pub trait RoundAdvancedSignal: Send + Sync {
     fn new_round(&mut self, round_number: RoundNumber);
 }
 
-impl RoundAdvancedSignal for Sender<RoundNumber> {
+impl SyncerSignals for Signals {
+    fn new_block_ready(&mut self) {
+        self.block_ready.notify_waiters();
+    }
+
     fn new_round(&mut self, round_number: RoundNumber) {
-        self.send(round_number).ok();
+        self.round_advanced_sender.send(round_number).ok();
     }
 }
 
-impl RoundAdvancedSignal for Option<RoundNumber> {
-    fn new_round(&mut self, round_number: RoundNumber) {
-        *self = Some(round_number)
-    }
-}
-
-impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserver>
-    Syncer<H, S, R, C>
-{
+impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
     pub fn new(
         core: Core<H>,
         commit_period: u64,
         signals: S,
         commit_observer: C,
         metrics: Arc<Metrics>,
-        round_advanced_signal: R,
     ) -> Self {
         Self {
             core,
@@ -59,7 +66,6 @@ impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserve
             signals,
             commit_observer,
             metrics,
-            round_advanced_signal,
         }
     }
 
@@ -78,7 +84,7 @@ impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserve
 
         // we got a new quorum of blocks. Let leader timeout task know about it.
         if new_round > previous_round {
-            self.round_advanced_signal.new_round(new_round);
+            self.signals.new_round(new_round);
         }
 
         self.try_new_block(connected_authorities);
@@ -172,12 +178,6 @@ impl<H: BlockHandler, S: SyncerSignals, R: RoundAdvancedSignal, C: CommitObserve
     }
 }
 
-impl SyncerSignals for bool {
-    fn new_block_ready(&mut self) {
-        *self = true;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +185,7 @@ mod tests {
     use crate::commit_observer::TestCommitObserver;
     use crate::data::Data;
     use crate::simulator::{Scheduler, Simulator, SimulatorState};
-    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed};
+    use crate::test_util::{check_commits, committee_and_syncers, rng_at_seed, SyncerSignalsMock};
     use rand::Rng;
     use std::ops::Range;
     use std::time::Duration;
@@ -198,7 +198,7 @@ mod tests {
         DeliverBlock(Data<StatementBlock>),
     }
 
-    impl SimulatorState for Syncer<TestBlockHandler, bool, Option<RoundNumber>, TestCommitObserver> {
+    impl SimulatorState for Syncer<TestBlockHandler, SyncerSignalsMock, TestCommitObserver> {
         type Event = SyncerEvent;
 
         fn handle_event(&mut self, event: Self::Event) {
@@ -215,8 +215,8 @@ mod tests {
             }
 
             // New quorum has been received and round has advanced
-            if let Some(new_round) = self.round_advanced_signal {
-                self.round_advanced_signal = None;
+            if let Some(new_round) = self.signals.new_round {
+                self.signals.new_round = None;
                 Scheduler::schedule_event(
                     ROUND_TIMEOUT,
                     self.scheduler_state_id(),
@@ -225,8 +225,8 @@ mod tests {
             }
 
             // New block was created
-            if self.signals {
-                self.signals = false;
+            if self.signals.new_block_ready {
+                self.signals.new_block_ready = false;
                 let last_block = self.core.last_own_block().clone();
                 for authority in self.core.committee().authorities() {
                     if authority == self.core.authority() {

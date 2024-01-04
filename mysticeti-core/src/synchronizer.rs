@@ -189,8 +189,8 @@ where
             let blocks = inner
                 .block_store
                 .get_others_blocks(round, author, batch_size);
-            if !blocks.is_empty() {
-                round = blocks.last().unwrap().round();
+            if let Some(last_block) = blocks.last() {
+                round = last_block.round();
                 to.send(NetworkMessage::Blocks(blocks)).await.ok()?;
             }
             sleep(stream_interval).await;

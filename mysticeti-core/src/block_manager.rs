@@ -42,7 +42,7 @@ impl BlockManager {
     /// Attempts to process (accept) the provided blocks and stores them only when the causal history
     /// is already present. If a block can't be processed, then it is parked in the `blocks_pending` map
     /// and any missing references are recorded in the `block_references_waiting` and in the `missing` vector.
-    /// The method returns a tuple where the newly accepted/processed blocks are returned and the missing references
+    /// The method returns a tuple where are returned (1) the newly accepted/processed blocks (2) the missing references
     /// of the provided blocks. Keep in mind that the missing references are returned only the first one for a specific
     /// provided block. If we attempt to add the same block again, then its missing references won't be returned again.
     pub fn add_blocks(

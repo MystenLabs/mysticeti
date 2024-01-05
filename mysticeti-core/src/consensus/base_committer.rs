@@ -80,6 +80,7 @@ impl BaseCommitter {
 
     /// Return the decision round of the specified wave. The decision round is always the last
     /// round of the wave.
+    /// question (arun): just pass in round and have this figure out wave number ?
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
         let wave_length = self.options.wave_length;
         wave * wave_length + wave_length - 1 + self.options.round_offset
@@ -90,6 +91,13 @@ impl BaseCommitter {
     /// returns `None` if there are no leaders for the specified round.
     pub fn elect_leader(&self, round: RoundNumber) -> Option<AuthorityRound> {
         let wave = self.wave_number(round);
+        tracing::debug!(
+            "elect_leader: round={}, wave={}, leader_round={}, offset={}",
+            round,
+            wave,
+            self.leader_round(wave),
+            self.options.leader_offset
+        );
         if self.leader_round(wave) != round {
             return None;
         }
@@ -157,6 +165,9 @@ impl BaseCommitter {
     ) -> bool {
         let mut votes_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for reference in potential_certificate.includes() {
+            tracing::debug!(
+                "reference {reference} included in potential certificate {potential_certificate}"
+            );
             let is_vote = if let Some(is_vote) = all_votes.get(reference) {
                 *is_vote
             } else {
@@ -174,6 +185,8 @@ impl BaseCommitter {
                 if votes_stake_aggregator.add(reference.authority, &self.committee) {
                     return true;
                 }
+            } else {
+                tracing::trace!("[{self}] {reference} is not a vote for {leader_block:?}");
             }
         }
         false
@@ -195,6 +208,8 @@ impl BaseCommitter {
         // Get all blocks that could be potential certificates for the target leader. These blocks
         // are in the decision round of the target leader and are linked to the anchor.
         let wave = self.wave_number(leader.round);
+        // question (arun): isn't decision round always anchor.round - 1?
+        // answer: this is not always the case you can have an anchor round > r+2
         let decision_round = self.decision_round(wave);
         let potential_certificates = self.block_store.linked_to_round(anchor, decision_round);
 
@@ -211,6 +226,9 @@ impl BaseCommitter {
             .collect();
 
         // There can be at most one certified leader, otherwise it means the BFT assumption is broken.
+        // question (arun): Cant there be more than 1 certified link, just less than 2f+1?
+        // answer: there is a possiblity we may have more than block from a authority at a round, but
+        // we should never have have more than one which is certified. (i believe we pick the first block we received)
         if certified_leader_blocks.len() > 1 {
             panic!("More than one certified block at wave {wave} from leader {leader}")
         }
@@ -225,6 +243,7 @@ impl BaseCommitter {
 
     /// Check whether the specified leader has enough blames (that is, 2f+1 non-votes) to be
     /// directly skipped.
+    /// question (arun): can we change the name blame to something else?
     fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
         let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
@@ -256,12 +275,16 @@ impl BaseCommitter {
         leader_block: &Data<StatementBlock>,
     ) -> bool {
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
+        tracing::debug!(
+            "decisions blocks (potential certs) at round {decision_round} {decision_blocks:#?}"
+        );
 
         // quickly reject if there isn't enough stake to support the leader from the potential certificates
         let total_stake: Stake = decision_blocks
             .iter()
             .map(|b| self.committee.get_stake(b.author()).unwrap())
             .sum();
+        tracing::debug!("total_stake {total_stake}");
         if total_stake < self.committee.quorum_threshold() {
             tracing::debug!(
                 "Not enough support for: {}. Stake not enough: {} < {}",
@@ -276,6 +299,7 @@ impl BaseCommitter {
         let mut all_votes = HashMap::new();
         for decision_block in &decision_blocks {
             let authority = decision_block.reference().authority;
+            tracing::debug!("checking if decision_block {decision_block} is a certificate for leader_block {leader_block}");
             if self.is_certificate(decision_block, leader_block, &mut all_votes) {
                 tracing::trace!(
                     "[{self}] {decision_block:?} is a certificate for leader {leader_block:?}"
@@ -336,6 +360,12 @@ impl BaseCommitter {
         let leader_blocks = self
             .block_store
             .get_blocks_at_authority_round(leader.authority, leader.round);
+        tracing::debug!(
+            "Number of leader blocks {} for leader {} at round {}",
+            leader_blocks.len(),
+            leader.authority,
+            leader.round
+        );
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))

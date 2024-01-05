@@ -91,11 +91,13 @@ impl AuthorityRound {
 #[derive(Clone, Serialize, Deserialize)]
 // Important. Adding fields here requires updating BlockDigest::new, and StatementBlock::verify
 pub struct StatementBlock {
+    // question (arun): id?
     reference: BlockReference,
 
     //  A list of block references to other blocks that this block includes
     //  Note that the order matters: if a reference to two blocks from the same round and same authority
     //  are included, then the first reference is the one that this block conceptually votes for.
+    // question (arun): why do we allow mutliple blocks from the same round & authority? Is a better name references, seen, or links?
     includes: Vec<BlockReference>,
 
     // A list of base statements in order.

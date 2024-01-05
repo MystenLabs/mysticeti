@@ -36,7 +36,9 @@ impl UniversalCommitter {
         // iterate on higher rounds as in order to make a direct decision for a leader at round R we
         // need blocks from round R+2 to figure out that enough certificates and support exist to commit a leader.
         'outer: for round in (last_decided.round()..=highest_known_round.saturating_sub(2)).rev() {
+            tracing::debug!("Looking for leader to commit at round {}", round);
             for committer in self.committers.iter().rev() {
+                tracing::debug!("Trying to commit with {committer}");
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {
                     continue;

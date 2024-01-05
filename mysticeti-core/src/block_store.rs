@@ -405,6 +405,7 @@ impl BlockStoreInner {
 
     pub fn add_loaded(&mut self, position: WalPosition, block: Data<StatementBlock>) {
         self.highest_round = max(self.highest_round, block.round());
+        tracing::debug!("adding block {block} at round {}", block.round());
         self.add_own_index(block.reference());
         self.update_last_seen_by_authority(block.reference());
         let map = self.index.entry(block.round()).or_default();
@@ -476,6 +477,11 @@ impl BlockStoreInner {
     }
 
     fn add_own_index(&mut self, reference: &BlockReference) {
+        tracing::debug!(
+            "adding own index: reference: {:?} self.authority {}",
+            reference,
+            self.authority
+        );
         if reference.authority != self.authority {
             return;
         }

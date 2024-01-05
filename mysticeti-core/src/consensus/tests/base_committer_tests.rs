@@ -13,11 +13,19 @@ use crate::{
 #[test]
 #[tracing_test::traced_test]
 fn direct_commit() {
+    // even stake
     let committee = committee(4);
 
     let mut block_writer = TestBlockWriter::new(&committee);
-    build_dag(&committee, &mut block_writer, None, 5);
 
+    // build fully connected fully connected dag with empty blocks
+    // adding 8 rounds to the dag so that we have 2 completed waves
+    // and one incomplete wave. The universal committer should skip
+    // the potential leaders in r6 because there is no way to get
+    // enough certificates for r6 leaders without completing wave 3.
+    build_dag(&committee, &mut block_writer, None, 7);
+
+    // Create committer without pipelining and only 1 leader per round
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
         block_writer.into_block_store(),
@@ -25,8 +33,10 @@ fn direct_commit() {
     )
     .build();
 
-    let last_committed = AuthorityRound::new(0, 0);
-    let sequence = committer.try_commit(last_committed);
+    // genesis cert will not be included in commit sequence,
+    // marking it as last decided
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
@@ -62,15 +72,15 @@ fn idempotence() {
     .build();
 
     // Commit one block.
-    let last_committed = AuthorityRound::new(0, 0);
-    let committed = committer.try_commit(last_committed);
-    assert_eq!(committed.len(), 1);
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequenced = committer.try_commit(last_decided);
+    assert_eq!(sequenced.len(), 1);
 
     // Ensure we don't commit it again.
     // add more rounds first , so we have something to commit after the last_committed
     build_dag(&committee, &mut block_writer, Some(last_round_blocks), 8);
 
-    let max = committed.into_iter().max().unwrap();
+    let max = sequenced.into_iter().max().unwrap();
     let last_committed = AuthorityRound::new(max.authority(), max.round());
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
@@ -85,11 +95,18 @@ fn multiple_direct_commit() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
-    let mut last_committed = AuthorityRound::new(0, 0);
+    let mut last_decided = AuthorityRound::new(0, 0);
     for n in 1..=10 {
-        let enough_blocks = wave_length * (n + 1) - 1;
+        // genesis blocks are ignored in commit sequence and round is zero indexed
+        // i.e. first leader to be committed will be in wave1/round3
+        let round_with_enough_blocks = wave_length * (n + 1) - 1;
         let mut block_writer = TestBlockWriter::new(&committee);
-        build_dag(&committee, &mut block_writer, None, enough_blocks);
+        build_dag(
+            &committee,
+            &mut block_writer,
+            None,
+            round_with_enough_blocks,
+        );
 
         let committer = UniversalCommitterBuilder::new(
             committee.clone(),
@@ -99,7 +116,7 @@ fn multiple_direct_commit() {
         .with_wave_length(wave_length)
         .build();
 
-        let sequence = committer.try_commit(last_committed);
+        let sequence = committer.try_commit(last_decided);
         tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 1);
 
@@ -111,7 +128,7 @@ fn multiple_direct_commit() {
         }
 
         let max = sequence.iter().max().unwrap();
-        last_committed = AuthorityRound::new(max.authority(), max.round());
+        last_decided = AuthorityRound::new(max.authority(), max.round());
     }
 }
 
@@ -122,10 +139,15 @@ fn direct_commit_late_call() {
     let committee = committee(4);
     let wave_length = DEFAULT_WAVE_LENGTH;
 
-    let n = 10;
-    let enough_blocks = wave_length * (n + 1) - 1;
+    let num_waves = 10;
+    let round_with_enough_blocks = wave_length * (num_waves + 1) - 1;
     let mut block_writer = TestBlockWriter::new(&committee);
-    build_dag(&committee, &mut block_writer, None, enough_blocks);
+    build_dag(
+        &committee,
+        &mut block_writer,
+        None,
+        round_with_enough_blocks,
+    );
 
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
@@ -135,11 +157,11 @@ fn direct_commit_late_call() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = AuthorityRound::new(0, 0);
-    let sequence = committer.try_commit(last_committed);
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
     tracing::info!("Commit sequence: {sequence:?}");
 
-    assert_eq!(sequence.len(), n as usize);
+    assert_eq!(sequence.len(), num_waves as usize);
     for (i, leader_block) in sequence.iter().enumerate() {
         let leader_round = (i as u64 + 1) * wave_length;
         if let LeaderStatus::Commit(ref block) = leader_block {
@@ -217,8 +239,8 @@ fn no_leader() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = AuthorityRound::new(0, 0);
-    let sequence = committer.try_commit(last_committed);
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
@@ -325,25 +347,54 @@ fn indirect_commit() {
         .take(committee.validity_threshold() as usize)
         .map(|authority| (authority, references_with_votes_for_leader_1.clone()))
         .collect();
+    println!(
+        "connections_with_votes_for_leader_1 {:#?}",
+        connections_with_votes_for_leader_1
+    );
     references_3.extend(build_dag_layer(
         connections_with_votes_for_leader_1,
         &mut block_writer,
     ));
+    println!("{:#?}", references_3);
 
     let references: Vec<_> = references_without_votes_for_leader_1
         .into_iter()
         .chain(references_with_votes_for_leader_1.into_iter())
         .take(committee.quorum_threshold() as usize)
         .collect();
+
+    println!("references{:#?}", references);
     let connections_without_votes_for_leader_1 = committee
         .authorities()
         .skip(committee.validity_threshold() as usize)
         .map(|authority| (authority, references.clone()))
         .collect();
+
+    println!(
+        "connections_without_votes_for_leader_1 {:#?}",
+        connections_without_votes_for_leader_1
+    );
     references_3.extend(build_dag_layer(
         connections_without_votes_for_leader_1,
         &mut block_writer,
     ));
+    println!("{:#?}", references_3);
+
+    // Ensure we mark the 1st leader as undecided resulting in no leaders sequenced
+    // because there is also no anchor that is either commit or undecided.
+
+    // let committer = UniversalCommitterBuilder::new(
+    //     committee.clone(),
+    //     block_writer.into_block_store(),
+    //     test_metrics(),
+    // )
+    // .with_wave_length(wave_length)
+    // .build();
+    // let last_decided = AuthorityRound::new(0, 0);
+    // let sequence = committer.try_commit(last_decided);
+    // tracing::info!("Commit sequence: {sequence:?}");
+    // assert!(sequence.is_empty());
+    // let mut block_writer = TestBlockWriter::new(&committee);
 
     // Add enough blocks to decide the 2nd leader.
     let decision_round_3 = 3 * wave_length - 1;
@@ -354,6 +405,13 @@ fn indirect_commit() {
         decision_round_3,
     );
 
+    // 2nd leader or C6 has the necessary votes/certs to be directly commited
+    // after this leaders of previous rounds are checked. When we get to the 1st leader
+    // at round 3 or D3. We see that we cannot direct commit and it is marked as
+    // undecided. But this time we have a committed anchor so we check if there is a certified
+    // link from the anchor (c6) to the undecided leader (d3). There is a certified link
+    // through A5 with votes A4,B4,C4. So we can mark this leader as commit indirectly.
+
     // Ensure we commit the 1st leader.
     let committer = UniversalCommitterBuilder::new(
         committee.clone(),
@@ -363,8 +421,8 @@ fn indirect_commit() {
     .with_wave_length(wave_length)
     .build();
 
-    let last_committed = AuthorityRound::new(0, 0);
-    let sequence = committer.try_commit(last_committed);
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 2);
 
@@ -406,6 +464,8 @@ fn indirect_skip() {
         .take(committee.validity_threshold() as usize)
         .map(|authority| (authority, references_2.clone()))
         .collect();
+    println!("connections_with_leader_2 {:#?}", connections_with_leader_2);
+
     references.extend(build_dag_layer(
         connections_with_leader_2,
         &mut block_writer,
@@ -416,6 +476,11 @@ fn indirect_skip() {
         .skip(committee.validity_threshold() as usize)
         .map(|authority| (authority, references_without_leader_2.clone()))
         .collect();
+    println!(
+        "connections_without_leader_2 {:#?}",
+        connections_without_leader_2
+    );
+
     references.extend(build_dag_layer(
         connections_without_leader_2,
         &mut block_writer,
@@ -429,6 +494,15 @@ fn indirect_skip() {
         Some(references),
         decision_round_3,
     );
+
+    // question(arun): why do we mark undecided if there are <2f+1 blames
+    // and all the blocks have been received for the round. We should check
+    // if there are ever enough possible blocks left to be able to generate the
+    // number of votes needed. In this case there will not be enough votes to create
+    // a certified link. So we should mark the leader as skip.
+    // answer: multiple blocks can be received per round, due to byzantine behavior
+    // or equivocation. So we need to wait for a leader with strong support to make
+    // the decision.
 
     // Ensure we commit the leaders of wave 1 and 3
     let committer = UniversalCommitterBuilder::new(
@@ -444,6 +518,7 @@ fn indirect_skip() {
     tracing::info!("Commit sequence: {sequence:?}");
     assert_eq!(sequence.len(), 3);
 
+    // wave 1 leader is committed directly
     // Ensure we commit the leader of wave 1.
     let leader_round_1 = wave_length;
     let leader_1 = committee.elect_leader(leader_round_1, 0);
@@ -453,6 +528,8 @@ fn indirect_skip() {
         panic!("Expected a committed leader")
     };
 
+    // wave 2 leader is undecided directly and then skipped indirectly because
+    // of lack of certified links
     // Ensure we skip the 2nd leader.
     let leader_round_2 = 2 * wave_length;
     if let LeaderStatus::Skip(leader) = sequence[1] {
@@ -462,6 +539,7 @@ fn indirect_skip() {
         panic!("Expected a skipped leader")
     }
 
+    // wave 3 leader is committed directly
     // Ensure we commit the 3rd leader.
     let leader_round_3 = 3 * wave_length;
     let leader_3 = committee.elect_leader(leader_round_3, 0);
@@ -495,10 +573,12 @@ fn undecided() {
     // Create a dag layer where only one authority votes for the first leader.
     let mut authorities = committee.authorities();
     let leader_connection = vec![(authorities.next().unwrap(), references_1)];
+    println!("leader_connection {:#?}", leader_connection);
     let non_leader_connections: Vec<_> = authorities
         .take((committee.quorum_threshold() - 1) as usize)
         .map(|authority| (authority, references_without_leader_1.clone()))
         .collect();
+    println!("non_leader_connections {:#?}", non_leader_connections);
 
     let connections = leader_connection.into_iter().chain(non_leader_connections);
     let references = build_dag_layer(connections.collect(), &mut block_writer);
@@ -525,4 +605,161 @@ fn undecided() {
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
     assert!(sequence.is_empty());
+}
+
+// todo add test for mutliple blocks from authority per round
+// todo investigate why only the "most recent" block seems to be used
+
+#[test]
+#[tracing_test::traced_test]
+fn add_non_support_blocks_after_support_blocks() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks till round 3
+
+    let leader_1_round = wave_length;
+    let leader_1_references = build_dag(&committee, &mut block_writer, None, leader_1_round);
+
+    // add blocks till round 5 (wave 1 decision round)
+    let decision_round_1 = 2 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(leader_1_references.clone()),
+        decision_round_1,
+    );
+
+    // add block layer for round 4 with no votes for leader d3
+
+    // Filter out leader 1 from round 3 (wave 1).
+    let leader_1 = committee.elect_leader(leader_1_round, 0);
+    println!("leader_1 = {leader_1:#?}");
+    // A3 B3 C3
+    let references_without_leader_1: Vec<_> = leader_1_references
+        .into_iter()
+        .filter(|x| x.authority != leader_1)
+        .collect();
+    println!("references_without_leader_1 = {references_without_leader_1:#?}");
+    // NV-B4 (A3 B3 C3) NV-C4 (A3 B3 C3)
+    // cant write mutiple block to my own index (i.e. block writer is operating as auth 0)
+    // so writing multiple blocks to a4 would panic
+    let voting_1_round_connections = committee
+        .authorities()
+        .filter(|&authority| authority != leader_1 && authority != 0)
+        .map(|authority| (authority, references_without_leader_1.clone()));
+    let r1_votes_references =
+        build_dag_layer(voting_1_round_connections.collect(), &mut block_writer);
+    println!("r1 votes = {r1_votes_references:#?}");
+
+    // add decision round blocks to link to these non vote/cert blocks
+    let decision_1_round_connections = committee
+        .authorities()
+        .filter(|&authority| authority != leader_1 && authority != 0)
+        .map(|authority| (authority, r1_votes_references.clone()));
+    let r1_decision_references =
+        build_dag_layer(decision_1_round_connections.collect(), &mut block_writer);
+    println!("r1 decisions = {r1_decision_references:#?}");
+
+    // question: even though there are 3 blocks for auhtority A/B/C at round 4 that are non votes for
+    // leader d3. There were new blocks added that are votes after. They should be the ones
+    // used to get the 2f+1 votes needed to direct commit the block. why is this not happening?
+
+    // try commit leader 1 in round 3 (d3)
+    // "non support" blocks are used instead of support blocks so leader is undecided
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .with_wave_length(wave_length)
+    .build();
+
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
+    tracing::info!("Commit sequence: {sequence:?}");
+    assert!(sequence.is_empty());
+}
+#[test]
+#[tracing_test::traced_test]
+fn add_non_support_blocks_before_support_blocks() {
+    let committee = committee(4);
+    let wave_length = DEFAULT_WAVE_LENGTH;
+
+    let mut block_writer = TestBlockWriter::new(&committee);
+
+    // Add enough blocks till round 3
+
+    let leader_1_round = wave_length;
+    let leader_1_references = build_dag(&committee, &mut block_writer, None, leader_1_round);
+
+    // add block layer for round 4 with no votes for leader d3
+
+    // Filter out leader 1 from round 3 (wave 1).
+    let leader_1 = committee.elect_leader(leader_1_round, 0);
+    println!("leader_1 = {leader_1:#?}");
+    // A3 B3 C3
+    let references_without_leader_1: Vec<_> = leader_1_references
+        .clone()
+        .into_iter()
+        .filter(|x| x.authority != leader_1)
+        .collect();
+    println!("references_without_leader_1 = {references_without_leader_1:#?}");
+    // NV-B4 (A3 B3 C3) NV-C4 (A3 B3 C3)
+    // cant write mutiple block to my own index (i.e. block writer is operating as auth 0)
+    // so writing multiple blocks to a4 would panic
+    let voting_1_round_connections = committee
+        .authorities()
+        .filter(|&authority| authority != leader_1 && authority != 0)
+        .map(|authority| (authority, references_without_leader_1.clone()));
+    let r1_votes_references =
+        build_dag_layer(voting_1_round_connections.collect(), &mut block_writer);
+    println!("r1 votes = {r1_votes_references:#?}");
+
+    // add decision round blocks to link to these non vote/cert blocks
+    let decision_1_round_connections = committee
+        .authorities()
+        .filter(|&authority| authority != leader_1 && authority != 0)
+        .map(|authority| (authority, r1_votes_references.clone()));
+    let r1_decision_references =
+        build_dag_layer(decision_1_round_connections.collect(), &mut block_writer);
+    println!("r1 decisions = {r1_decision_references:#?}");
+
+    // add blocks till round 5 but dont use references from block layer above
+    // this should add another layer of blocks for round 4 that inlcude the votes
+    // for d3
+    let decision_round_1 = 2 * wave_length - 1;
+    build_dag(
+        &committee,
+        &mut block_writer,
+        Some(leader_1_references),
+        decision_round_1,
+    );
+
+    // question: even though there are 3 blocks for auhtority A/B/C at round 4 that are non votes for
+    // leader d3. There were new blocks added that are votes after. They should be the ones
+    // used to get the 2f+1 votes needed to direct commit the block. why is this not happening?
+
+    // try commit leader 1 in round 3 (d3)
+    // "non support" blocks are used instead of support blocks so leader is undecided
+    let committer = UniversalCommitterBuilder::new(
+        committee.clone(),
+        block_writer.into_block_store(),
+        test_metrics(),
+    )
+    .with_wave_length(wave_length)
+    .build();
+
+    let last_decided = AuthorityRound::new(0, 0);
+    let sequence = committer.try_commit(last_decided);
+    tracing::info!("Commit sequence: {sequence:?}");
+
+    assert_eq!(sequence.len(), 1);
+    if let LeaderStatus::Commit(ref block) = sequence[0] {
+        assert_eq!(block.author(), leader_1)
+    } else {
+        panic!("Expected a committed leader")
+    };
 }

@@ -234,7 +234,6 @@ impl WalReader {
         let offset = offset(position.start);
         let bytes = self.map_offset(offset)?;
         let buf_offset = (position.start - offset) as usize;
-        eprintln!("bytes.len={}, buf_offset={}", bytes.len(), buf_offset);
         let Some((crc, len, tag)) = Self::read_header(&bytes[buf_offset..]) else {
             return Ok(None);
         };

@@ -234,7 +234,10 @@ impl WalReader {
         let offset = offset(position.start);
         let bytes = self.map_offset(offset)?;
         let buf_offset = (position.start - offset) as usize;
-        let (crc, len, tag) = Self::read_header(&bytes[buf_offset..]);
+        eprintln!("bytes.len={}, buf_offset={}", bytes.len(), buf_offset);
+        let Some((crc, len, tag)) = Self::read_header(&bytes[buf_offset..]) else {
+            return Ok(None);
+        };
         if len == 0 {
             if crc == 0 {
                 return Ok(None);
@@ -291,11 +294,15 @@ impl WalReader {
     }
 
     #[inline]
-    fn read_header(bytes: &[u8]) -> (u64, u64, Tag /*(crc, len, tag)*/) {
+    // Parses header bytes, returns None if buffer is too small to contain header
+    fn read_header(bytes: &[u8]) -> Option<(u64, u64, Tag /*(crc, len, tag)*/)> {
+        if bytes.len() < HEADER_LEN_BYTES_USIZE {
+            return None;
+        }
         let mut header = [0u8; HEADER_LEN_BYTES_USIZE];
         header.copy_from_slice(&bytes[..HEADER_LEN_BYTES_USIZE]);
         let header = u128::from_le_bytes(header);
-        split_header(header)
+        Some(split_header(header))
     }
 }
 
@@ -434,6 +441,34 @@ mod tests {
         assert_eq!(&three, rd_it(&mut iter, three_tag, three_pos).as_ref());
         assert_eq!(&four, rd_it(&mut iter, four_tag, four_pos).as_ref());
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    // This test corner case when iterator reaches almost(but not quite) end of the mapping and there is not
+    // enough bytes in the mapping to read the header
+    fn test_wal_iterator_over_map_boundary() {
+        const SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize - 4;
+        let bytes = vec![5u8; SIZE];
+        let temp = tempdir::TempDir::new("test_wal").unwrap();
+        let file = temp.path().join("wal");
+        let (mut writer, _reader) = wal(&file).unwrap();
+        const TAG1: Tag = 1;
+        const TAG2: Tag = 2;
+        let pos1 = writer.write(TAG1, &bytes).unwrap();
+        let pos2 = writer.write(TAG2, &bytes).unwrap();
+        assert!(pos2.start >= MAP_SIZE);
+        drop(writer);
+        let (writer, reader) = wal(&file).unwrap();
+        let mut iterator = reader.iter_until(&writer);
+        let (rpos1, (tag1, bytes1)) = iterator.next().unwrap();
+        let (rpos2, (tag2, bytes2)) = iterator.next().unwrap();
+        assert!(iterator.next().is_none());
+        assert_eq!(rpos1, pos1);
+        assert_eq!(rpos2, pos2);
+        assert_eq!(tag1, TAG1);
+        assert_eq!(tag2, TAG2);
+        assert_eq!(bytes1.as_ref(), &bytes);
+        assert_eq!(bytes2.as_ref(), &bytes);
     }
 
     #[track_caller]

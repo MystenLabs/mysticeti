@@ -576,17 +576,6 @@ mod smoke_tests {
             validator.stop().await;
         }
 
-        // TODO: to make the test pass for now I am making the validators start with a fresh storage.
-        // Otherwise I get a storage related error like:
-        //  panicked at 'range end index 16 out of range for slice of length 13', mysticeti-core/src/wal.rs:296:33
-        //
-        // when block store is restored during the `open` method.
-        //
-        // Switching to CoreOptions::production() to have a sync file on every block write the error goes away. This makes me
-        // believe that some partial writing is happening or something that makes the file perceived as corrupt while reloading it.
-        // Haven't investigated further but needs to look into it.
-        let tempdir = TempDir::new("validator_shutdown_and_start").unwrap();
-
         // now start again the validators - no error (ex network port conflict) should arise
         for i in 0..committee_size {
             let authority = i as AuthorityIndex;

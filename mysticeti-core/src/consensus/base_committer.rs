@@ -82,7 +82,7 @@ impl BaseCommitter {
     /// round of the wave.
     fn decision_round(&self, wave: WaveNumber) -> RoundNumber {
         let wave_length = self.options.wave_length;
-        wave * wave_length + wave_length - 1 + self.options.round_offset
+        (wave * wave_length) + wave_length - 1 + self.options.round_offset
     }
 
     /// The leader-elect protocol is offset by `leader_offset` to ensure that different committers
@@ -218,7 +218,7 @@ impl BaseCommitter {
         // We commit the target leader if it has a certificate that is an ancestor of the anchor.
         // Otherwise skip it.
         match certified_leader_blocks.pop() {
-            Some(certified_leader_block) => LeaderStatus::Commit(certified_leader_block.clone()),
+            Some(certified_leader_block) => LeaderStatus::Commit(certified_leader_block),
             None => LeaderStatus::Skip(leader),
         }
     }

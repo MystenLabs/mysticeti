@@ -10,6 +10,7 @@ resolver = "2"
 [workspace.dependencies]
 cfg-if = "1.0.0"
 tokio = { version = "1.28.1", features = ["full"] }
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "ea66012b860d9dd152abb7f2156275698ee91126" }
 futures = "0.3.28"
 serde = { version = "1.0.163", features = ["derive"] }
 eyre = "0.6.8"

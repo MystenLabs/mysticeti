@@ -13,6 +13,7 @@ use digest::Digest;
 use ed25519_consensus::Signature;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use fastcrypto::bls12381;
 use zeroize::Zeroize;
 
 pub const SIGNATURE_SIZE: usize = 64;
@@ -20,6 +21,8 @@ pub const BLOCK_DIGEST_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
 pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
+
+pub type ProtocolKeyPair = bls12381::min_sig::BLS12381KeyPair;
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
 pub struct PublicKey(pub ed25519_consensus::VerificationKey);

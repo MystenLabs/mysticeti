@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{http::StatusCode, routing::get, Extension, Router, Server};
+use axum::{http::StatusCode, routing::get, Extension, Router};
 use prometheus::{Registry, TextEncoder};
 use std::net::SocketAddr;
 use tokio::sync::oneshot::{channel, Sender};
@@ -11,7 +11,7 @@ use crate::runtime::{Handle, JoinHandle};
 pub const METRICS_ROUTE: &str = "/metrics";
 
 pub struct PrometheusServerHandle {
-    pub handle: JoinHandle<Result<(), hyper::Error>>,
+    pub handle: JoinHandle<Result<(), std::io::Error>>,
     stop: Sender<()>,
 }
 
@@ -33,16 +33,24 @@ pub fn start_prometheus_server(address: SocketAddr, registry: &Registry) -> Prom
         .route(METRICS_ROUTE, get(metrics))
         .layer(Extension(registry.clone()));
 
+    let std_listener = std::net::TcpListener::bind(address).unwrap();
+    std_listener.set_nonblocking(true).unwrap();
+    let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+
     let (stop, rx_stop) = channel();
 
     tracing::info!("Prometheus server booted on {address}");
     let handle = Handle::current().spawn(async move {
-        Server::bind(&address)
-            .serve(app.into_make_service())
+        let result = axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 rx_stop.await.ok();
             })
-            .await
+            .await;
+        if result.is_ok() {
+            Ok(())
+        } else {
+            Err(result.err().unwrap())
+        }
     });
 
     PrometheusServerHandle { handle, stop }

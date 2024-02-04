@@ -282,7 +282,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         self,
     ) -> (
         Result<(), JoinError>,
-        Result<Result<(), hyper::Error>, JoinError>,
+        Result<Result<(), std::io::Error>, JoinError>,
     ) {
         tokio::join!(
             self.network_synchronizer.await_completion(),

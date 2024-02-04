@@ -9,29 +9,33 @@ use crate::types::{
     TimestampNs,
 };
 use digest::Digest;
+use fastcrypto::bls12381;
 #[cfg(not(test))]
-use ed25519_consensus::Signature;
+use fastcrypto::bls12381::min_sig::BLS12381Signature;
+use fastcrypto::bls12381::min_sig::{BLS12381KeyPair, BLS12381PublicKey};
+use fastcrypto::error::FastCryptoError;
+use fastcrypto::traits::KeyPair;
+#[cfg(not(test))]
+use fastcrypto::traits::{Signer as _, ToFromBytes, VerifyingKey};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use fastcrypto::bls12381;
-use zeroize::Zeroize;
 
-pub const SIGNATURE_SIZE: usize = 64;
+pub const SIGNATURE_SIZE: usize = bls12381::BLS_G1_LENGTH;
 pub const BLOCK_DIGEST_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
 pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
 
-pub type ProtocolKeyPair = bls12381::min_sig::BLS12381KeyPair;
-
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
-pub struct PublicKey(pub ed25519_consensus::VerificationKey);
+pub struct PublicKey(pub BLS12381PublicKey);
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct SignatureBytes([u8; SIGNATURE_SIZE]);
 
 // Box ensures value is not copied in memory when Signer itself is moved around for better security
-pub struct Signer(pub Box<ed25519_consensus::SigningKey>);
+pub struct Signer(pub Box<BLS12381KeyPair>);
 
 #[cfg(not(test))]
 type BlockHasher = blake2::Blake2b<digest::consts::U32>;
@@ -174,8 +178,9 @@ impl<T: AsBytes> CryptoHash for T {
 
 impl PublicKey {
     #[cfg(not(test))]
-    pub fn verify_block(&self, block: &StatementBlock) -> Result<(), ed25519_consensus::Error> {
-        let signature = Signature::from(block.signature().0);
+    pub fn verify_block(&self, block: &StatementBlock) -> Result<(), FastCryptoError> {
+        let signature = BLS12381Signature::from_bytes(block.signature().as_bytes())
+            .expect("Failed to convert signature");
         let mut hasher = BlockHasher::default();
         BlockDigest::digest_without_signature(
             &mut hasher,
@@ -188,11 +193,11 @@ impl PublicKey {
             block.epoch(),
         );
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
-        self.0.verify(&signature, digest.as_ref())
+        self.0.verify(digest.as_slice(), &signature)
     }
 
     #[cfg(test)]
-    pub fn verify_block(&self, _block: &StatementBlock) -> Result<(), ed25519_consensus::Error> {
+    pub fn verify_block(&self, _block: &StatementBlock) -> Result<(), FastCryptoError> {
         Ok(())
     }
 }
@@ -222,7 +227,12 @@ impl Signer {
         );
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
         let signature = self.0.sign(digest.as_ref());
-        SignatureBytes(signature.to_bytes())
+        SignatureBytes(
+            signature
+                .as_bytes()
+                .try_into()
+                .expect("Size should be the same"),
+        )
     }
 
     #[cfg(test)]
@@ -240,7 +250,7 @@ impl Signer {
     }
 
     pub fn public_key(&self) -> PublicKey {
-        PublicKey(self.0.verification_key())
+        PublicKey(self.0.public().clone())
     }
 }
 
@@ -294,7 +304,7 @@ impl fmt::Display for Signer {
 
 impl Default for SignatureBytes {
     fn default() -> Self {
-        Self([0u8; 64])
+        Self([0u8; SIGNATURE_SIZE])
     }
 }
 
@@ -349,14 +359,9 @@ impl<'de> Deserialize<'de> for BlockDigest {
     }
 }
 
-impl Drop for Signer {
-    fn drop(&mut self) {
-        self.0.zeroize()
-    }
-}
-
 pub fn dummy_signer() -> Signer {
-    Signer(Box::new(ed25519_consensus::SigningKey::from([0u8; 32])))
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    Signer(Box::new(BLS12381KeyPair::generate(&mut rng)))
 }
 
 pub fn dummy_public_key() -> PublicKey {

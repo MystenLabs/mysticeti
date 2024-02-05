@@ -17,6 +17,7 @@ pub type PublicKey = crate::crypto::PublicKey;
 use crate::committee::{Committee, VoteRangeBuilder};
 use crate::crypto::{AsBytes, CryptoHash, SignatureBytes, Signer};
 use crate::data::Data;
+use crate::metrics::Metrics;
 use crate::threshold_clock::threshold_clock_valid_non_genesis;
 use digest::Digest;
 use eyre::{bail, ensure};
@@ -153,6 +154,7 @@ impl StatementBlock {
     }
 
     pub fn new_with_signer(
+        metrics: &Metrics,
         authority: AuthorityIndex,
         round: RoundNumber,
         includes: Vec<BlockReference>,
@@ -163,6 +165,7 @@ impl StatementBlock {
         signer: &Signer,
     ) -> Self {
         let signature = signer.sign_block(
+            metrics,
             authority,
             round,
             &includes,
@@ -312,7 +315,7 @@ impl StatementBlock {
         Duration::new(secs as u64, nanos as u32)
     }
 
-    pub fn verify(&self, committee: &Committee) -> eyre::Result<()> {
+    pub fn verify(&self, metrics: &Metrics, committee: &Committee) -> eyre::Result<()> {
         let round = self.round();
         let digest = BlockDigest::new(
             self.author(),
@@ -343,7 +346,7 @@ impl StatementBlock {
         if round == GENESIS_ROUND {
             bail!("Genesis block should not go through verification");
         }
-        if let Err(e) = pub_key.verify_block(self) {
+        if let Err(e) = pub_key.verify_block(metrics, self) {
             bail!("Block signature verification has failed: {:?}", e);
         }
         for include in &self.includes {

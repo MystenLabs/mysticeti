@@ -349,7 +349,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 );
 
             // Verify blocks based on consensus rules
-            if let Err(e) = block.verify(&inner.committee) {
+            if let Err(e) = block.verify(metrics, &inner.committee) {
                 tracing::warn!(
                     "Rejected incorrect block {} based on consensus rules from {}: {:?}",
                     block.reference(),

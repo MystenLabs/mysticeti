@@ -280,6 +280,7 @@ impl<H: BlockHandler> Core<H> {
         assert!(!includes.is_empty());
         let time_ns = timestamp_utc().as_nanos();
         let block = StatementBlock::new_with_signer(
+            &self.metrics,
             self.authority,
             clock_round,
             includes,

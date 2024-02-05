@@ -1,6 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::metrics::Metrics;
+#[cfg(not(test))]
+use crate::metrics::UtilizationTimerVecExt;
 use crate::serde::{ByteRepr, BytesVisitor};
 #[cfg(not(test))]
 use crate::types::Vote;
@@ -178,7 +181,14 @@ impl<T: AsBytes> CryptoHash for T {
 
 impl PublicKey {
     #[cfg(not(test))]
-    pub fn verify_block(&self, block: &StatementBlock) -> Result<(), FastCryptoError> {
+    pub fn verify_block(
+        &self,
+        metrics: &Metrics,
+        block: &StatementBlock,
+    ) -> Result<(), FastCryptoError> {
+        let _timer = metrics
+            .utilization_timer
+            .utilization_timer("PublicKey::verify_block");
         let signature = BLS12381Signature::from_bytes(block.signature().as_bytes())
             .expect("Failed to convert signature");
         let mut hasher = BlockHasher::default();
@@ -197,7 +207,11 @@ impl PublicKey {
     }
 
     #[cfg(test)]
-    pub fn verify_block(&self, _block: &StatementBlock) -> Result<(), FastCryptoError> {
+    pub fn verify_block(
+        &self,
+        _metrics: &Metrics,
+        _block: &StatementBlock,
+    ) -> Result<(), FastCryptoError> {
         Ok(())
     }
 }
@@ -206,6 +220,7 @@ impl Signer {
     #[cfg(not(test))]
     pub fn sign_block(
         &self,
+        metrics: &Metrics,
         authority: AuthorityIndex,
         round: RoundNumber,
         includes: &[BlockReference],
@@ -226,6 +241,9 @@ impl Signer {
             epoch,
         );
         let digest: [u8; BLOCK_DIGEST_SIZE] = hasher.finalize().into();
+        let _timer = metrics
+            .utilization_timer
+            .utilization_timer("Signer::sign_block");
         let signature = self.0.sign(digest.as_ref());
         SignatureBytes(
             signature
@@ -238,6 +256,7 @@ impl Signer {
     #[cfg(test)]
     pub fn sign_block(
         &self,
+        _metrics: &Metrics,
         _authority: AuthorityIndex,
         _round: RoundNumber,
         _includes: &[BlockReference],

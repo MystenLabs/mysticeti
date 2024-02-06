@@ -12,10 +12,10 @@ use crate::types::{
     TimestampNs,
 };
 use digest::Digest;
-use fastcrypto::ed25519;
+use fastcrypto::bls12381;
 #[cfg(not(test))]
-use fastcrypto::ed25519::Ed25519Signature;
-use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey};
+use fastcrypto::bls12381::min_sig::BLS12381Signature;
+use fastcrypto::bls12381::min_sig::{BLS12381KeyPair, BLS12381PublicKey};
 use fastcrypto::error::FastCryptoError;
 use fastcrypto::traits::KeyPair;
 #[cfg(not(test))]
@@ -25,20 +25,20 @@ use rand::SeedableRng;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-pub const SIGNATURE_SIZE: usize = ed25519::ED25519_SIGNATURE_LENGTH;
+pub const SIGNATURE_SIZE: usize = bls12381::BLS_G1_LENGTH;
 pub const BLOCK_DIGEST_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Default, Hash)]
 pub struct BlockDigest([u8; BLOCK_DIGEST_SIZE]);
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
-pub struct PublicKey(pub Ed25519PublicKey);
+pub struct PublicKey(pub BLS12381PublicKey);
 
 #[derive(Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct SignatureBytes([u8; SIGNATURE_SIZE]);
 
 // Box ensures value is not copied in memory when Signer itself is moved around for better security
-pub struct Signer(pub Box<Ed25519KeyPair>);
+pub struct Signer(pub Box<BLS12381KeyPair>);
 
 #[cfg(not(test))]
 type BlockHasher = blake2::Blake2b<digest::consts::U32>;
@@ -190,7 +190,7 @@ impl PublicKey {
             .utilization_timer
             .utilization_timer("PublicKey::verify_block");
         let _latency_timer = metrics.verify_block_latency.start_timer();
-        let signature = Ed25519Signature::from_bytes(block.signature().as_bytes())
+        let signature = BLS12381Signature::from_bytes(block.signature().as_bytes())
             .expect("Failed to convert signature");
         let mut hasher = BlockHasher::default();
         BlockDigest::digest_without_signature(
@@ -382,7 +382,7 @@ impl<'de> Deserialize<'de> for BlockDigest {
 
 pub fn dummy_signer() -> Signer {
     let mut rng = StdRng::from_seed([0u8; 32]);
-    Signer(Box::new(Ed25519KeyPair::generate(&mut rng)))
+    Signer(Box::new(BLS12381KeyPair::generate(&mut rng)))
 }
 
 pub fn dummy_public_key() -> PublicKey {

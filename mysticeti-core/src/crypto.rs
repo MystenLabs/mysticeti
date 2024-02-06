@@ -189,6 +189,7 @@ impl PublicKey {
         let _timer = metrics
             .utilization_timer
             .utilization_timer("PublicKey::verify_block");
+        let _latency_timer = metrics.verify_block_latency.start_timer();
         let signature = Ed25519Signature::from_bytes(block.signature().as_bytes())
             .expect("Failed to convert signature");
         let mut hasher = BlockHasher::default();
@@ -244,6 +245,7 @@ impl Signer {
         let _timer = metrics
             .utilization_timer
             .utilization_timer("Signer::sign_block");
+        let _latency_timer = metrics.sign_block_latency.start_timer();
         let signature = self.0.sign(digest.as_ref());
         SignatureBytes(
             signature

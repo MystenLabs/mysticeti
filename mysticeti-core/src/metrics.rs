@@ -84,6 +84,8 @@ pub struct Metrics {
     pub add_block_latency: HistogramVec,
     pub quorum_receive_latency: Histogram,
     pub ready_new_block: IntCounterVec,
+    pub sign_block_latency: Histogram,
+    pub verify_block_latency: Histogram,
 }
 
 pub struct MetricReporter {
@@ -404,6 +406,18 @@ impl Metrics {
                 "Report when it's ready to propose a new block",
                 &["type"],
                 registry,
+            ).unwrap(),
+
+            sign_block_latency: register_histogram_with_registry!(
+                "sign_block_latency",
+                "The time it takes to sign a block",
+                registry
+            ).unwrap(),
+
+            verify_block_latency: register_histogram_with_registry!(
+                "verify_block_latency",
+                "The time it takes to verify a block",
+                registry
             ).unwrap(),
 
             transaction_certified_latency,

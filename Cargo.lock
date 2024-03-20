@@ -1053,15 +1053,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
-name = "convert_case"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
-dependencies = [
- "unicode-segmentation",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1298,7 +1289,7 @@ version = "0.99.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
 dependencies = [
- "convert_case 0.4.0",
+ "convert_case",
  "proc-macro2",
  "quote",
  "rustc_version 0.4.0",
@@ -1494,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "fastcrypto"
 version = "0.1.7"
-source = "git+https://github.com/MystenLabs/fastcrypto?rev=ea66012b860d9dd152abb7f2156275698ee91126#ea66012b860d9dd152abb7f2156275698ee91126"
+source = "git+https://github.com/MystenLabs/fastcrypto?rev=a499d84d07cbe33014531249f6ceeff85664502d#a499d84d07cbe33014531249f6ceeff85664502d"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1537,7 +1528,6 @@ dependencies = [
  "schemars",
  "secp256k1",
  "serde",
- "serde_bytes",
  "serde_json",
  "serde_with",
  "sha2 0.10.6",
@@ -1553,10 +1543,8 @@ dependencies = [
 [[package]]
 name = "fastcrypto-derive"
 version = "0.1.3"
-source = "git+https://github.com/MystenLabs/fastcrypto?rev=ea66012b860d9dd152abb7f2156275698ee91126#ea66012b860d9dd152abb7f2156275698ee91126"
+source = "git+https://github.com/MystenLabs/fastcrypto?rev=a499d84d07cbe33014531249f6ceeff85664502d#a499d84d07cbe33014531249f6ceeff85664502d"
 dependencies = [
- "convert_case 0.6.0",
- "proc-macro2",
  "quote",
  "syn 1.0.109",
 ]
@@ -3591,15 +3579,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_bytes"
-version = "0.11.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b8497c313fd43ab992087548117643f6fcd935cbf36f176ffda0aacf9591734"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "serde_derive"
 version = "1.0.196"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4315,12 +4294,6 @@ checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
 dependencies = [
  "tinyvec",
 ]
-
-[[package]]
-name = "unicode-segmentation"
-version = "1.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dd624098567895118886609431a7c3b8f516e41d30e0643f03d94592a147e36"
 
 [[package]]
 name = "unicode-width"

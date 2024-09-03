@@ -10,8 +10,9 @@ use std::{
 };
 
 use minibytes::Bytes;
-use parking_lot::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
+use tokio::time::timeout;
+use async_trait::async_trait;
 
 use crate::{
     block_store::BlockStore,
@@ -34,20 +35,21 @@ use crate::{
     },
 };
 
+#[async_trait]
 pub trait BlockHandler: Send + Sync {
-    fn handle_blocks(
+    async fn handle_blocks(
         &mut self,
         blocks: &[Data<StatementBlock>],
         require_response: bool,
     ) -> Vec<BaseStatement>;
 
-    fn handle_proposal(&mut self, block: &Data<StatementBlock>);
+    async fn handle_proposal(&mut self, block: &Data<StatementBlock>);
 
     fn state(&self) -> Bytes;
 
     fn recover_state(&mut self, _state: &Bytes);
 
-    fn cleanup(&self) {}
+    async fn cleanup(&self) {}
 }
 
 const REAL_BLOCK_HANDLER_TXN_SIZE: usize = 512;
@@ -106,11 +108,13 @@ impl RealBlockHandler {
 }
 
 impl RealBlockHandler {
-    fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
+    async fn receive_with_limit(&mut self) -> Option<Vec<Transaction>> {
+        let pending = self.pending_transactions;
+        tracing::info!("Receiving tx, currently {pending}");
         if self.pending_transactions >= SOFT_MAX_PROPOSED_PER_BLOCK {
             return None;
         }
-        let received = self.receiver.try_recv().ok()?;
+        let received = self.receiver.recv().await?;
         self.pending_transactions += received.len();
         Some(received)
     }
@@ -147,8 +151,9 @@ impl RealBlockHandler {
     }
 }
 
+#[async_trait]
 impl BlockHandler for RealBlockHandler {
-    fn handle_blocks(
+    async fn handle_blocks(
         &mut self,
         blocks: &[Data<StatementBlock>],
         require_response: bool,
@@ -160,13 +165,16 @@ impl BlockHandler for RealBlockHandler {
             .utilization_timer("BlockHandler::handle_blocks");
         let mut response = vec![];
         if require_response {
-            while let Some(data) = self.receive_with_limit() {
+            while let Some(data) = self.receive_with_limit().await {
+                tracing::info!("Received {} transactions", data.len());
+                let tx_count = data.len();
                 for tx in data {
                     response.push(BaseStatement::Share(tx));
                 }
             }
         }
-        let transaction_time = self.transaction_time.lock();
+        // Use try_lock instead of block_on
+        let transaction_time = self.transaction_time.lock().await;
         for block in blocks {
             let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
                 Some(&mut response)
@@ -187,16 +195,17 @@ impl BlockHandler for RealBlockHandler {
                 }
             }
         }
-        self.metrics
-            .block_handler_pending_certificates
-            .set(self.transaction_votes.len() as i64);
-        response
+    
+    self.metrics
+        .block_handler_pending_certificates
+        .set(self.transaction_votes.len() as i64);
+    response
     }
 
-    fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+    async fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
         // todo - this is not super efficient
         self.pending_transactions -= block.shared_transactions().count();
-        let mut transaction_time = self.transaction_time.lock();
+        let mut transaction_time = self.transaction_time.lock().await;
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
         }
@@ -216,10 +225,9 @@ impl BlockHandler for RealBlockHandler {
         self.transaction_votes.with_state(state);
     }
 
-    fn cleanup(&self) {
+    async fn cleanup(&self) {
         let _timer = self.metrics.block_handler_cleanup_util.utilization_timer();
-        // todo - all of this should go away and we should measure tx latency differently
-        let mut l = self.transaction_time.lock();
+        let mut l = self.transaction_time.lock().await;
         l.retain(|_k, v| v.elapsed() < Duration::from_secs(10));
     }
 }
@@ -263,8 +271,9 @@ impl TestBlockHandler {
     }
 }
 
+#[async_trait]
 impl BlockHandler for TestBlockHandler {
-    fn handle_blocks(
+    async fn handle_blocks(
         &mut self,
         blocks: &[Data<StatementBlock>],
         require_response: bool,
@@ -287,7 +296,7 @@ impl BlockHandler for TestBlockHandler {
             let next_transaction = Self::make_transaction(self.last_transaction);
             response.push(BaseStatement::Share(next_transaction));
         }
-        let transaction_time = self.transaction_time.lock();
+        let transaction_time = self.transaction_time.lock().await;
         for block in blocks {
             tracing::debug!("Processing {block:?}");
             let response_option: Option<&mut Vec<BaseStatement>> = if require_response {
@@ -309,8 +318,8 @@ impl BlockHandler for TestBlockHandler {
         response
     }
 
-    fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
-        let mut transaction_time = self.transaction_time.lock();
+    async fn handle_proposal(&mut self, block: &Data<StatementBlock>) {
+        let mut transaction_time = self.transaction_time.lock().await;
         for (locator, _) in block.shared_transactions() {
             transaction_time.insert(locator, TimeInstant::now());
             self.proposed.push(locator);
@@ -337,7 +346,7 @@ impl BlockHandler for TestBlockHandler {
 }
 
 pub struct TestCommitHandler<H = HashSet<TransactionLocator>> {
-    commit_interpreter: Linearizer,
+    global_linearizer: Arc<Mutex<Linearizer>>,
     transaction_votes: TransactionAggregator<QuorumThreshold, H>,
     committee: Arc<Committee>,
     committed_leaders: Vec<BlockReference>,
@@ -354,8 +363,9 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Default> TestCommitHan
         committee: Arc<Committee>,
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
+        global_linearizer: Arc<Mutex<Linearizer>>,
     ) -> Self {
-        Self::new_with_handler(committee, transaction_time, metrics, Default::default())
+        Self::new_with_handler(committee, transaction_time, metrics, Default::default(), global_linearizer)
     }
 }
 
@@ -365,19 +375,19 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
         transaction_time: Arc<Mutex<HashMap<TransactionLocator, TimeInstant>>>,
         metrics: Arc<Metrics>,
         handler: H,
+        global_linearizer: Arc<Mutex<Linearizer>>,
     ) -> Self {
         let consensus_only = env::var("CONSENSUS_ONLY").is_ok();
         Self {
-            commit_interpreter: Linearizer::new(),
             transaction_votes: TransactionAggregator::with_handler(handler),
             committee,
             committed_leaders: vec![],
             // committed_dags: vec![],
             start_time: TimeInstant::now(),
             transaction_time,
-
             metrics,
             consensus_only,
+            global_linearizer,
         }
     }
 
@@ -425,21 +435,18 @@ impl<H: ProcessedTransactionHandler<TransactionLocator>> TestCommitHandler<H> {
     }
 }
 
+#[async_trait]
 impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObserver
     for TestCommitHandler<H>
 {
-    fn handle_commit(
+    async fn observe_commit(
         &mut self,
-        block_store: &BlockStore,
-        committed_leaders: Vec<Data<StatementBlock>>,
+        committed_subdags: Vec<CommittedSubDag>,
     ) -> Vec<CommittedSubDag> {
         let current_timestamp = runtime::timestamp_utc();
+        let transaction_time = self.transaction_time.lock().await;
 
-        let committed = self
-            .commit_interpreter
-            .handle_commit(block_store, committed_leaders);
-        let transaction_time = self.transaction_time.lock();
-        for commit in &committed {
+        for commit in &committed_subdags {
             self.committed_leaders.push(commit.anchor);
             for block in &commit.blocks {
                 if !self.consensus_only {
@@ -448,7 +455,6 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                             .process_block(block, None, &self.committee);
                     for processed_locator in processed {
                         if let Some(instant) = transaction_time.get(&processed_locator) {
-                            // todo - batch send data points
                             self.metrics
                                 .certificate_committed_latency
                                 .observe(instant.elapsed());
@@ -463,25 +469,27 @@ impl<H: ProcessedTransactionHandler<TransactionLocator> + Send + Sync> CommitObs
                     );
                 }
             }
-            // self.committed_dags.push(commit);
         }
         self.metrics
             .commit_handler_pending_certificates
             .set(self.transaction_votes.len() as i64);
-        committed
+        
+        // Return the input committed_subdags
+        committed_subdags
     }
-
+    
     fn aggregator_state(&self) -> Bytes {
         self.transaction_votes.state()
     }
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
-        assert!(self.commit_interpreter.committed.is_empty());
+    async fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>) {
+        let mut linearizer = self.global_linearizer.lock().await;
+        assert!(linearizer.committed.is_empty());
         if let Some(state) = state {
             self.transaction_votes.with_state(&state);
         } else {
             assert!(committed.is_empty());
         }
-        self.commit_interpreter.committed = committed;
+        linearizer.committed = committed;
     }
 }

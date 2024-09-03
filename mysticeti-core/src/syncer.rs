@@ -8,10 +8,13 @@ use crate::metrics::UtilizationTimerVecExt;
 use crate::runtime::timestamp_utc;
 use crate::types::{BlockReference, RoundNumber, StatementBlock};
 use crate::{block_handler::BlockHandler, metrics::Metrics};
-use crate::{block_store::BlockStore, types::AuthorityIndex};
+use crate::types::AuthorityIndex;
+use crate::consensus::linearizer::Linearizer;
 use minibytes::Bytes;
 use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use async_trait::async_trait;
 
 pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     core: Core<H>,
@@ -21,22 +24,23 @@ pub struct Syncer<H: BlockHandler, S: SyncerSignals, C: CommitObserver> {
     commit_observer: C,
     pub(crate) connected_authorities: HashSet<AuthorityIndex>,
     metrics: Arc<Metrics>,
+    global_linearizer: Arc<Mutex<Linearizer>>
 }
 
 pub trait SyncerSignals: Send + Sync {
     fn new_block_ready(&mut self);
 }
 
+#[async_trait]
 pub trait CommitObserver: Send + Sync {
-    fn handle_commit(
+    async fn observe_commit(
         &mut self,
-        block_store: &BlockStore,
-        committed_leaders: Vec<Data<StatementBlock>>,
+        committed_subdags: Vec<CommittedSubDag>,
     ) -> Vec<CommittedSubDag>;
 
     fn aggregator_state(&self) -> Bytes;
 
-    fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
+    async fn recover_committed(&mut self, committed: HashSet<BlockReference>, state: Option<Bytes>);
 }
 
 impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
@@ -44,6 +48,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         core: Core<H>,
         commit_period: u64,
         signals: S,
+        global_linearizer: Arc<Mutex<Linearizer>>,
         commit_observer: C,
         metrics: Arc<Metrics>,
     ) -> Self {
@@ -56,30 +61,35 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
             commit_observer,
             connected_authorities: HashSet::with_capacity(committee_size),
             metrics,
+            global_linearizer,
         }
     }
 
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
+    pub async fn handle_remote_commit(&mut self, round: RoundNumber, validator: AuthorityIndex) {
+        self.core.handle_remote_commit(round, validator).await;
+    }
+
+    pub async fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Syncer::add_blocks");
-        self.core.add_blocks(blocks);
-        self.try_new_block();
+        self.core.add_blocks(blocks).await;
+        self.try_new_block().await;
     }
 
-    pub fn force_new_block(&mut self, round: RoundNumber) -> bool {
+    pub async fn force_new_block(&mut self, round: RoundNumber) -> bool {
         if self.core.last_proposed() == round {
             self.metrics.leader_timeout_total.inc();
             self.force_new_block = true;
-            self.try_new_block();
+            self.try_new_block().await;
             true
         } else {
             false
         }
     }
 
-    fn try_new_block(&mut self) {
+    async fn try_new_block(&mut self) {
         let _timer = self
             .metrics
             .utilization_timer
@@ -89,7 +99,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 .core
                 .ready_new_block(self.commit_period, &self.connected_authorities)
         {
-            if self.core.try_new_block().is_none() {
+            if self.core.try_new_block().await.is_none() {
                 return;
             }
             self.signals.new_block_ready();
@@ -99,7 +109,7 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                 return;
             }; // No need to commit after epoch is safe to close
 
-            let newly_committed = self.core.try_commit();
+            let newly_committed = self.core.try_commit().await;
             let utc_now = timestamp_utc();
             if !newly_committed.is_empty() {
                 let committed_refs: Vec<_> = newly_committed
@@ -112,14 +122,29 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
                     })
                     .collect();
                 tracing::debug!("Committed {:?}", committed_refs);
+
+                let mut committed_subdags = Vec::new();
+                for block in newly_committed {
+                    let (validator_id, round) = block.reference().author_round();
+                    let subdag = self.global_linearizer.lock().await.handle_commit(
+                        round,
+                        validator_id,
+                        *block.reference(),
+                        block.clone(),
+                    ).await;
+                    committed_subdags.extend(subdag);
+                }
+
+                let observed_subdags = self.commit_observer.observe_commit(committed_subdags).await;
+
+                for subdag in observed_subdags {
+                    self.core.handle_committed_subdag(
+                        vec![subdag],
+                        &self.commit_observer.aggregator_state(),
+                    );
+                }
+
             }
-            let committed_subdag = self
-                .commit_observer
-                .handle_commit(self.core.block_store(), newly_committed);
-            self.core.handle_committed_subdag(
-                committed_subdag,
-                &self.commit_observer.aggregator_state(),
-            );
         }
     }
 
@@ -168,9 +193,9 @@ mod tests {
         fn handle_event(&mut self, event: Self::Event) {
             match event {
                 SyncerEvent::ForceNewBlock(round) => {
-                    if self.force_new_block(round) {
-                        // eprintln!("[{:06} {}] Proposal timeout for {round}", scheduler.time_ms(), self.core.authority());
-                    }
+                    // if self.force_new_block(round) {
+                    //     // eprintln!("[{:06} {}] Proposal timeout for {round}", scheduler.time_ms(), self.core.authority());
+                    // }
                 }
                 SyncerEvent::DeliverBlock(block) => {
                     // eprintln!("[{:06} {}] Deliver {block}", scheduler.time_ms(), self.core.authority());
@@ -213,7 +238,7 @@ mod tests {
     pub fn test_syncer_at(seed: u64) {
         eprintln!("Seed {seed}");
         let rng = rng_at_seed(seed);
-        let (committee, syncers) = committee_and_syncers(4);
+        let (committee, syncers) = committee_and_syncers(4, 2);
         let mut simulator = Simulator::new(syncers, rng);
 
         // Kick off process by asking validators create a block after genesis

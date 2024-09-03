@@ -10,6 +10,8 @@ use std::{
 use futures::future::join_all;
 use prometheus::Registry;
 use rand::{rngs::StdRng, SeedableRng};
+use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 
 #[cfg(feature = "simulator")]
 use crate::future_simulator::OverrideNodeContext;
@@ -24,10 +26,11 @@ use crate::{
     data::Data,
     metrics::{MetricReporter, Metrics},
     net_sync::NetworkSyncer,
-    network::Network,
+    network::{Network, NetworkMessage},
     syncer::{Syncer, SyncerSignals},
     types::{format_authority_index, AuthorityIndex, BlockReference, RoundNumber, StatementBlock},
     wal::{open_file_for_wal, walf, WalPosition, WalWriter},
+    consensus::linearizer::Linearizer,
 };
 
 pub fn test_metrics() -> Arc<Metrics> {
@@ -40,42 +43,46 @@ pub fn committee(n: usize) -> Arc<Committee> {
 
 pub fn committee_and_cores(
     n: usize,
+    num_instances: usize,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted_epoch_duration(n, None, &&NodePublicConfig::new_for_tests(n))
+    committee_and_cores_persisted_epoch_duration(n, None, &&NodePublicConfig::new_for_tests(n, num_instances), num_instances)
 }
 
 pub fn committee_and_cores_epoch_duration(
     n: usize,
     rounds_in_epoch: RoundNumber,
+    num_instances: usize,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    let mut config = NodePublicConfig::new_for_tests(n);
+    let mut config = NodePublicConfig::new_for_tests(n, num_instances);
     config.parameters.rounds_in_epoch = rounds_in_epoch;
-    committee_and_cores_persisted_epoch_duration(n, None, &config)
+    committee_and_cores_persisted_epoch_duration(n, None, &config, num_instances)
 }
 
 pub fn committee_and_cores_persisted(
     n: usize,
     path: Option<&Path>,
+    num_instances: usize,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
     Vec<MetricReporter>,
 ) {
-    committee_and_cores_persisted_epoch_duration(n, path, &&NodePublicConfig::new_for_tests(n))
+    committee_and_cores_persisted_epoch_duration(n, path, &&NodePublicConfig::new_for_tests(n, num_instances), num_instances)
 }
 
 pub fn committee_and_cores_persisted_epoch_duration(
     n: usize,
     path: Option<&Path>,
     parameters: &NodePublicConfig,
+    num_instances: usize,
 ) -> (
     Arc<Committee>,
     Vec<Core<TestBlockHandler>>,
@@ -108,9 +115,14 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 &committee,
             );
 
+            // TODO: don't know how this will be used yet, adding these to stop errors
+            let (linearizer_task_sender, linearizer_task_receiver) = tokio::sync::mpsc::channel(1024);
+            let (local_commit_sender, local_commit_receiver) = broadcast::channel::<NetworkMessage>(100);
+
             println!("Opening core {authority}");
             let core = Core::open(
                 block_handler,
+                num_instances,
                 authority,
                 committee.clone(),
                 parameters,
@@ -118,6 +130,8 @@ pub fn committee_and_cores_persisted_epoch_duration(
                 recovered,
                 wal_writer,
                 CoreOptions::test(),
+                linearizer_task_sender,
+                local_commit_sender,
             );
             (core, reporter)
         })
@@ -132,22 +146,33 @@ fn first_transaction_for_authority(authority: AuthorityIndex) -> u64 {
 
 pub fn committee_and_syncers(
     n: usize,
+    num_instances: usize,
 ) -> (
     Arc<Committee>,
     Vec<Syncer<TestBlockHandler, bool, TestCommitHandler>>,
 ) {
-    let (committee, cores, _) = committee_and_cores(n);
+    let (committee, cores, _) = committee_and_cores(n, num_instances);
     (
         committee.clone(),
         cores
             .into_iter()
             .map(|core| {
+                let metrics = test_metrics();
+                let global_linearizer = Arc::new(Mutex::new(Linearizer::new(num_instances)));
                 let commit_handler = TestCommitHandler::new(
                     committee.clone(),
                     core.block_handler().transaction_time.clone(),
-                    test_metrics(),
+                    metrics.clone(),
+                    Arc::clone(&global_linearizer),
                 );
-                Syncer::new(core, 3, Default::default(), commit_handler, test_metrics())
+                Syncer::new(
+                    core,
+                    3,
+                    Default::default(),
+                    global_linearizer.clone(),
+                    commit_handler,
+                    metrics,
+                )
             })
             .collect(),
     )
@@ -214,23 +239,30 @@ pub fn simulated_network_syncers_with_epoch_duration(
     (simulated_network, network_syncers, reporters)
 }
 
-pub async fn network_syncers(n: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    network_syncers_with_epoch_duration(n, config::defaults::default_rounds_in_epoch()).await
+pub async fn network_syncers(n: usize, num_instances: usize) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
+    network_syncers_with_epoch_duration(n, config::defaults::default_rounds_in_epoch(), num_instances).await
 }
 
 pub async fn network_syncers_with_epoch_duration(
     n: usize,
     rounds_in_epoch: RoundNumber,
+    num_instances: usize,
 ) -> Vec<NetworkSyncer<TestBlockHandler, TestCommitHandler>> {
-    let (committee, cores, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch);
+    let (committee, cores, _) = committee_and_cores_epoch_duration(n, rounds_in_epoch, num_instances);
     let metrics: Vec<_> = cores.iter().map(|c| c.metrics.clone()).collect();
     let (networks, _) = networks_and_addresses(&metrics).await;
     let mut network_syncers = vec![];
+
+    // TODO: declaring linearizer here, check if this is the right way
+    let global_linearizer = Arc::new(Mutex::new(Linearizer::new(num_instances)));
+    let (local_commit_sender, local_commit_receiver) = broadcast::channel::<NetworkMessage>(100);
+
     for (network, core) in networks.into_iter().zip(cores.into_iter()) {
         let commit_handler = TestCommitHandler::new(
             committee.clone(),
             core.block_handler().transaction_time.clone(),
             test_metrics(),
+            Arc::clone(&global_linearizer),
         );
         let network_syncer = NetworkSyncer::start(
             network,
@@ -239,6 +271,8 @@ pub async fn network_syncers_with_epoch_duration(
             commit_handler,
             config::defaults::default_shutdown_grace_period(),
             test_metrics(),
+            Arc::clone(&global_linearizer),
+            local_commit_receiver.resubscribe(),
         );
         network_syncers.push(network_syncer);
     }

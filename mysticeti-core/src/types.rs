@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub type AuthorityIndex = u64;
+pub type MachineIndex = u64;
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub struct Transaction {
@@ -27,6 +28,11 @@ use std::ops::Range;
 use std::time::Duration;
 #[cfg(test)]
 pub use test::Dag;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct CommitMessage {
+    pub round: RoundNumber,
+}
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum Vote {

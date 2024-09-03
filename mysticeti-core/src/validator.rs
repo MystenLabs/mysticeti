@@ -6,6 +6,9 @@ use std::{
     sync::Arc,
 };
 
+use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+
 use ::prometheus::Registry;
 use eyre::{eyre, Context, Result};
 
@@ -18,12 +21,14 @@ use crate::{
     log::TransactionLog,
     metrics::Metrics,
     net_sync::NetworkSyncer,
-    network::Network,
+    network::{Network, NetworkMessage},
     prometheus,
-    runtime::{JoinError, JoinHandle},
+    runtime::JoinError,
     transactions_generator::TransactionGenerator,
-    types::AuthorityIndex,
+    types::{AuthorityIndex, BlockReference, StatementBlock},
     wal::{self, walf},
+    consensus::linearizer::Linearizer,
+    data::Data,
 };
 
 pub struct Validator {
@@ -33,11 +38,15 @@ pub struct Validator {
 
 impl Validator {
     pub async fn start(
+        num_instances: usize,
+        // Authority is the unique index of the validator
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         public_config: &NodePublicConfig,
         private_config: NodePrivateConfig,
         client_parameters: ClientParameters,
+        linearizer_sender: tokio::sync::mpsc::Sender<(BlockReference, Data<StatementBlock>)>,
+        global_linearizer: Arc<tokio::sync::Mutex<Linearizer>>,
     ) -> Result<Self> {
         let network_address = public_config
             .network_address(authority)
@@ -91,17 +100,9 @@ impl Validator {
             block_handler.transaction_time.clone(),
             metrics.clone(),
             committed_transaction_log,
+            global_linearizer.clone(),
         );
-        let core = Core::open(
-            block_handler,
-            authority,
-            committee.clone(),
-            public_config,
-            metrics.clone(),
-            recovered,
-            wal_writer,
-            CoreOptions::default(),
-        );
+
         let network = Network::load(
             public_config,
             authority,
@@ -109,6 +110,24 @@ impl Validator {
             metrics.clone(),
         )
         .await;
+        
+        // Channel for core to send commit messages to network synchronizer
+        let (local_commit_sender, local_commit_receiver) = broadcast::channel::<NetworkMessage>(100);
+
+        let core = Core::open(
+            block_handler,
+            num_instances,
+            authority,
+            committee.clone(),
+            public_config,
+            metrics.clone(),
+            recovered,
+            wal_writer,
+            CoreOptions::default(),
+            linearizer_sender,
+            local_commit_sender,
+        ).await;
+        
         let network_synchronizer = NetworkSyncer::start(
             network,
             core,
@@ -116,13 +135,12 @@ impl Validator {
             commit_handler,
             public_config.parameters.shutdown_grace_period,
             metrics,
+            global_linearizer,
+            local_commit_receiver,
         );
 
-        tracing::info!("Validator {authority} listening on {network_address}");
-        tracing::info!("Validator {authority} exposing metrics on {metrics_address}");
-
         Ok(Self {
-            network_synchronizer,
+            network_synchronizer: network_synchronizer.await,
             metrics_handle,
         })
     }
@@ -146,10 +164,11 @@ impl Validator {
 
 #[cfg(test)]
 mod smoke_tests {
-    use std::{collections::VecDeque, fs, net::SocketAddr, time::Duration};
+    use std::{collections::VecDeque, fs, net::SocketAddr, time::Duration, sync::Arc};
 
     use tempdir::TempDir;
     use tokio::time;
+    use tokio::sync::Mutex;
 
     use super::Validator;
     use crate::{
@@ -157,6 +176,7 @@ mod smoke_tests {
         config::{self, ClientParameters, NodePrivateConfig, NodePublicConfig},
         prometheus,
         types::AuthorityIndex,
+        consensus::linearizer::{Linearizer, LinearizerTask},
     };
 
     /// Check whether the validator specified by its metrics address has committed at least once.
@@ -180,30 +200,44 @@ mod smoke_tests {
         }
     }
 
+    // TODO: Fix this test
     /// Ensure that a committee of honest validators commits.
     #[tokio::test]
     async fn validator_commit() {
         let committee_size = 4;
+        let num_instances = 2;
+        let num_machines = 2;
         let committee = Committee::new_for_benchmarks(committee_size);
-        let public_config = NodePublicConfig::new_for_tests(committee_size).with_port_offset(0);
+        let public_config = NodePublicConfig::new_for_tests(committee_size, num_instances).with_port_offset(0);
         let client_parameters = ClientParameters::default();
 
+        let global_linearizer = Arc::new(Mutex::new(Linearizer::new(num_instances)));
         let mut handles = Vec::new();
         let dir = TempDir::new("validator_commit").unwrap();
-        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), committee_size);
+        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), num_machines, num_instances);
         private_configs.iter().for_each(|private_config| {
             fs::create_dir_all(&private_config.storage_path).unwrap();
         });
-
+        
         for (i, private_config) in private_configs.into_iter().enumerate() {
-            let authority = i as AuthorityIndex;
+            
+            let (linearizer_task_sender, linearizer_task_receiver) = tokio::sync::mpsc::channel(1024);
+    
+            // let linearizer_task = LinearizerTask::new(
+            //     linearizer_task_receiver,
+            //     Arc::clone(&global_linearizer),
+            // );
 
+            let authority = i as AuthorityIndex;
             let validator = Validator::start(
+                num_instances,
                 authority,
                 committee.clone(),
                 &public_config,
                 private_config,
                 client_parameters.clone(),
+                linearizer_task_sender,
+                Arc::clone(&global_linearizer),
             )
             .await
             .unwrap();
@@ -225,30 +259,45 @@ mod smoke_tests {
     /// Ensure validators can sync missing blocks
     #[tokio::test]
     async fn validator_sync() {
+        let machine_index = 0;
         let committee_size = 4;
+        let num_instances = 2;
+        let num_machines = 2;
         let committee = Committee::new_for_benchmarks(committee_size);
-        let public_config = NodePublicConfig::new_for_tests(committee_size).with_port_offset(100);
+        let public_config = NodePublicConfig::new_for_tests(committee_size, num_instances).with_port_offset(100);
         let client_parameters = ClientParameters::default();
 
         let mut handles = Vec::new();
         let dir = TempDir::new("validator_sync").unwrap();
-        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), committee_size);
+        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), num_machines, num_instances);
         private_configs.iter().for_each(|private_config| {
             fs::create_dir_all(&private_config.storage_path).unwrap();
         });
+        let global_linearizer = Arc::new(Mutex::new(Linearizer::new(num_instances)));
 
+        
         // Boot all validators but one.
         for (i, private_config) in private_configs.into_iter().enumerate() {
             if i == 0 {
                 continue;
             }
+            let (linearizer_task_sender, linearizer_task_receiver) = tokio::sync::mpsc::channel(1024);
+    
+            // let linearizer_task = LinearizerTask::new(
+            //     linearizer_task_receiver,
+            //     global_linearizer,
+            // );
+
             let authority = i as AuthorityIndex;
             let validator = Validator::start(
+                num_instances,
                 authority,
                 committee.clone(),
                 &public_config,
                 private_config,
                 client_parameters.clone(),
+                linearizer_task_sender,
+                Arc::clone(&global_linearizer),
             )
             .await
             .unwrap();
@@ -267,16 +316,26 @@ mod smoke_tests {
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
         }
 
+        let (linearizer_task_sender, linearizer_task_receiver) = tokio::sync::mpsc::channel(1024);
+    
+            let linearizer_task = LinearizerTask::new(
+                linearizer_task_receiver,
+                Arc::clone(&global_linearizer),
+            );
+
         // Boot the last validator.
         let authority = 0;
         let private_config =
-            NodePrivateConfig::new_for_benchmarks(dir.as_ref(), committee_size).remove(authority);
+            NodePrivateConfig::new_for_benchmarks(dir.as_ref(), num_machines, num_instances).remove(authority as usize);
         let validator = Validator::start(
-            authority as AuthorityIndex,
-            committee.clone(),
-            &public_config,
-            private_config,
-            client_parameters,
+                num_instances,
+                authority as AuthorityIndex,
+                committee.clone(),
+                &public_config,
+                private_config,
+                client_parameters.clone(),
+                linearizer_task_sender,
+                global_linearizer,
         )
         .await
         .unwrap();
@@ -299,13 +358,16 @@ mod smoke_tests {
     #[tokio::test]
     async fn validator_crash_faults() {
         let committee_size = 4;
+        let num_instances = 2;
+        let num_machines = 2;
         let committee = Committee::new_for_benchmarks(committee_size);
-        let public_config = NodePublicConfig::new_for_tests(committee_size).with_port_offset(200);
+        let public_config = NodePublicConfig::new_for_tests(committee_size, num_instances).with_port_offset(200);
         let client_parameters = ClientParameters::default();
 
+        let global_linearizer = Arc::new(Mutex::new(Linearizer::new(num_instances)));
         let mut handles = Vec::new();
         let dir = TempDir::new("validator_crash_faults").unwrap();
-        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), committee_size);
+        let private_configs = NodePrivateConfig::new_for_benchmarks(dir.as_ref(), num_machines, num_instances);
         private_configs.iter().for_each(|private_config| {
             fs::create_dir_all(&private_config.storage_path).unwrap();
         });
@@ -315,13 +377,23 @@ mod smoke_tests {
                 continue;
             }
 
+            let (linearizer_task_sender, linearizer_task_receiver) = tokio::sync::mpsc::channel(1024);
+    
+            // let linearizer_task = LinearizerTask::new(
+            //     linearizer_task_receiver,
+            //     global_linearizer,
+            // );
+
             let authority = i as AuthorityIndex;
             let validator = Validator::start(
+                num_instances,
                 authority,
                 committee.clone(),
                 &public_config,
                 private_config,
                 client_parameters.clone(),
+                linearizer_task_sender,
+                Arc::clone(&global_linearizer),
             )
             .await
             .unwrap();

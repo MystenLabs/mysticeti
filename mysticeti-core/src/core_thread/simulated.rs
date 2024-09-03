@@ -28,15 +28,15 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
     }
 
     pub async fn add_blocks(&self, blocks: Vec<Data<StatementBlock>>) {
-        self.syncer.lock().add_blocks(blocks);
+        self.syncer.lock().await.add_blocks(blocks);
     }
 
     pub async fn force_new_block(&self, round: RoundNumber) {
-        self.syncer.lock().force_new_block(round);
+        self.syncer.lock().await.force_new_block(round);
     }
 
     pub async fn cleanup(&self) {
-        self.syncer.lock().core().cleanup();
+        self.syncer.lock().await.core().cleanup();
     }
 
     pub async fn get_missing_blocks(&self) -> Vec<HashSet<BlockReference>> {
@@ -49,7 +49,7 @@ impl<H: BlockHandler + 'static, S: SyncerSignals + 'static, C: CommitObserver + 
     }
 
     pub async fn authority_connection(&self, authority_index: AuthorityIndex, connected: bool) {
-        let mut lock = self.syncer.lock();
+        let mut lock = self.syncer.lock().await;
         if connected {
             lock.connected_authorities.insert(authority_index);
         } else {

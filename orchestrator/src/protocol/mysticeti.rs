@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    env,
     fmt::{Debug, Display},
     fs,
     net::IpAddr,
@@ -13,11 +12,7 @@ use std::{
     time::Duration,
 };
 
-use mysticeti_core::{
-    committee::Committee,
-    config::{self, NodeParameters, NodePrivateConfig, NodePublicConfig},
-    types::AuthorityIndex,
-};
+use mysticeti_core::config::{self, NodeParameters};
 use serde::{Deserialize, Serialize};
 
 use super::{ProtocolCommands, ProtocolMetrics, CARGO_FLAGS, RUST_FLAGS};
@@ -28,7 +23,7 @@ use crate::{
     settings::Settings,
 };
 
-const DEFAULT_NODE_CONFIG_PATH: &str = "orchestrator/assets/node-config.json";
+const _DEFAULT_NODE_CONFIG_PATH: &str = "orchestrator/assets/node-config.json";
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct MysticetiNodeParameters(NodeParameters);
@@ -198,8 +193,8 @@ impl ProtocolCommands<MysticetiNodeParameters, MysticetiClientParameters> for My
 
     fn node_command<I>(
         &self,
-        instances: I,
-        parameters: &BenchmarkParameters,
+        _instances: I,
+        _parameters: &BenchmarkParameters,
     ) -> Vec<(Instance, String)>
     where
         I: IntoIterator<Item = Instance>,
@@ -297,7 +292,7 @@ impl ProtocolMetrics for MysticetiProtocol {
             .map(|x| (IpAddr::V4(x.main_ip), x))
             .unzip();
 
-        let parameters = config::NodePublicConfig::new_for_benchmarks(ips, None);
+        let parameters = config::NodePublicConfig::new_for_benchmarks(ips, None, 2, 2);
         let metrics_paths = parameters
             .all_metric_addresses()
             .map(|x| format!("{x}{}", mysticeti_core::prometheus::METRICS_ROUTE));

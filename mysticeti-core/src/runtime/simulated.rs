@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use crate::future_simulator::JoinError;
-pub use crate::future_simulator::JoinHandle;
+use tokio::task::JoinHandle;
 use crate::future_simulator::{SimulatorContext, Sleep};
 use std::future::Future;
 use std::time::Duration;

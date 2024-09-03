@@ -10,35 +10,25 @@ use std::{
 use futures::future::join_all;
 use tokio::{
     select,
-    sync::{mpsc, oneshot, Notify},
+    sync::{mpsc, broadcast, oneshot, Notify, Mutex},
+    task::JoinHandle,
 };
 
 use crate::{
-    block_handler::BlockHandler,
-    block_store::BlockStore,
-    committee::Committee,
-    core::Core,
-    core_thread::CoreThreadDispatcher,
-    metrics::Metrics,
-    network::{Connection, Network, NetworkMessage},
-    runtime::{self, timestamp_utc, Handle, JoinError, JoinHandle},
-    syncer::{CommitObserver, Syncer, SyncerSignals},
-    synchronizer::{BlockDisseminator, BlockFetcher, SynchronizerParameters},
-    types::{format_authority_index, AuthorityIndex},
-    wal::WalSyncer,
+    block_handler::BlockHandler, block_store::BlockStore, committee::Committee, consensus::linearizer::Linearizer, core::Core, core_thread::CoreThreadDispatcher, metrics::Metrics, network::{Connection, Network, NetworkMessage}, runtime::{self, timestamp_utc, Handle, JoinError}, syncer::{CommitObserver, Syncer, SyncerSignals}, synchronizer::{BlockDisseminator, BlockFetcher, SynchronizerParameters}, types::{format_authority_index, AuthorityIndex}, wal::WalSyncer
 };
 
 /// The maximum number of blocks that can be requested in a single message.
 pub const MAXIMUM_BLOCK_REQUEST: usize = 10;
 
-pub struct NetworkSyncer<H: BlockHandler, C: CommitObserver> {
+pub struct NetworkSyncer<H: BlockHandler + Send + Sync + 'static, C: CommitObserver + Send + Sync + 'static> {
     inner: Arc<NetworkSyncerInner<H, C>>,
     main_task: JoinHandle<()>,
     syncer_task: oneshot::Receiver<()>,
     stop: mpsc::Receiver<()>,
 }
 
-pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
+pub struct NetworkSyncerInner<H: BlockHandler + Send + Sync + 'static, C: CommitObserver + Send + Sync + 'static> {
     pub syncer: CoreThreadDispatcher<H, Arc<Notify>, C>,
     pub block_store: BlockStore,
     pub notify: Arc<Notify>,
@@ -48,21 +38,25 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
     pub epoch_closing_time: Arc<AtomicU64>,
 }
 
-impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
-    pub fn start(
+impl<H: BlockHandler + Send + Sync + 'static, C: CommitObserver + Send + Sync + 'static> NetworkSyncer<H, C> {
+    pub async fn start(
         network: Network,
         mut core: Core<H>,
         commit_period: u64,
         mut commit_observer: C,
         shutdown_grace_period: Duration,
         metrics: Arc<Metrics>,
+        global_linearizer: Arc<Mutex<Linearizer>>,
+        local_commit_receiver: broadcast::Receiver<NetworkMessage>,
+
     ) -> Self {
+
         let authority_index = core.authority();
         let handle = Handle::current();
         let notify = Arc::new(Notify::new());
         // todo - ugly, probably need to merge syncer and core
         let (committed, state) = core.take_recovered_committed_blocks();
-        commit_observer.recover_committed(committed, state);
+        let _ = commit_observer.recover_committed(committed, state);
         let committee = core.committee().clone();
         let wal_syncer = core.wal_syncer();
         let block_store = core.block_store().clone();
@@ -71,11 +65,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             core,
             commit_period,
             notify.clone(),
+            global_linearizer.clone(),
             commit_observer,
             metrics.clone(),
         );
-        syncer.force_new_block(0);
-        let syncer = CoreThreadDispatcher::start(syncer);
+        syncer.force_new_block(0).await;
+
+        let syncer = CoreThreadDispatcher::start(syncer).await;
         let (stop_sender, stop_receiver) = mpsc::channel(1);
         stop_sender.try_send(()).unwrap(); // occupy the only available permit, so that all other calls to send() will block
         let (epoch_sender, epoch_receiver) = mpsc::channel(1);
@@ -101,8 +97,10 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             shutdown_grace_period,
             block_fetcher,
             metrics.clone(),
+            local_commit_receiver.resubscribe(),
         ));
         let syncer_task = AsyncWalSyncer::start(wal_syncer, stop_sender, epoch_sender);
+        
         Self {
             inner,
             main_task,
@@ -119,7 +117,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let Ok(inner) = Arc::try_unwrap(self.inner) else {
             panic!("Shutdown failed - not all resources are freed after main task is completed");
         };
-        inner.syncer.stop()
+        inner.syncer.stop().await.expect("Failed to stop syncer")
     }
 
     async fn run(
@@ -129,6 +127,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         shutdown_grace_period: Duration,
         block_fetcher: Arc<BlockFetcher>,
         metrics: Arc<Metrics>,
+        local_commit_receiver: broadcast::Receiver<NetworkMessage>,
     ) {
         let mut connections: HashMap<usize, JoinHandle<Option<()>>> = HashMap::new();
         let handle = Handle::current();
@@ -154,6 +153,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 inner.clone(),
                 block_fetcher.clone(),
                 metrics.clone(),
+                local_commit_receiver.resubscribe(),
             ));
             connections.insert(peer_id, task);
         }
@@ -174,6 +174,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         inner: Arc<NetworkSyncerInner<H, C>>,
         block_fetcher: Arc<BlockFetcher>,
         metrics: Arc<Metrics>,
+        local_commit_receiver: broadcast::Receiver<NetworkMessage>,
     ) -> Option<()> {
         let last_seen = inner
             .block_store
@@ -184,11 +185,12 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .await
             .ok()?;
 
-        let mut disseminator = BlockDisseminator::new(
+        let mut disseminator =  BlockDisseminator::new(
             connection.sender.clone(),
             inner.clone(),
             SynchronizerParameters::default(),
             metrics.clone(),
+            local_commit_receiver.resubscribe(), // Create a new receiver for each disseminator
         );
 
         let id = connection.peer_id as AuthorityIndex;
@@ -231,6 +233,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 NetworkMessage::BlockNotFound(_references) => {
                     // TODO: leverage this signal to request blocks from other peers
                 }
+                NetworkMessage::Commit(commit_message) => {
+                    inner.syncer.handle_remote_commit(commit_message.round, connection.peer_id as AuthorityIndex).await;
+                }
             }
         }
         inner.syncer.authority_connection(id, false).await;
@@ -239,11 +244,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         None
     }
 
+
     async fn leader_timeout_task(
         inner: Arc<NetworkSyncerInner<H, C>>,
         mut epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
     ) -> Option<()> {
+
         let leader_timeout = Duration::from_secs(1);
         loop {
             let notified = inner.notify.notified();
@@ -344,7 +351,7 @@ pub struct AsyncWalSyncer {
     stop: mpsc::Sender<()>,
     epoch_signal: mpsc::Sender<()>,
     _sender: oneshot::Sender<()>,
-    runtime: tokio::runtime::Handle,
+    _runtime: tokio::runtime::Handle,
 }
 
 impl AsyncWalSyncer {
@@ -360,7 +367,7 @@ impl AsyncWalSyncer {
             stop,
             epoch_signal,
             _sender: sender,
-            runtime: tokio::runtime::Handle::current(),
+            _runtime: tokio::runtime::Handle::current(),
         };
         std::thread::Builder::new()
             .name("wal-syncer".to_string())
@@ -378,10 +385,9 @@ impl AsyncWalSyncer {
         oneshot::channel().1
     }
 
-    pub fn run(mut self) {
-        let runtime = self.runtime.clone();
+    pub async fn run(mut self) {
         loop {
-            if runtime.block_on(self.wait_next()) {
+            if self.wait_next().await {
                 return;
             }
             self.wal_syncer.sync().expect("Failed to sync wal");
@@ -413,7 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_sync() {
-        let network_syncers = network_syncers(4).await;
+        let network_syncers = network_syncers(4, 2).await;
         println!("Started");
         tokio::time::sleep(Duration::from_secs(3)).await;
         println!("Done");

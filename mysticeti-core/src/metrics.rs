@@ -483,7 +483,7 @@ impl MetricReporter {
     }
 }
 
-pub fn print_network_address_table(addresses: &[SocketAddr]) {
+pub fn print_network_address_table(addresses: &[SocketAddr], authority_index: AuthorityIndex) {
     let table: Vec<_> = addresses
         .iter()
         .enumerate()
@@ -492,7 +492,7 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
             address: address.to_string(),
         })
         .collect();
-    tracing::info!("Network address table:\n{}", Table::new(table));
+    tracing::info!("Network address table, validator {authority_index}:\n{}", Table::new(table));
 }
 
 pub trait UtilizationTimerExt {

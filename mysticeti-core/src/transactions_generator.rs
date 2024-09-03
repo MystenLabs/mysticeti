@@ -5,6 +5,7 @@ use std::{cmp::min, time::Duration};
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tokio::sync::mpsc;
+use tokio::task;
 
 use crate::{
     config::ClientParameters,
@@ -33,14 +34,16 @@ impl TransactionGenerator {
             client_parameters.load,
             client_parameters.initial_delay
         );
-        runtime::Handle::current().spawn(
-            Self {
-                sender,
-                rng: StdRng::seed_from_u64(seed),
-                client_parameters,
-            }
-            .run(),
-        );
+
+        let generator = Self {
+            sender,
+            rng: StdRng::seed_from_u64(seed),
+            client_parameters,
+        };
+
+        task::spawn(async move {
+            generator.run().await;
+        });
     }
 
     pub async fn run(mut self) {
@@ -75,6 +78,7 @@ impl TransactionGenerator {
 
                 if block_size >= max_block_size {
                     if self.sender.send(block.clone()).await.is_err() {
+                        tracing::error!("Failed to send block");
                         return;
                     }
                     block.clear();
@@ -82,8 +86,11 @@ impl TransactionGenerator {
                 }
             }
 
-            if !block.is_empty() && self.sender.send(block).await.is_err() {
-                return;
+            if !block.is_empty() {
+                if self.sender.send(block).await.is_err() {
+                    tracing::error!("Failed to send block");
+                    return;
+                }
             }
         }
     }

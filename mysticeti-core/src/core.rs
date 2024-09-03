@@ -7,9 +7,7 @@ use std::{
 use minibytes::Bytes;
 
 use crate::{
-    block_handler::BlockHandler,
-    block_manager::BlockManager,
-    block_store::{
+    block_handler::BlockHandler, block_manager::BlockManager, block_store::{
         BlockStore,
         BlockWriter,
         CommitData,
@@ -17,23 +15,15 @@ use crate::{
         WAL_ENTRY_COMMIT,
         WAL_ENTRY_PAYLOAD,
         WAL_ENTRY_STATE,
-    },
-    committee::Committee,
-    config::NodePublicConfig,
-    consensus::{
+    }, 
+    committee::Committee, config::NodePublicConfig, consensus::{
         linearizer::CommittedSubDag,
         universal_committer::{UniversalCommitter, UniversalCommitterBuilder},
-    },
-    crypto::{dummy_signer, Signer},
-    data::Data,
-    epoch_close::EpochManager,
-    metrics::{Metrics, UtilizationTimerVecExt},
-    runtime::timestamp_utc,
-    state::RecoveredState,
-    threshold_clock::ThresholdClockAggregator,
-    types::{AuthorityIndex, BaseStatement, BlockReference, RoundNumber, StatementBlock},
-    wal::{WalPosition, WalSyncer, WalWriter},
+    }, 
+    crypto::{dummy_signer, Signer}, data::Data, epoch_close::EpochManager, metrics::{Metrics, UtilizationTimerVecExt}, network::{NetworkMessage, CommitTracker}, runtime::timestamp_utc, state::RecoveredState, threshold_clock::ThresholdClockAggregator, types::{AuthorityIndex, BaseStatement, BlockReference, CommitMessage, RoundNumber, StatementBlock}, wal::{WalPosition, WalSyncer, WalWriter},
 };
+
+use tokio::sync::{mpsc, broadcast};
 
 pub struct Core<H: BlockHandler> {
     block_manager: BlockManager,
@@ -54,6 +44,10 @@ pub struct Core<H: BlockHandler> {
     epoch_manager: EpochManager,
     rounds_in_epoch: RoundNumber,
     committer: UniversalCommitter,
+    // network: Network,
+    linearizer_sender: mpsc::Sender<(BlockReference, Data<StatementBlock>)>,
+    local_commit_sender: broadcast::Sender<NetworkMessage>,
+    commit_tracker: CommitTracker,
 }
 
 pub struct CoreOptions {
@@ -68,8 +62,9 @@ pub enum MetaStatement {
 
 impl<H: BlockHandler> Core<H> {
     #[allow(clippy::too_many_arguments)]
-    pub fn open(
+    pub async fn open(
         mut block_handler: H,
+        num_instances: usize,
         authority: AuthorityIndex,
         committee: Arc<Committee>,
         config: &NodePublicConfig,
@@ -77,6 +72,8 @@ impl<H: BlockHandler> Core<H> {
         recovered: RecoveredState,
         mut wal_writer: WalWriter,
         options: CoreOptions,
+        linearizer_sender: mpsc::Sender<(BlockReference, Data<StatementBlock>)>,
+        local_commit_sender: broadcast::Sender<NetworkMessage>,
     ) -> Self {
         let RecoveredState {
             block_store,
@@ -134,6 +131,8 @@ impl<H: BlockHandler> Core<H> {
         tracing::info!("Pipeline enabled: {}", config.parameters.enable_pipelining);
         tracing::info!("Number of leaders: {}", config.parameters.number_of_leaders);
 
+        let commit_tracker = CommitTracker::new(num_instances);
+
         let mut this = Self {
             block_manager,
             pending,
@@ -152,6 +151,9 @@ impl<H: BlockHandler> Core<H> {
             epoch_manager,
             rounds_in_epoch: config.parameters.rounds_in_epoch,
             committer,
+            linearizer_sender,
+            local_commit_sender,
+            commit_tracker,
         };
 
         if !unprocessed_blocks.is_empty() {
@@ -159,7 +161,7 @@ impl<H: BlockHandler> Core<H> {
                 "Replaying {} blocks for transaction aggregator",
                 unprocessed_blocks.len()
             );
-            this.run_block_handler(&unprocessed_blocks);
+            this.run_block_handler(&unprocessed_blocks).await;
         }
 
         this
@@ -171,7 +173,7 @@ impl<H: BlockHandler> Core<H> {
     }
 
     // Note that generally when you update this function you also want to change genesis initialization above
-    pub fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
+    pub async fn add_blocks(&mut self, blocks: Vec<Data<StatementBlock>>) -> Vec<Data<StatementBlock>> {
         let _timer = self
             .metrics
             .utilization_timer
@@ -187,18 +189,20 @@ impl<H: BlockHandler> Core<H> {
                 .push_back((position, MetaStatement::Include(*processed.reference())));
             result.push(processed);
         }
-        self.run_block_handler(&result);
+        self.run_block_handler(&result).await;
         result
     }
 
-    fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
+    async fn run_block_handler(&mut self, processed: &[Data<StatementBlock>]) {
         let _timer = self
             .metrics
             .utilization_timer
             .utilization_timer("Core::run_block_handler");
+        tracing::info!("Adding {} blocks to block handler", processed.len());
         let statements = self
             .block_handler
-            .handle_blocks(processed, !self.epoch_changing());
+            .handle_blocks(processed, !self.epoch_changing())
+            .await;
         let serialized_statements =
             bincode::serialize(&statements).expect("Payload serialization failed");
         let position = self
@@ -209,7 +213,7 @@ impl<H: BlockHandler> Core<H> {
             .push_back((position, MetaStatement::Payload(statements)));
     }
 
-    pub fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
+    pub async fn try_new_block(&mut self) -> Option<Data<StatementBlock>> {
         let _timer = self
             .metrics
             .utilization_timer
@@ -292,7 +296,7 @@ impl<H: BlockHandler> Core<H> {
         }
         self.threshold_clock
             .add_block(*block.reference(), &self.committee);
-        self.block_handler.handle_proposal(&block);
+        self.block_handler.handle_proposal(&block).await;
         self.proposed_block_stats(&block);
         let next_entry = if let Some((pos, _)) = self.pending.get(0) {
             *pos
@@ -338,7 +342,36 @@ impl<H: BlockHandler> Core<H> {
         self.metrics.proposed_block_vote_count.observe(votes);
     }
 
-    pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
+    pub async fn handle_remote_commit(&mut self, round: RoundNumber, validator: AuthorityIndex) {
+        if self.commit_tracker.record_commit(round, validator) {
+            self.finalize_commit(round).await;
+        }
+    }
+
+    pub async fn finalize_commit(&mut self, round: RoundNumber) {
+        // Update the Universal Committer
+        //self.committer.update_remote_commit(round);
+
+        // Send the committed block to the LinearizerTask
+        // Send BlockReference and Data<StatementBlock>to LinearizerTask
+        if let Some(block) = self.commit_tracker.take_committed_block(round) {
+            self.linearizer_sender.send((*block.reference(), block.clone())).await.unwrap();
+        }
+
+        // Update the block store
+        // self.block_store.mark_committed_up_to(round);
+
+
+        // Cleanup old rounds
+        self.commit_tracker.cleanup_old_rounds(round);
+
+        // Optionally, you can log the commit or update any other components that need to know about commits
+        tracing::info!("Finalized remote commit for round {}", round);
+    }
+
+
+
+    pub async fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
         let sequence: Vec<_> = self
             .committer
             .try_commit(self.last_commit_leader)
@@ -348,6 +381,13 @@ impl<H: BlockHandler> Core<H> {
 
         if let Some(last) = sequence.last() {
             self.last_commit_leader = *last.reference();
+
+            // Store the block in CommitTracker
+            self.commit_tracker.set_block(last.reference().round(), last.clone());
+
+            // Notify all validators about the committed round
+            let commit_message = NetworkMessage::Commit(CommitMessage { round: last.reference().round() });
+            self.local_commit_sender.send(commit_message).ok();
         }
 
         // todo: should ideally come from execution result of epoch smart contract
@@ -367,7 +407,7 @@ impl<H: BlockHandler> Core<H> {
                 .saturating_sub(RETAIN_BELOW_COMMIT_ROUNDS),
         );
 
-        self.block_handler.cleanup();
+        let _ = self.block_handler.cleanup();
     }
 
     /// This only checks readiness in terms of helping liveness for commit rule,
@@ -512,16 +552,17 @@ mod test {
         threshold_clock,
     };
 
-    #[test]
-    fn test_core_simple_exchange() {
-        let (_committee, mut cores, _) = committee_and_cores(4);
+    #[tokio::test]
+    async fn test_core_simple_exchange() {
+        let (_committee, mut cores, _) = committee_and_cores(4, 2);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
         for core in &mut cores {
-            core.run_block_handler(&[]);
+            core.run_block_handler(&[]).await;
             let block = core
                 .try_new_block()
+                .await
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
             proposed_transactions.extend(core.block_handler.proposed.drain(..));
@@ -536,10 +577,11 @@ mod test {
         let mut blocks_r2 = vec![];
         for core in &mut cores {
             core.add_blocks(blocks.clone());
-            assert!(core.try_new_block().is_none());
+            assert!(core.try_new_block().await.is_none());
             core.add_blocks(more_blocks.clone());
             let block = core
                 .try_new_block()
+                .await
                 .expect("Must be able to create block after full round");
             eprintln!("{}: {}", core.authority, block);
             assert_eq!(block.reference().round, 2);
@@ -550,6 +592,7 @@ mod test {
             core.add_blocks(blocks_r2.clone());
             let block = core
                 .try_new_block()
+                .await
                 .expect("Must be able to create block after full round");
             eprintln!("{}: {}", core.authority, block);
             assert_eq!(block.reference().round, 3);
@@ -564,18 +607,19 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_randomized_simple_exchange() {
+    #[tokio::test]
+    async fn test_randomized_simple_exchange() {
         'l: for seed in 0..100 {
             let mut rng = StdRng::from_seed([seed; 32]);
-            let (committee, mut cores, _) = committee_and_cores(4);
+            let (committee, mut cores, _) = committee_and_cores(4, 2);
 
             let mut proposed_transactions = vec![];
             let mut pending: Vec<_> = committee.authorities().map(|_| vec![]).collect();
             for core in &mut cores {
-                core.run_block_handler(&[]);
+                core.run_block_handler(&[]).await;
                 let block = core
                     .try_new_block()
+                    .await
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
                 proposed_transactions.extend(core.block_handler.proposed.drain(..));
@@ -612,7 +656,7 @@ mod test {
                 }
                 eprint!("Deliver {deliver} to {authority} => ");
                 core.add_blocks(blocks);
-                let Some(block) = core.try_new_block() else {
+                let Some(block) = core.try_new_block().await else {
                     eprintln!("No new block");
                     continue;
                 };
@@ -648,17 +692,18 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_core_recovery() {
+    #[tokio::test]
+    async fn test_core_recovery() {
         let tmp = tempdir::TempDir::new("test_core_recovery").unwrap();
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()), 2);
 
         let mut proposed_transactions = vec![];
         let mut blocks = vec![];
         for core in &mut cores {
-            core.run_block_handler(&[]);
+            core.run_block_handler(&[]).await;
             let block = core
                 .try_new_block()
+                .await
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
             proposed_transactions.extend(core.block_handler.proposed.clone());
@@ -669,7 +714,7 @@ mod test {
         cores.iter_mut().for_each(Core::write_state);
         drop(cores);
 
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()), 2);
 
         let more_blocks = blocks.split_off(2);
 
@@ -678,10 +723,11 @@ mod test {
         let mut blocks_r2 = vec![];
         for core in &mut cores {
             core.add_blocks(blocks.clone());
-            assert!(core.try_new_block().is_none());
+            assert!(core.try_new_block().await.is_none());
             core.add_blocks(more_blocks.clone());
             let block = core
                 .try_new_block()
+                .await
                 .expect("Must be able to create block after full round");
             eprintln!("{}: {}", core.authority, block);
             assert_eq!(block.reference().round, 2);
@@ -694,12 +740,12 @@ mod test {
 
         eprintln!("===");
 
-        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()));
+        let (_committee, mut cores, _) = committee_and_cores_persisted(4, Some(tmp.path()), 2);
 
         for core in &mut cores {
             core.add_blocks(blocks_r2.clone());
             let block = core
-                .try_new_block()
+                .try_new_block().await
                 .expect("Must be able to create block after full round");
             eprintln!("{}: {}", core.authority, block);
             assert_eq!(block.reference().round, 3);

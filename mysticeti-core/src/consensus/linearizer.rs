@@ -1,14 +1,18 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap, VecDeque};
 use std::fmt;
 
 use crate::block_store::BlockStore;
+use crate::types::AuthorityIndex;
 use crate::{
     data::Data,
     types::{BlockReference, StatementBlock},
 };
+
+use tokio::sync::{mpsc, Mutex};
+use std::sync::Arc;
 
 /// The output of consensus is an ordered list of [`CommittedSubDag`]. The application can arbitrarily
 /// sort the blocks within each sub-dag (but using a deterministic algorithm).
@@ -36,16 +40,22 @@ impl CommittedSubDag {
 pub struct Linearizer {
     /// Keep track of all committed blocks to avoid committing the same block twice.
     pub committed: HashSet<BlockReference>,
+    commit_messages: Mutex<HashMap<u64, HashMap<AuthorityIndex, Data<StatementBlock>>>>,
+    num_validators: usize,
 }
 
 impl Linearizer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(num_validators: usize) -> Self {
+        Self {
+            committed: HashSet::new(),
+            commit_messages: Mutex::new(HashMap::new()),
+            num_validators,
+        }
     }
 
     /// Collect the sub-dag from a specific anchor excluding any duplicates or blocks that
     /// have already been committed (within previous sub-dags).
-    fn collect_sub_dag(
+    fn _collect_sub_dag(
         &mut self,
         block_store: &BlockStore,
         leader_block: Data<StatementBlock>,
@@ -73,21 +83,77 @@ impl Linearizer {
         CommittedSubDag::new(leader_block_ref, to_commit)
     }
 
-    pub fn handle_commit(
+    // Handle commit messages by grouping them by round number and sorting them once all validators have sent their messages for the round.
+    // Collect blocks from all validators before creating a CommittedSubDag
+    // TODO: Consider removing block_ref
+    pub async fn handle_commit(
         &mut self,
-        block_store: &BlockStore,
-        committed_leaders: Vec<Data<StatementBlock>>,
-    ) -> Vec<CommittedSubDag> {
-        let mut committed = vec![];
-        for leader_block in committed_leaders {
-            // Collect the sub-dag generated using each of these leaders as anchor.
-            let mut sub_dag = self.collect_sub_dag(block_store, leader_block);
+        round: u64,
+        validator_id: AuthorityIndex,
+        _block_ref: BlockReference,
+        block: Data<StatementBlock>,
+    ) -> Vec<CommittedSubDag>{
 
-            // [Optional] sort the sub-dag using a deterministic algorithm.
-            sub_dag.sort();
-            committed.push(sub_dag);
+            let mut commit_messages = self.commit_messages.lock().await;
+            let round_messages = commit_messages.entry(round).or_insert(HashMap::new());
+            round_messages.insert(validator_id, block);
+
+            // Check if we have received commit messages from all validators for this round
+            if round_messages.len() == self.num_validators {
+                let mut sub_dag_blocks = Vec::new();
+                let mut to_process = VecDeque::new();
+
+                // Start with the leader block
+                let leader_block = round_messages.values().next().unwrap().clone();
+                to_process.push_back(leader_block.clone());
+                self.committed.insert(*leader_block.reference());
+
+                // Collect all blocks in the sub-DAG
+                while let Some(current_block) = to_process.pop_front() {
+                    sub_dag_blocks.push(current_block.clone());
+
+                    for included_ref in current_block.includes() {
+                        if self.committed.insert(*included_ref) {
+                            // Find the included block from the commit messages
+                            if let Some(included_block) = round_messages.values().find(|b| b.reference() == included_ref) {
+                                to_process.push_back(included_block.clone());
+                            }
+                        }
+                    }
+                }
+
+                commit_messages.remove(&round);
+
+                // Create and sort the CommittedSubDag
+                let mut sub_dag = CommittedSubDag::new(*leader_block.reference(), sub_dag_blocks);
+                sub_dag.sort();
+
+                vec![sub_dag]
+            } else {
+                Vec::new()
+            }
+    }
+}
+
+pub struct LinearizerTask {
+    global_linearizer: Arc<Mutex<Linearizer>>,
+    receiver: mpsc::Receiver<(BlockReference, Data<StatementBlock>)>,
+}
+
+impl LinearizerTask {
+    pub fn new(receiver: mpsc::Receiver<(BlockReference, Data<StatementBlock>)>, global_linearizer: Arc<Mutex<Linearizer>>) -> Self {
+        Self { receiver, global_linearizer }
+    }
+
+    pub async fn run(mut self) {
+        while let Some(block_reference) = self.receiver.recv().await {
+            // Process the block reference
+            let (block_reference, block) = block_reference;
+            let (validator_id, round) = block_reference.author_round();
+
+            // Handle the commit
+            self.global_linearizer.lock().await.handle_commit(round, validator_id, block_reference, block).await;
         }
-        committed
     }
 }
 

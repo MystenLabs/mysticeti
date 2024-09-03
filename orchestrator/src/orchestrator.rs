@@ -668,8 +668,8 @@ impl<P: ProtocolCommands<N, C> + ProtocolMetrics, N, C> Orchestrator<P, N, C> {
         }
 
         // Run all benchmarks.
-        let mut i = 1;
-        let mut latest_committee_size = 0;
+        let i: i32 = 1;
+        let latest_committee_size = 0;
         for parameters in set_of_parameters {
             display::header(format!("Starting benchmark {i}"));
             display::config("Node Parameters", &parameters.node_parameters);
@@ -684,32 +684,33 @@ impl<P: ProtocolCommands<N, C> + ProtocolMetrics, N, C> Orchestrator<P, N, C> {
             // Configure all instances (if needed).
             if !self.skip_testbed_configuration && latest_committee_size != parameters.nodes {
                 self.configure(&parameters).await?;
-                latest_committee_size = parameters.nodes;
+                //latest_committee_size = parameters.nodes;
             }
 
             return Ok(());
 
+            // Unreachable code follows
             // Deploy the validators.
-            let monitor = self.run_nodes(&parameters).await?;
+            // let monitor = self.run_nodes(&parameters).await?;
 
-            // Deploy the load generators.
-            self.run_clients(&parameters).await?;
+            // // Deploy the load generators.
+            // self.run_clients(&parameters).await?;
 
-            // Wait for the benchmark to terminate. Then save the results and print a summary.
-            let aggregator = self.run(&parameters).await?;
-            aggregator.display_summary();
-            drop(monitor);
+            // // Wait for the benchmark to terminate. Then save the results and print a summary.
+            // let aggregator = self.run(&parameters).await?;
+            // aggregator.display_summary();
+            // drop(monitor);
 
-            // Kill the nodes and clients (without deleting the log files).
-            self.cleanup(false).await?;
+            // // Kill the nodes and clients (without deleting the log files).
+            // self.cleanup(false).await?;
+            
+            // // Download the log files.
+            // if self.log_processing {
+                //     let error_counter = self.download_logs(&parameters).await?;
+                //     error_counter.print_summary();
+                // }
 
-            // Download the log files.
-            if self.log_processing {
-                let error_counter = self.download_logs(&parameters).await?;
-                error_counter.print_summary();
-            }
-
-            i += 1;
+            //i += 1;
         }
 
         display::header("Benchmark completed");

@@ -22,8 +22,7 @@ pub trait Print: Serialize + DeserializeOwned {
 
     fn load<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         let content = fs::read_to_string(&path)?;
-        let object =
-            serde_yaml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let object = serde_yaml::from_str(&content).map_err(io::Error::other)?;
         Ok(object)
     }
 }
@@ -33,9 +32,15 @@ pub struct Identifier {
     pub public_key: PublicKey,
     pub network_address: SocketAddr,
     pub metrics_address: SocketAddr,
+    /// Iroh endpoint id (hex-encoded 32-byte public key). When set, Iroh transport can be used for P2P.
+    #[serde(default)]
+    pub iroh_endpoint_id: Option<String>,
+    /// Iroh relay URL for this peer (e.g. "https://relay.iroh.computer"). Optional when using discovery or direct addrs.
+    #[serde(default)]
+    pub iroh_relay_url: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameters {
     pub identifiers: Vec<Identifier>,
     pub wave_length: RoundNumber,
@@ -129,6 +134,8 @@ impl Parameters {
                 public_key,
                 network_address,
                 metrics_address,
+                iroh_endpoint_id: None,
+                iroh_relay_url: None,
             });
         }
         Self {
@@ -154,6 +161,15 @@ impl Parameters {
 
     pub fn with_pipeline(mut self, enable_pipelining: bool) -> Self {
         self.enable_pipelining = enable_pipelining;
+        self
+    }
+
+    /// Set Iroh endpoint IDs for each identifier (hex strings). Used for Iroh transport tests/setup.
+    pub fn with_iroh_endpoint_ids(mut self, ids: Vec<String>) -> Self {
+        assert_eq!(self.identifiers.len(), ids.len());
+        for (id, endpoint_id) in self.identifiers.iter_mut().zip(ids) {
+            id.iroh_endpoint_id = Some(endpoint_id);
+        }
         self
     }
 
@@ -190,6 +206,12 @@ impl Parameters {
     pub fn rounds_in_epoch(&self) -> RoundNumber {
         self.rounds_in_epoch
     }
+
+    /// True if all identifiers have iroh_endpoint_id set (Iroh transport can be used).
+    pub fn use_iroh(&self) -> bool {
+        !self.identifiers.is_empty()
+            && self.identifiers.iter().all(|id| id.iroh_endpoint_id.is_some())
+    }
 }
 
 impl Print for Parameters {}
@@ -198,6 +220,9 @@ impl Print for Parameters {}
 pub struct PrivateConfig {
     authority_index: AuthorityIndex,
     storage_path: StorageDir,
+    /// Path to Iroh secret key file (32 bytes). When set, this node's Iroh EndpointId is fixed across restarts.
+    #[serde(default)]
+    iroh_secret_key_path: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -212,6 +237,7 @@ impl PrivateConfig {
         Self {
             authority_index,
             storage_path: StorageDir { path },
+            iroh_secret_key_path: None,
         }
     }
     pub fn new_for_benchmarks(dir: &Path, authority_index: AuthorityIndex) -> Self {
@@ -222,6 +248,7 @@ impl PrivateConfig {
         Self {
             authority_index,
             storage_path: StorageDir { path },
+            iroh_secret_key_path: None,
         }
     }
 
@@ -231,6 +258,16 @@ impl PrivateConfig {
 
     pub fn storage(&self) -> &StorageDir {
         &self.storage_path
+    }
+
+    pub fn iroh_secret_key_path(&self) -> Option<&PathBuf> {
+        self.iroh_secret_key_path.as_ref()
+    }
+
+    /// Set path to Iroh secret key file for this node. Used for Iroh transport tests/setup.
+    pub fn with_iroh_secret_key_path(mut self, path: PathBuf) -> Self {
+        self.iroh_secret_key_path = Some(path);
+        self
     }
 }
 

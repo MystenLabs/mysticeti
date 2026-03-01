@@ -17,3 +17,8 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 mysticeti-core = { path = "../mysticeti-core" }
 
+[features]
+default = []
+# Enable Iroh transport and node discovery; also enables `gen-iroh-key` subcommand.
+iroh = ["mysticeti-core/iroh"]
+

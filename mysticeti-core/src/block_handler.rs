@@ -45,7 +45,7 @@ const _: () = assert_constants();
 
 #[allow(dead_code)]
 const fn assert_constants() {
-    if REAL_BLOCK_HANDLER_TXN_SIZE % REAL_BLOCK_HANDLER_TXN_GEN_STEP != 0 {
+    if !REAL_BLOCK_HANDLER_TXN_SIZE.is_multiple_of(REAL_BLOCK_HANDLER_TXN_GEN_STEP) {
         panic!("REAL_BLOCK_HANDLER_TXN_SIZE % REAL_BLOCK_HANDLER_TXN_GEN_STEP != 0")
     }
 }

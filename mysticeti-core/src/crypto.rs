@@ -147,6 +147,7 @@ impl<const N: usize> AsBytes for [u8; N] {
     }
 }
 
+#[allow(dead_code)]
 pub trait CryptoHash {
     fn crypto_hash(&self, state: &mut impl Digest);
 }

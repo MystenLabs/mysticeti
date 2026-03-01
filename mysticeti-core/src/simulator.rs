@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(dead_code)]
+
 use rand::prelude::StdRng;
+#[allow(unused_imports)]
 use rand::SeedableRng;
 use std::any::Any;
 use std::cell::RefCell;
@@ -172,7 +175,7 @@ struct ScheduledEvent<E> {
 // This is because rust's BinaryHeap is a max heap, and we care about events with lowest time
 impl<E> PartialOrd for ScheduledEvent<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.time.partial_cmp(&self.time)
+        Some(self.cmp(other))
     }
 }
 

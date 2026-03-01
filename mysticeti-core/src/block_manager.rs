@@ -174,7 +174,7 @@ mod tests {
                 print!("Adding {:?}:", block.reference());
                 for (_, p) in processed {
                     print!("{:?},", p.reference());
-                    if !processed_blocks.insert(p.reference().clone()) {
+                    if !processed_blocks.insert(*p.reference()) {
                         panic!("Block {:?} processed twice", p.reference());
                     }
                 }

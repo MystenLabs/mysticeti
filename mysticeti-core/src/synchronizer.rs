@@ -376,7 +376,7 @@ where
     fn sample_peer(
         &self,
         except: &[AuthorityIndex],
-    ) -> Option<(AuthorityIndex, mpsc::Permit<NetworkMessage>)> {
+    ) -> Option<(AuthorityIndex, mpsc::Permit<'_, NetworkMessage>)> {
         static MILLIS_IN_MINUTE: u128 = Duration::from_secs(60).as_millis();
         let senders = self
             .senders

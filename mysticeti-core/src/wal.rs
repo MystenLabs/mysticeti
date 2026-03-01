@@ -46,6 +46,7 @@ pub fn open_file_for_wal(p: impl AsRef<Path>) -> io::Result<File> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(p)
 }
 
@@ -101,7 +102,7 @@ const MAP_MASK: u64 = !0xff_ffff;
 const MAP_SIZE: u64 = 0x10_000; // 16 pages
 #[cfg(test)]
 const MAP_MASK: u64 = !0xffff;
-const ZERO_MAP: [u8; MAP_SIZE as usize] = [0u8; MAP_SIZE as usize];
+static ZERO_MAP: [u8; MAP_SIZE as usize] = [0u8; MAP_SIZE as usize];
 const _: () = assert_constants();
 
 pub const MAX_ENTRY_SIZE: usize = (MAP_SIZE - HEADER_LEN_BYTES) as usize;
@@ -267,7 +268,7 @@ impl WalReader {
     }
 
     // Iter all entries up to writer position at the time iter_until(...) is called
-    pub fn iter_until(&self, w: &WalWriter) -> WalIterator {
+    pub fn iter_until(&self, w: &WalWriter) -> WalIterator<'_> {
         WalIterator {
             wal_reader: self,
             position: Some(WalPosition { start: 0 }),

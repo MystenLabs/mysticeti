@@ -4,7 +4,7 @@ use crate::config::SynchronizerParameters;
 use crate::core::Core;
 use crate::core_thread::CoreThreadDispatcher;
 use crate::data::Data;
-use crate::network::{Connection, Network, NetworkMessage};
+use crate::network::{Connection, NetworkMessage, Transport};
 use crate::runtime::Handle;
 use crate::runtime::{self, timestamp_utc};
 use crate::runtime::{JoinError, JoinHandle};
@@ -79,8 +79,8 @@ pub struct NetworkSyncerInner<H: BlockHandler, C: CommitObserver> {
 
 impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C> {
     #[allow(clippy::too_many_arguments)]
-    pub fn start(
-        network: Network,
+    pub fn start<T: Transport + 'static>(
+        transport: T,
         core: Core<H>,
         commit_period: u64,
         commit_observer: C,
@@ -133,7 +133,8 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             committee,
         ));
         let main_task = handle.spawn(Self::run(
-            network,
+            authority_index,
+            transport,
             inner.clone(),
             epoch_receiver,
             shutdown_grace_period,
@@ -166,8 +167,9 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn run(
-        mut network: Network,
+    async fn run<T: Transport + 'static>(
+        authority_index: AuthorityIndex,
+        mut transport: T,
         inner: Arc<NetworkSyncerInner<H, C>>,
         epoch_close_signal: mpsc::Receiver<()>,
         shutdown_grace_period: Duration,
@@ -193,8 +195,13 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         } else {
             handle.spawn(async { None })
         };
-        while let Some(connection) = inner.recv_or_stopped(network.connection_receiver()).await {
+        while let Some(connection) = inner.recv_or_stopped(transport.connection_receiver()).await {
             let peer_id = connection.peer_id;
+            tracing::info!(
+                authority_index = authority_index,
+                peer_id,
+                "syncer received connection from peer"
+            );
             if let Some(task) = connections.remove(&peer_id) {
                 // wait until previous sync task completes
                 task.await.ok();
@@ -231,7 +238,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
             .unwrap_or_else(|_| panic!("Failed to drop all connections"))
             .shutdown()
             .await;
-        network.shutdown().await;
+        transport.shutdown().await;
     }
 
     async fn connection_task(
@@ -245,6 +252,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         let last_seen = inner
             .block_store
             .last_seen_by_authority(connection.peer_id as AuthorityIndex);
+        tracing::info!(
+            peer_id = connection.peer_id,
+            last_seen,
+            "syncer connection_task sending SubscribeOwnFrom"
+        );
         connection
             .sender
             .send(NetworkMessage::SubscribeOwnFrom(last_seen))
@@ -264,9 +276,11 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
         while let Some(message) = inner.recv_or_stopped(&mut connection.receiver).await {
             match message {
                 NetworkMessage::SubscribeOwnFrom(round) => {
+                    tracing::debug!(peer_id = connection.peer_id, round, "syncer received SubscribeOwnFrom");
                     disseminator.disseminate_own_blocks(round).await
                 }
                 NetworkMessage::Blocks(blocks) => {
+                    tracing::debug!(peer_id = connection.peer_id, count = blocks.len(), "syncer received Blocks");
                     if let Ok(missing_blocks) =
                         Self::process_blocks(&inner, &block_verifier, &metrics, blocks).await
                     {
@@ -304,6 +318,7 @@ impl<H: BlockHandler + 'static, C: CommitObserver + 'static> NetworkSyncer<H, C>
                 }
             }
         }
+        tracing::info!(peer_id = connection.peer_id, "syncer connection_task ending (stream closed or stop)");
         disseminator.shutdown().await;
         let authority = connection.peer_id as AuthorityIndex;
         inner.connected_authorities.lock().remove(authority);
@@ -612,9 +627,7 @@ mod sim_tests {
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
         for syncer in syncers.iter() {
-            if syncer.core().epoch_closed() {
-                ()
-            } else {
+            if !syncer.core().epoch_closed() {
                 panic!("Epoch should have closed!")
             }
         }
@@ -762,7 +775,7 @@ mod sim_tests {
         let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
         // Disconnect all A from all peers except for B.
         simulated_network
-            .connect_some(|a, b| a != 0 || (a == 0 && b == 1))
+            .connect_some(|a, b| a != 0 || b == 1)
             .await;
 
         println!("Started");

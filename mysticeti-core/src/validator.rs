@@ -42,6 +42,10 @@ use crate::{
     types::AuthorityIndex,
     wal,
 };
+#[cfg(feature = "iroh")]
+use crate::network::AnyTransport;
+#[cfg(feature = "iroh")]
+use crate::iroh_network;
 use crate::{block_store::BlockStore, log::TransactionLog};
 use crate::{core::CoreOptions, transactions_generator::TransactionGenerator};
 
@@ -155,6 +159,7 @@ impl Validator<BenchmarkFastPathBlockHandler, TestCommitObserver<TransactionLog>
             block_handler,
             commit_observer,
             AcceptAllBlockVerifier,
+            Some(&config),
         )
         .await
     }
@@ -204,6 +209,7 @@ impl Validator<SimpleBlockHandler> {
             block_handler,
             commit_observer,
             block_verifier,
+            Some(&config),
         )
         .await?;
 
@@ -227,6 +233,7 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         block_handler: B,
         commit_observer: C,
         block_verifier: impl BlockVerifier,
+        #[allow(unused_variables)] private_config: Option<&PrivateConfig>,
     ) -> Result<Self> {
         let network_address = parameters
             .network_address(authority)
@@ -248,15 +255,44 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
             signer,
         );
 
-        let network = Network::load(
+        #[cfg(feature = "iroh")]
+        let transport: AnyTransport = if parameters.use_iroh() {
+            let secret_key = private_config
+                .and_then(|c| c.iroh_secret_key_path())
+                .and_then(|p| iroh_network::load_secret_key(p).ok());
+            let iroh = iroh_network::IrohNetwork::load(
+                parameters,
+                authority,
+                binding_network_address,
+                metrics.clone(),
+                secret_key,
+                None,
+            )
+            .await?;
+            AnyTransport::Iroh(iroh)
+        } else {
+            AnyTransport::Tcp(
+                Network::load(
+                    parameters,
+                    authority,
+                    binding_network_address,
+                    metrics.clone(),
+                )
+                .await,
+            )
+        };
+
+        #[cfg(not(feature = "iroh"))]
+        let transport = Network::load(
             parameters,
             authority,
             binding_network_address,
             metrics.clone(),
         )
         .await;
+
         let network_synchronizer = NetworkSyncer::start(
-            network,
+            transport,
             core,
             parameters.wave_length(),
             commit_observer,
@@ -284,10 +320,9 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         Result<(), JoinError>,
         Result<Result<(), hyper::Error>, JoinError>,
     ) {
-        tokio::join!(
-            self.network_synchronizer.await_completion(),
-            self.metrics_handle.handle
-        )
+        let network = self.network_synchronizer.await_completion();
+        let metrics = self.metrics_handle.handle;
+        tokio::join!(network, metrics)
     }
 
     pub async fn stop(self) {
@@ -362,6 +397,7 @@ mod smoke_tests {
     use tempdir::TempDir;
 
     use tokio::time;
+    use tracing_subscriber::EnvFilter;
 
     use super::Validator;
     use crate::crypto::dummy_signer;
@@ -373,13 +409,26 @@ mod smoke_tests {
         types::AuthorityIndex,
     };
 
+    /// Parse sum of committed_leaders_total from Prometheus text (any label combination).
+    fn parse_committed_leaders_total(metrics_text: &str) -> i64 {
+        let mut sum = 0i64;
+        for line in metrics_text.lines() {
+            let line = line.trim();
+            if !line.starts_with('#') && line.contains("committed_leaders_total") {
+                if let Some(value) = line.split_whitespace().last().and_then(|s| s.parse::<i64>().ok()) {
+                    sum += value;
+                }
+            }
+        }
+        sum
+    }
+
     /// Check whether the validator specified by its metrics address has committed at least once.
     async fn check_commit(address: &SocketAddr) -> Result<bool, reqwest::Error> {
         let route = prometheus::METRICS_ROUTE;
-        let res = reqwest::get(format! {"http://{address}{route}"}).await?;
+        let res = reqwest::get(format!("http://{address}{route}")).await?;
         let string = res.text().await?;
-        let commit = string.contains("committed_leaders_total");
-        Ok(commit)
+        Ok(parse_committed_leaders_total(&string) > 0)
     }
 
     /// Await for all the validators specified by their metrics addresses to commit.
@@ -392,6 +441,67 @@ mod smoke_tests {
                 _ => queue.push_back(address),
             }
         }
+    }
+
+    /// Wait until all metrics endpoints are reachable (to confirm all validators started).
+    #[cfg(feature = "iroh")]
+    async fn wait_metrics_up(addresses: &[SocketAddr], timeout: Duration) {
+        let route = prometheus::METRICS_ROUTE;
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            let mut all_up = true;
+            for addr in addresses {
+                if reqwest::get(format!("http://{addr}{route}")).await.is_err() {
+                    all_up = false;
+                    break;
+                }
+            }
+            if all_up {
+                return;
+            }
+            time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("Not all metrics endpoints became reachable within {:?}", timeout);
+    }
+
+    /// Parse connected_nodes from Prometheus metrics text (e.g. "connected_nodes 3" or "connected_nodes{} 3").
+    #[cfg(feature = "iroh")]
+    fn parse_connected_nodes(metrics_text: &str) -> Option<i64> {
+        for line in metrics_text.lines() {
+            let line = line.trim();
+            if !line.starts_with('#') && line.contains("connected_nodes") {
+                let value = line.split_whitespace().last()?.parse().ok()?;
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    /// Wait until at least one validator reports expected_connected peers (for debugging connectivity).
+    #[cfg(feature = "iroh")]
+    async fn wait_connected(
+        addresses: &[SocketAddr],
+        expected_connected: i64,
+        timeout: Duration,
+    ) {
+        let route = prometheus::METRICS_ROUTE;
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            for addr in addresses {
+                if let Ok(res) = reqwest::get(format!("http://{addr}{route}")).await {
+                    if let Ok(text) = res.text().await {
+                        if parse_connected_nodes(&text).map_or(false, |n| n >= expected_connected) {
+                            return;
+                        }
+                    }
+                }
+            }
+            time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!(
+            "No validator reached {} connected peers within {:?}",
+            expected_connected, timeout
+        );
     }
 
     /// Ensure that a committee of honest validators commits.
@@ -430,6 +540,68 @@ mod smoke_tests {
         tokio::select! {
             _ = await_for_commits(addresses) => (),
             _ = time::sleep(timeout) => panic!("Failed to gather commits within a few timeouts"),
+        }
+    }
+
+    /// Iroh integration: N nodes with Iroh transport (static addrs), run until a few commits, then exit.
+    #[cfg(feature = "iroh")]
+    #[tokio::test]
+    async fn validator_commit_iroh() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("mysticeti_core=info")),
+            )
+            .with_test_writer()
+            .try_init();
+
+        std::env::set_var("MYSTICETI_IROH_DISABLE_RELAY", "1");
+
+        let committee_size = 4;
+        let ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); committee_size];
+
+        let tempdir = TempDir::new("validator_commit_iroh").unwrap();
+        let keys_dir = tempdir.path().join("iroh-keys");
+        std::fs::create_dir_all(&keys_dir).unwrap();
+
+        let mut endpoint_ids = Vec::with_capacity(committee_size);
+        for i in 0..committee_size {
+            let key_path = keys_dir.join(format!("{i}.key"));
+            let hex_id = crate::iroh_network::generate_and_write_secret_key(&key_path).unwrap();
+            endpoint_ids.push(hex_id);
+        }
+
+        let committee = Committee::new_for_benchmarks(committee_size);
+        let parameters = Parameters::new_for_benchmarks(ips)
+            .with_port_offset(200)
+            .with_iroh_endpoint_ids(endpoint_ids);
+
+        let mut handles = Vec::new();
+        for i in 0..committee_size {
+            let authority = i as AuthorityIndex;
+            let private = PrivateConfig::new_for_benchmarks(tempdir.path(), authority)
+                .with_iroh_secret_key_path(keys_dir.join(format!("{i}.key")));
+
+            let validator = Validator::start_benchmarking(
+                authority,
+                committee.clone(),
+                &parameters,
+                private,
+                dummy_signer(),
+            )
+            .await
+            .unwrap();
+            handles.push(validator.await_completion());
+        }
+
+        let addresses: Vec<SocketAddr> = parameters.all_metric_addresses().collect();
+        wait_metrics_up(&addresses, Duration::from_secs(5)).await;
+        let expected_peers = (committee_size - 1) as i64;
+        wait_connected(&addresses, expected_peers, Duration::from_secs(12)).await;
+        let timeout = Parameters::DEFAULT_LEADER_TIMEOUT * 15;
+
+        tokio::select! {
+            _ = await_for_commits(addresses) => (),
+            _ = time::sleep(timeout) => panic!("Iroh validators did not commit within timeout"),
         }
     }
 

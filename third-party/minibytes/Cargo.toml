@@ -17,6 +17,11 @@ serde = { version = "1.0.136", features = ["derive", "rc"] }
 
 [dev-dependencies]
 quickcheck = "1.0"
+bencher = "0.1"
+
+[[bench]]
+name = "bytes"
+harness = false
 
 [features]
 default = ["frombytes", "frommmap"]

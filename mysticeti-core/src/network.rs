@@ -8,6 +8,7 @@ use crate::{
     metrics::{print_network_address_table, Metrics},
     types::BlockReference,
 };
+use async_trait::async_trait;
 use futures::future::{select, select_all, Either};
 use futures::FutureExt;
 use rand::prelude::ThreadRng;
@@ -29,6 +30,14 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+
+/// Transport abstraction for consensus P2P: yields a stream of [Connection]s and supports shutdown.
+#[async_trait]
+pub trait Transport: Send {
+    fn connection_receiver(&mut self) -> &mut Receiver<Connection>;
+
+    async fn shutdown(self);
+}
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -60,6 +69,7 @@ pub struct Connection {
 
 impl Network {
     #[cfg(feature = "simulator")]
+    #[allow(dead_code)]
     pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
         Self {
             connection_receiver,
@@ -159,6 +169,42 @@ impl Network {
         }
         if let Some(handle) = self.server_handle.take() {
             handle.await.ok();
+        }
+    }
+}
+
+#[async_trait]
+impl Transport for Network {
+    fn connection_receiver(&mut self) -> &mut Receiver<Connection> {
+        &mut self.connection_receiver
+    }
+
+    async fn shutdown(self) {
+        Network::shutdown(self).await
+    }
+}
+
+/// When the `iroh` feature is enabled, validators can use either TCP or Iroh transport.
+#[cfg(feature = "iroh")]
+pub enum AnyTransport {
+    Tcp(Network),
+    Iroh(crate::iroh_network::IrohNetwork),
+}
+
+#[cfg(feature = "iroh")]
+#[async_trait]
+impl Transport for AnyTransport {
+    fn connection_receiver(&mut self) -> &mut Receiver<Connection> {
+        match self {
+            AnyTransport::Tcp(n) => n.connection_receiver(),
+            AnyTransport::Iroh(n) => n.connection_receiver(),
+        }
+    }
+
+    async fn shutdown(self) {
+        match self {
+            AnyTransport::Tcp(n) => n.shutdown().await,
+            AnyTransport::Iroh(n) => n.shutdown().await,
         }
     }
 }
@@ -600,7 +646,7 @@ mod test {
                 let peer = &addresses[connection.peer_id];
                 eprintln!("{address} connected to {peer}");
                 waiting_peers.remove(peer);
-                if waiting_peers.len() == 0 {
+                if waiting_peers.is_empty() {
                     break;
                 }
             }

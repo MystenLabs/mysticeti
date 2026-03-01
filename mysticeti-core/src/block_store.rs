@@ -637,7 +637,7 @@ mod test {
 
         // WHEN
         let binding = block_writer.block_store().get_blocks_by_round(4);
-        let last_block = binding.iter().filter(|b| b.author() == 1).next().unwrap();
+        let last_block = binding.iter().find(|b| b.author() == 1).unwrap();
 
         let blocks_round_1 = block_writer.block_store().linked_to_round(last_block, 1);
 

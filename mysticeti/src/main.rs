@@ -31,6 +31,13 @@ struct Args {
 
 #[derive(Parser)]
 enum Operation {
+    #[cfg(feature = "iroh")]
+    /// Generate an Iroh secret key file (32 bytes) and print the EndpointId (hex) for use in parameters.
+    GenIrohKey {
+        /// Path where to write the secret key file.
+        #[clap(long, value_name = "FILE")]
+        out: PathBuf,
+    },
     /// Generate a committee file, parameters files and the private config files of all validators
     /// from a list of initial peers. This is only suitable for benchmarks as it exposes all keys.
     BenchmarkGenesis {
@@ -84,6 +91,8 @@ async fn main() -> Result<()> {
 
     // Parse the command line arguments.
     match Args::parse().operation {
+        #[cfg(feature = "iroh")]
+        Operation::GenIrohKey { out } => gen_iroh_key(out)?,
         Operation::BenchmarkGenesis {
             ips,
             working_directory,
@@ -109,6 +118,14 @@ async fn main() -> Result<()> {
         } => dryrun(authority, committee_size).await?,
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "iroh")]
+fn gen_iroh_key(out: PathBuf) -> Result<()> {
+    let endpoint_id_hex = mysticeti_core::iroh_network::generate_and_write_secret_key(&out)?;
+    println!("Wrote Iroh secret key to {}", out.display());
+    println!("iroh_endpoint_id: {}", endpoint_id_hex);
     Ok(())
 }
 

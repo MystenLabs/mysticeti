@@ -22,6 +22,8 @@ mod lock;
 mod log;
 pub mod metrics;
 pub mod net_sync;
+#[cfg(feature = "iroh")]
+pub mod iroh_network;
 pub mod network;
 pub mod prometheus;
 mod range_map;

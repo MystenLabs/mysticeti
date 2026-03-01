@@ -31,109 +31,108 @@
  * IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
-#![feature(test)]
 
-extern crate test;
+#[macro_use]
+extern crate bencher;
 
+use bencher::Bencher;
 use minibytes::Bytes;
-use test::Bencher;
+use std::hint::black_box;
 
-#[bench]
-fn deref_unique(b: &mut Bencher) {
+fn deref_unique(bench: &mut Bencher) {
     let buf = Bytes::from(vec![0; 1024]);
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&buf[..]);
+            black_box(&buf[..]);
         }
-    })
+    });
 }
 
-#[bench]
-fn deref_shared(b: &mut Bencher) {
+fn deref_shared(bench: &mut Bencher) {
     let buf = Bytes::from(vec![0; 1024]);
     let _b2 = buf.clone();
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&buf[..]);
+            black_box(&buf[..]);
         }
-    })
+    });
 }
 
-#[bench]
-fn deref_static(b: &mut Bencher) {
+fn deref_static(bench: &mut Bencher) {
     let buf = Bytes::from_static(b"hello world");
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&buf[..]);
+            black_box(&buf[..]);
         }
-    })
+    });
 }
 
-#[bench]
-fn clone_static(b: &mut Bencher) {
+fn clone_static(bench: &mut Bencher) {
     let bytes =
         Bytes::from_static("hello world 1234567890 and have a good byte 0987654321".as_bytes());
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&bytes.clone());
+            black_box(&bytes.clone());
         }
-    })
+    });
 }
 
-#[bench]
-fn clone_shared(b: &mut Bencher) {
+fn clone_shared(bench: &mut Bencher) {
     let bytes = Bytes::from(b"hello world 1234567890 and have a good byte 0987654321".to_vec());
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&bytes.clone());
+            black_box(&bytes.clone());
         }
-    })
+    });
 }
 
-#[bench]
-fn clone_arc_vec(b: &mut Bencher) {
+fn clone_arc_vec(bench: &mut Bencher) {
     use std::sync::Arc;
     let bytes = Arc::new(b"hello world 1234567890 and have a good byte 0987654321".to_vec());
-
-    b.iter(|| {
+    bench.iter(|| {
         for _ in 0..1024 {
-            test::black_box(&bytes.clone());
+            black_box(&bytes.clone());
         }
-    })
+    });
 }
 
-#[bench]
-fn from_long_slice(b: &mut Bencher) {
+fn from_long_slice(bench: &mut Bencher) {
     let data = [0u8; 128];
-    b.bytes = data.len() as u64;
-    b.iter(|| {
+    bench.bytes = data.len() as u64;
+    bench.iter(|| {
         let buf = Bytes::copy_from_slice(&data[..]);
-        test::black_box(buf);
-    })
+        black_box(buf);
+    });
 }
 
-#[bench]
-fn slice_empty(b: &mut Bencher) {
-    b.iter(|| {
+fn slice_empty(bench: &mut Bencher) {
+    bench.iter(|| {
         let b = Bytes::from(vec![17; 1024]).clone();
         for i in 0..1000 {
-            test::black_box(b.slice(i % 100..i % 100));
+            black_box(b.slice(i % 100..i % 100));
         }
-    })
+    });
 }
 
-#[bench]
-fn slice_short_from_arc(b: &mut Bencher) {
-    b.iter(|| {
-        // `clone` is to convert to ARC
+fn slice_short_from_arc(bench: &mut Bencher) {
+    bench.iter(|| {
         let b = Bytes::from(vec![17; 1024]).clone();
         for i in 0..1000 {
-            test::black_box(b.slice(1..2 + i % 10));
+            black_box(b.slice(1..2 + i % 10));
         }
-    })
+    });
 }
+
+benchmark_group!(
+    benches,
+    deref_unique,
+    deref_shared,
+    deref_static,
+    clone_static,
+    clone_shared,
+    clone_arc_vec,
+    from_long_slice,
+    slice_empty,
+    slice_short_from_arc
+);
+benchmark_main!(benches);

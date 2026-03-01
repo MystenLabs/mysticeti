@@ -290,7 +290,7 @@ impl<H: BlockHandler> Core<H> {
             &self.signer,
         );
         assert_eq!(
-            block.includes().get(0).unwrap().authority,
+            block.includes().first().unwrap().authority,
             self.authority,
             "Invalid block {}",
             block
@@ -308,7 +308,7 @@ impl<H: BlockHandler> Core<H> {
             .add_block(*block.reference(), &self.committee);
         self.block_handler.handle_proposal(&block);
         self.proposed_block_stats(&block);
-        let next_entry = if let Some((pos, _)) = self.pending.get(0) {
+        let next_entry = if let Some((pos, _)) = self.pending.front() {
             *pos
         } else {
             WalPosition::MAX
@@ -571,7 +571,7 @@ mod test {
                 .try_new_block()
                 .expect("Must be able to create block after genesis");
             assert_eq!(block.reference().round, 1);
-            proposed_transactions.extend(core.block_handler.proposed.drain(..));
+            proposed_transactions.append(&mut core.block_handler.proposed);
             eprintln!("{}: {}", core.authority, block);
             blocks.push(block.clone());
         }
@@ -625,7 +625,7 @@ mod test {
                     .try_new_block()
                     .expect("Must be able to create block after genesis");
                 assert_eq!(block.reference().round, 1);
-                proposed_transactions.extend(core.block_handler.proposed.drain(..));
+                proposed_transactions.append(&mut core.block_handler.proposed);
                 eprintln!("{}: {}", core.authority, block);
                 assert!(
                     threshold_clock::threshold_clock_valid_non_genesis(&block, &committee),
@@ -672,7 +672,7 @@ mod test {
                 push_all(&mut pending, core.authority, &block);
                 if i < 20 {
                     // First 20 iterations we record proposed transactions
-                    proposed_transactions.extend(core.block_handler.proposed.drain(..));
+                    proposed_transactions.append(&mut core.block_handler.proposed);
                     // proposed_transactions.push(core.block_handler.last_transaction());
                 } else {
                     assert!(!proposed_transactions.is_empty());
@@ -762,7 +762,7 @@ mod test {
     }
 
     fn push_all(
-        p: &mut Vec<Vec<Data<StatementBlock>>>,
+        p: &mut [Vec<Data<StatementBlock>>],
         except: AuthorityIndex,
         block: &Data<StatementBlock>,
     ) {

@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[must_use]
-pub struct NodeMonitorHandle(mpsc::Sender<()>);
+pub struct NodeMonitorHandle(#[allow(dead_code)] mpsc::Sender<()>);
 
 impl NodeMonitorHandle {
     pub fn new() -> (Self, mpsc::Receiver<()>) {

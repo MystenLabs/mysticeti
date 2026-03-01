@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(dead_code)]
+
 use crate::future_simulator::SimulatorContext;
 use crate::types::format_authority_index;
 use std::env;

@@ -22,7 +22,7 @@ impl<V> MonitoredRwLock<V> {
         }
     }
 
-    pub fn write(&self) -> MonitoredRwLockWriteGuard<V> {
+    pub fn write(&self) -> MonitoredRwLockWriteGuard<'_, V> {
         let guard = {
             let _timer = self.wlock_wait.utilization_timer();
             self.lock.write()
@@ -31,7 +31,7 @@ impl<V> MonitoredRwLock<V> {
         MonitoredRwLockWriteGuard { guard, _timer }
     }
 
-    pub fn read(&self) -> RwLockReadGuard<V> {
+    pub fn read(&self) -> RwLockReadGuard<'_, V> {
         self.lock.read()
     }
 

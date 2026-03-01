@@ -15,7 +15,6 @@ mod crypto;
 mod data;
 mod epoch_close;
 mod finalization_interpreter;
-#[cfg(test)]
 #[cfg(feature = "simulator")]
 mod future_simulator;
 #[allow(dead_code)] // todo - delete if unused after a while
@@ -31,7 +30,7 @@ mod serde;
 #[cfg(test)]
 #[cfg(feature = "simulator")]
 mod simulated_network;
-#[cfg(test)]
+#[cfg(any(test, feature = "simulator"))]
 mod simulator;
 #[cfg(feature = "simulator")]
 mod simulator_tracing;

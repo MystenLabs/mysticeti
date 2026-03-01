@@ -375,7 +375,7 @@ impl StatementBlock {
         Ok(())
     }
 
-    pub fn detailed(&self) -> Detailed {
+    pub fn detailed(&self) -> Detailed<'_> {
         Detailed(self)
     }
 }
@@ -789,7 +789,7 @@ mod test {
             };
             let reference = Self::parse_name(name);
             let includes = includes.trim();
-            let includes = if includes.len() == 0 {
+            let includes = if includes.is_empty() {
                 vec![]
             } else {
                 let includes = includes.split(',');
@@ -810,7 +810,7 @@ mod test {
             let s = s.trim();
             assert!(s.len() >= 2, "Invalid block: {}", s);
             let authority = s.as_bytes()[0];
-            let authority = authority.wrapping_sub('A' as u8);
+            let authority = authority.wrapping_sub(b'A');
             assert!(authority < 26, "Invalid block: {}", s);
             let Ok(round): Result<u64, _> = s[1..].parse() else {
                 panic!("Invalid block: {}", s);
@@ -828,13 +828,13 @@ mod test {
             self
         }
 
-        pub fn random_iter(&self, rng: &mut impl Rng) -> RandomDagIter {
+        pub fn random_iter(&self, rng: &mut impl Rng) -> RandomDagIter<'_> {
             let mut v: Vec<_> = self.0.keys().cloned().collect();
             v.shuffle(rng);
             RandomDagIter(self, v.into_iter())
         }
 
-        pub fn iter_rev(&self) -> DagIter {
+        pub fn iter_rev(&self) -> DagIter<'_> {
             let mut v: Vec<_> = self.0.keys().cloned().collect();
             v.sort_by(|b1, b2| {
                 let ordering = b2.round.cmp(&b1.round);
@@ -848,6 +848,10 @@ mod test {
 
         pub fn len(&self) -> usize {
             self.0.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.0.is_empty()
         }
 
         fn authorities(&self) -> HashSet<AuthorityIndex> {

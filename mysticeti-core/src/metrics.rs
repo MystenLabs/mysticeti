@@ -613,7 +613,7 @@ pub fn print_network_address_table(addresses: &[SocketAddr]) {
 }
 
 pub trait UtilizationTimerExt {
-    fn utilization_timer(&self) -> UtilizationTimer;
+    fn utilization_timer(&self) -> UtilizationTimer<'_>;
     fn owned_utilization_timer(&self) -> OwnedUtilizationTimer;
 }
 
@@ -622,7 +622,7 @@ pub trait UtilizationTimerVecExt {
 }
 
 impl UtilizationTimerExt for IntCounter {
-    fn utilization_timer(&self) -> UtilizationTimer {
+    fn utilization_timer(&self) -> UtilizationTimer<'_> {
         UtilizationTimer {
             metric: self,
             start: Instant::now(),

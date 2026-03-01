@@ -279,7 +279,7 @@ mod tests {
             // todo - we might want to wait for exactly num_txn from each authority, rather then num_txn as usize * committee.len() total
             if await_transactions.len() < await_num_txn {
                 for state in simulator.states_mut() {
-                    await_transactions.extend(state.core.block_handler_mut().proposed.drain(..))
+                    await_transactions.append(&mut state.core.block_handler_mut().proposed)
                 }
                 continue;
             }

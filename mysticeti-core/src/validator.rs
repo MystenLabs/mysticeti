@@ -284,10 +284,9 @@ impl<B: BlockHandler + 'static, C: CommitObserver + 'static> Validator<B, C> {
         Result<(), JoinError>,
         Result<Result<(), hyper::Error>, JoinError>,
     ) {
-        tokio::join!(
-            self.network_synchronizer.await_completion(),
-            self.metrics_handle.handle
-        )
+        let network = self.network_synchronizer.await_completion();
+        let metrics = self.metrics_handle.handle;
+        tokio::join!(network, metrics)
     }
 
     pub async fn stop(self) {

@@ -62,7 +62,7 @@ impl TransactionGenerator {
     }
 
     pub async fn run(mut self, mut rx_stop: Receiver<()>) {
-        let transactions_per_100ms = (self.transactions_per_second + 9) / 10;
+        let transactions_per_100ms = self.transactions_per_second.div_ceil(10);
 
         let mut counter = 0;
         let mut random: u64 = self.rng.gen(); // 8 bytes

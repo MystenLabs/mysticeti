@@ -22,8 +22,7 @@ pub trait Print: Serialize + DeserializeOwned {
 
     fn load<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         let content = fs::read_to_string(&path)?;
-        let object =
-            serde_yaml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let object = serde_yaml::from_str(&content).map_err(io::Error::other)?;
         Ok(object)
     }
 }

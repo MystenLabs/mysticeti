@@ -193,9 +193,9 @@ impl<T: BenchmarkType> MeasurementsCollection<T> {
     pub fn add(&mut self, scraper_id: ScraperId, label: String, measurement: Measurement) {
         self.data
             .entry(label)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(scraper_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(measurement);
     }
 

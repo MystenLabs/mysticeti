@@ -103,7 +103,7 @@ fn multiple_direct_commit() {
         tracing::info!("Commit sequence: {sequence:?}");
         assert_eq!(sequence.len(), 1);
 
-        let leader_round = n as u64 * wave_length;
+        let leader_round = n * wave_length;
         if let LeaderStatus::Commit(ref block) = sequence[0] {
             assert_eq!(block.author(), committee.elect_leader(leader_round, 0));
         } else {
@@ -332,7 +332,7 @@ fn indirect_commit() {
 
     let references: Vec<_> = references_without_votes_for_leader_1
         .into_iter()
-        .chain(references_with_votes_for_leader_1.into_iter())
+        .chain(references_with_votes_for_leader_1)
         .take(committee.quorum_threshold() as usize)
         .collect();
     let connections_without_votes_for_leader_1 = committee

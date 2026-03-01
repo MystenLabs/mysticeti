@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(dead_code)]
+
 use crate::simulator::{Scheduler, Simulator, SimulatorState};
 use crate::types::AuthorityIndex;
 use futures::FutureExt;
@@ -113,7 +115,7 @@ pub fn simulator_spawn<R: Send + 'static, F: Future<Output = R> + Send + 'static
 }
 
 thread_local! {
-    static CONTEXT: RefCell<Option<SimulatorContext>> = RefCell::new(None);
+    static CONTEXT: RefCell<Option<SimulatorContext>> = const { RefCell::new(None) };
 }
 
 pub struct SimulatorContext {

@@ -612,9 +612,7 @@ mod sim_tests {
         simulated_network.connect_all().await;
         let syncers = wait_for_epoch_to_close(network_syncers).await;
         for syncer in syncers.iter() {
-            if syncer.core().epoch_closed() {
-                ()
-            } else {
+            if !syncer.core().epoch_closed() {
                 panic!("Epoch should have closed!")
             }
         }
@@ -762,7 +760,7 @@ mod sim_tests {
         let (simulated_network, network_syncers, mut reporters) = simulated_network_syncers(10);
         // Disconnect all A from all peers except for B.
         simulated_network
-            .connect_some(|a, b| a != 0 || (a == 0 && b == 1))
+            .connect_some(|a, b| a != 0 || b == 1)
             .await;
 
         println!("Started");

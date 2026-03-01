@@ -303,15 +303,13 @@ pub fn check_commits<H: BlockHandler, S: SyncerSignals>(
     let mut max_commit = &zero_commit;
     for commit in commits {
         if commit.len() >= max_commit.len() {
-            if is_prefix(&max_commit, commit) {
+            if is_prefix(max_commit, commit) {
                 max_commit = commit;
             } else {
                 panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
             }
-        } else {
-            if !is_prefix(&commit, &max_commit) {
-                panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
-            }
+        } else if !is_prefix(commit, max_commit) {
+            panic!("[!] Commits diverged: {max_commit:?}, {commit:?}");
         }
     }
     eprintln!("Max commit sequence: {max_commit:?}");
@@ -371,7 +369,7 @@ fn is_prefix(short: &[BlockReference], long: &[BlockReference]) -> bool {
             return false;
         }
     }
-    return true;
+    true
 }
 
 pub struct TestBlockWriter {

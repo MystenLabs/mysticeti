@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::time::{Duration, SystemTime};
+
+#[cfg(not(feature = "simulator"))]
 pub use tokio::runtime::Handle;
+#[cfg(not(feature = "simulator"))]
 pub use tokio::task::JoinError;
+#[cfg(not(feature = "simulator"))]
 pub use tokio::task::JoinHandle;
-pub use tokio::time::{sleep, Instant};
+#[cfg(not(feature = "simulator"))]
+pub use tokio::time::sleep;
+pub use tokio::time::Instant;
 use tokio::time::{Interval, MissedTickBehavior};
 
 #[allow(dead_code)]

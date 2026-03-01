@@ -60,6 +60,7 @@ pub struct Connection {
 
 impl Network {
     #[cfg(feature = "simulator")]
+    #[allow(dead_code)]
     pub(crate) fn new_from_raw(connection_receiver: mpsc::Receiver<Connection>) -> Self {
         Self {
             connection_receiver,
@@ -600,7 +601,7 @@ mod test {
                 let peer = &addresses[connection.peer_id];
                 eprintln!("{address} connected to {peer}");
                 waiting_peers.remove(peer);
-                if waiting_peers.len() == 0 {
+                if waiting_peers.is_empty() {
                     break;
                 }
             }

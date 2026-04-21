@@ -198,8 +198,8 @@ impl BaseCommitter {
         }
 
         match first {
-            Some(block) => LeaderStatus::Commit(block.clone()),
-            None => LeaderStatus::Skip(leader, leader_round),
+            Some(block) => LeaderStatus::IndirectCommit(block.clone()),
+            None => LeaderStatus::IndirectSkip(leader, leader_round),
         }
     }
 
@@ -279,10 +279,10 @@ impl BaseCommitter {
                 leader.with_round(leader_round),
             );
             match anchor {
-                LeaderStatus::Commit(anchor) => {
+                LeaderStatus::DirectCommit(anchor) | LeaderStatus::IndirectCommit(anchor) => {
                     return self.decide_leader_from_anchor(anchor, leader, leader_round);
                 }
-                LeaderStatus::Skip(..) => (),
+                LeaderStatus::DirectSkip(..) | LeaderStatus::IndirectSkip(..) => (),
                 LeaderStatus::Undecided(..) => break,
             }
         }
@@ -309,7 +309,7 @@ impl BaseCommitter {
         // Check whether the leader has enough blame. That is, whether there are 2f+1 non-votes
         // for that leader (which ensure there will never be a certificate for that leader).
         if self.enough_leader_blame(voting_round, leader, leader_round) {
-            return LeaderStatus::Skip(leader, leader_round);
+            return LeaderStatus::DirectSkip(leader, leader_round);
         }
 
         // Check whether the leader(s) has enough support. That is, whether there are 2f+1
@@ -330,7 +330,7 @@ impl BaseCommitter {
         }
 
         first
-            .map(LeaderStatus::Commit)
+            .map(LeaderStatus::DirectCommit)
             .unwrap_or_else(|| LeaderStatus::Undecided(leader, leader_round))
     }
 }

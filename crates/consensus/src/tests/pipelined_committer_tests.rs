@@ -31,7 +31,6 @@ fn direct_commit() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -39,7 +38,9 @@ fn direct_commit() {
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
-    if let LeaderStatus::Commit(ref block) = sequence[0] {
+    if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+        sequence[0]
+    {
         assert_eq!(block.author(), leader_elector.elect_leader(1));
     } else {
         panic!("Expected a committed leader")
@@ -60,7 +61,6 @@ fn idempotence() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     // Commit one block.
@@ -94,7 +94,6 @@ fn multiple_direct_commit() {
             committee.clone(),
             storage.block_reader().clone(),
             Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-            Metrics::new_for_test(0),
         );
 
         let sequence = committer.try_commit(last_committed).collect::<Vec<_>>();
@@ -102,7 +101,9 @@ fn multiple_direct_commit() {
 
         assert_eq!(sequence.len(), 1);
         let leader_round = n;
-        if let LeaderStatus::Commit(ref block) = sequence[0] {
+        if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+            sequence[0]
+        {
             assert_eq!(block.author(), leader_elector.elect_leader(leader_round));
         } else {
             panic!("Expected a committed leader")
@@ -131,7 +132,6 @@ fn direct_commit_late_call() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -141,7 +141,9 @@ fn direct_commit_late_call() {
     assert_eq!(sequence.len(), n as usize);
     for (i, leader_block) in sequence.iter().enumerate() {
         let leader_round = 1 + i as u64;
-        if let LeaderStatus::Commit(block) = leader_block {
+        if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) =
+            leader_block
+        {
             assert_eq!(block.author(), leader_elector.elect_leader(leader_round));
         } else {
             panic!("Expected a committed leader")
@@ -166,7 +168,6 @@ fn no_genesis_commit() {
             committee.clone(),
             storage.block_reader().clone(),
             Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-            Metrics::new_for_test(0),
         );
 
         let last_committed = BlockReference::new_test(0, 0);
@@ -209,7 +210,6 @@ fn no_leader() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -217,7 +217,9 @@ fn no_leader() {
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
-    if let LeaderStatus::Skip(leader, round) = sequence[0] {
+    if let LeaderStatus::DirectSkip(leader, round) | LeaderStatus::IndirectSkip(leader, round) =
+        sequence[0]
+    {
         assert_eq!(leader, leader_1);
         assert_eq!(round, leader_round_1);
     } else {
@@ -260,7 +262,6 @@ fn direct_skip() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -268,7 +269,9 @@ fn direct_skip() {
     tracing::info!("Commit sequence: {sequence:?}");
 
     assert_eq!(sequence.len(), 1);
-    if let LeaderStatus::Skip(leader, round) = sequence[0] {
+    if let LeaderStatus::DirectSkip(leader, round) | LeaderStatus::IndirectSkip(leader, round) =
+        sequence[0]
+    {
         assert_eq!(leader, leader_elector.elect_leader(leader_round_1));
         assert_eq!(round, leader_round_1);
     } else {
@@ -362,7 +365,6 @@ fn indirect_commit() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -372,7 +374,9 @@ fn indirect_commit() {
 
     let leader_round = 1;
     let leader = leader_elector.elect_leader(leader_round);
-    if let LeaderStatus::Commit(ref block) = sequence[0] {
+    if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+        sequence[0]
+    {
         assert_eq!(block.author(), leader);
     } else {
         panic!("Expected a committed leader")
@@ -434,7 +438,6 @@ fn indirect_skip() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -446,7 +449,9 @@ fn indirect_skip() {
     for i in 0..=2 {
         let leader_round = i + 1;
         let leader = leader_elector.elect_leader(leader_round);
-        if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
+        if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+            sequence[i as usize]
+        {
             assert_eq!(block.author(), leader);
         } else {
             panic!("Expected a committed leader")
@@ -454,7 +459,9 @@ fn indirect_skip() {
     }
 
     // Ensure we skip the leader of wave 1 (first pipeline) but commit the others.
-    if let LeaderStatus::Skip(leader, round) = sequence[3] {
+    if let LeaderStatus::DirectSkip(leader, round) | LeaderStatus::IndirectSkip(leader, round) =
+        sequence[3]
+    {
         assert_eq!(leader, leader_elector.elect_leader(leader_round_4));
         assert_eq!(round, leader_round_4);
     } else {
@@ -464,7 +471,9 @@ fn indirect_skip() {
     for i in 4..=6 {
         let leader_round = i + 1;
         let leader = leader_elector.elect_leader(leader_round);
-        if let LeaderStatus::Commit(ref block) = sequence[i as usize] {
+        if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+            sequence[i as usize]
+        {
             assert_eq!(block.author(), leader);
         } else {
             panic!("Expected a committed leader")
@@ -516,7 +525,6 @@ fn undecided() {
         committee.clone(),
         storage.block_reader().clone(),
         Protocol::mysticeti(committee.total_stake(), NonZeroUsize::new(1).unwrap()),
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);

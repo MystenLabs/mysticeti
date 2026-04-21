@@ -6,8 +6,6 @@
 // `AggregateMetrics`) both reference these constants so a rename is a one-line diff and typos
 // become compile errors.
 
-use crate::consensus::LeaderStatus;
-
 // Metric names.
 pub const BENCHMARK_DURATION: &str = "benchmark_duration";
 pub const LATENCY_S: &str = "latency_s";
@@ -42,57 +40,11 @@ pub const LABEL_PROC: &str = "proc";
 // Well-known label values (extracted when used in more than one place).
 pub const WORKLOAD_SHARED: &str = "shared";
 
-/// Canonical decision outcome for a leader slot, as recorded in the `commit_type` Prometheus
-/// label on `committed_leaders_total`. Producers classify a `(LeaderStatus, direct_decide)` pair
-/// into one of these four variants; consumers compare against `DecisionType::as_label()` when
-/// reading.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DecisionType {
-    DirectCommit,
-    IndirectCommit,
-    DirectSkip,
-    IndirectSkip,
-}
-
-impl DecisionType {
-    /// Canonical string used in the Prometheus `commit_type` label.
-    pub fn as_label(&self) -> &'static str {
-        match self {
-            Self::DirectCommit => "direct-commit",
-            Self::IndirectCommit => "indirect-commit",
-            Self::DirectSkip => "direct-skip",
-            Self::IndirectSkip => "indirect-skip",
-        }
-    }
-
-    /// Inverse of [`Self::as_label`]. Returns `None` for unknown label values.
-    pub fn from_label(label: &str) -> Option<Self> {
-        match label {
-            "direct-commit" => Some(Self::DirectCommit),
-            "indirect-commit" => Some(Self::IndirectCommit),
-            "direct-skip" => Some(Self::DirectSkip),
-            "indirect-skip" => Some(Self::IndirectSkip),
-            _ => None,
-        }
-    }
-
-    /// True when this decision committed the leader (as opposed to skipping it).
-    pub fn is_committed(&self) -> bool {
-        matches!(self, Self::DirectCommit | Self::IndirectCommit)
-    }
-
-    /// Classify a `(LeaderStatus, direct_decide)` pair. Returns `None` for `Undecided` — it's not
-    /// a decision outcome, so callers should skip metric emission entirely in that case.
-    pub fn classify(leader: &LeaderStatus, direct: bool) -> Option<Self> {
-        match (leader, direct) {
-            (LeaderStatus::Commit(..), true) => Some(Self::DirectCommit),
-            (LeaderStatus::Commit(..), false) => Some(Self::IndirectCommit),
-            (LeaderStatus::Skip(..), true) => Some(Self::DirectSkip),
-            (LeaderStatus::Skip(..), false) => Some(Self::IndirectSkip),
-            (LeaderStatus::Undecided(..), _) => None,
-        }
-    }
-}
+// Values for the `commit_type` label on `committed_leaders_total`.
+pub const COMMIT_TYPE_DIRECT_COMMIT: &str = "direct-commit";
+pub const COMMIT_TYPE_INDIRECT_COMMIT: &str = "indirect-commit";
+pub const COMMIT_TYPE_DIRECT_SKIP: &str = "direct-skip";
+pub const COMMIT_TYPE_INDIRECT_SKIP: &str = "indirect-skip";
 
 /// Outcome of a block sync request from a peer, recorded in the `fulfilled` Prometheus label on
 /// `block_sync_requests_received`. `Found` = we had the block and served it; `Missing` = we did

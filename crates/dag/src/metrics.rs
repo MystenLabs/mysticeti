@@ -18,13 +18,20 @@ use tokio::time::Instant;
 pub use self::aggregate::AggregateMetrics;
 pub(crate) use self::names::WORKLOAD_SHARED;
 pub use self::names::{
-    BENCHMARK_DURATION, BLOCK_SYNC_REQUESTS_SENT, DecisionType, LABEL_AUTHORITY, LABEL_WORKLOAD,
-    LATENCY_S, LATENCY_SQUARED_S, LEADER_TIMEOUT_TOTAL, SyncRequestFulfilled,
+    BENCHMARK_DURATION, BLOCK_SYNC_REQUESTS_SENT, LABEL_AUTHORITY, LABEL_WORKLOAD, LATENCY_S,
+    LATENCY_SQUARED_S, LEADER_TIMEOUT_TOTAL, SyncRequestFulfilled,
 };
 pub use self::snapshot::MetricsSnapshot;
 pub use self::timers::{OwnedUtilizationTimer, UtilizationTimer};
-use self::{coarse::CoarseMetrics, precise::PreciseMetrics};
-use crate::authority::Authority;
+use self::{
+    coarse::CoarseMetrics,
+    names::{
+        COMMIT_TYPE_DIRECT_COMMIT, COMMIT_TYPE_DIRECT_SKIP, COMMIT_TYPE_INDIRECT_COMMIT,
+        COMMIT_TYPE_INDIRECT_SKIP,
+    },
+    precise::PreciseMetrics,
+};
+use crate::{authority::Authority, consensus::LeaderStatus};
 
 pub struct Metrics {
     coarse: CoarseMetrics,
@@ -144,11 +151,21 @@ impl Metrics {
             .observe(value);
     }
 
-    pub fn inc_committed_leaders(&self, authority: Authority, decision: DecisionType) {
-        let label = authority.to_string();
+    /// Record a decided leader on `committed_leaders_total`. Silent no-op on
+    /// `LeaderStatus::Undecided` — only decided statuses (commit or skip, direct or indirect)
+    /// produce a metric increment.
+    pub fn inc_decided_leaders(&self, status: &LeaderStatus) {
+        let label = match status {
+            LeaderStatus::DirectCommit(_) => COMMIT_TYPE_DIRECT_COMMIT,
+            LeaderStatus::IndirectCommit(_) => COMMIT_TYPE_INDIRECT_COMMIT,
+            LeaderStatus::DirectSkip(..) => COMMIT_TYPE_DIRECT_SKIP,
+            LeaderStatus::IndirectSkip(..) => COMMIT_TYPE_INDIRECT_SKIP,
+            LeaderStatus::Undecided(..) => return,
+        };
+        let authority = status.authority().to_string();
         self.coarse
             .committed_leaders_total
-            .with_label_values(&[&label, decision.as_label()])
+            .with_label_values(&[&authority, label])
             .inc();
     }
 
@@ -253,7 +270,8 @@ struct NetworkAddressTable {
 mod test {
     use std::time::Duration;
 
-    use super::{Authority, DecisionType, Metrics};
+    use super::{Authority, Metrics};
+    use crate::consensus::LeaderStatus;
 
     #[test]
     fn new_for_test_collect_roundtrip() {
@@ -280,29 +298,23 @@ mod test {
         let a = Authority::from(0_usize);
         let b = Authority::from(1_usize);
         let metrics = Metrics::new_for_test(4);
-        metrics.inc_committed_leaders(a, DecisionType::DirectCommit);
-        metrics.inc_committed_leaders(a, DecisionType::DirectCommit);
-        metrics.inc_committed_leaders(b, DecisionType::IndirectSkip);
+        metrics.inc_decided_leaders(&LeaderStatus::DirectSkip(a, 1));
+        metrics.inc_decided_leaders(&LeaderStatus::DirectSkip(a, 2));
+        metrics.inc_decided_leaders(&LeaderStatus::IndirectSkip(b, 1));
         metrics.set_missing_blocks(a, 3);
         metrics.inc_block_sync_requests_sent(a);
         let snapshot = metrics.collect();
         assert_eq!(
             snapshot.metric(
                 "committed_leaders_total",
-                &[
-                    ("authority", "A"),
-                    ("commit_type", DecisionType::DirectCommit.as_label()),
-                ]
+                &[("authority", "A"), ("commit_type", "direct-skip")]
             ),
             2.0
         );
         assert_eq!(
             snapshot.metric(
                 "committed_leaders_total",
-                &[
-                    ("authority", "B"),
-                    ("commit_type", DecisionType::IndirectSkip.as_label()),
-                ]
+                &[("authority", "B"), ("commit_type", "indirect-skip")]
             ),
             1.0
         );

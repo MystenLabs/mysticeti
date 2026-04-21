@@ -10,7 +10,6 @@ use dag::{
     committee::Committee,
     committee::Stake,
     consensus::{DagConsensus, LeaderStatus},
-    metrics::{DecisionType, Metrics},
     storage::BlockReader,
 };
 
@@ -22,18 +21,12 @@ pub struct Committer {
     base_committers: Vec<BaseCommitter>,
     strong_quorum: Stake,
     leader_wait: bool,
-    metrics: Arc<Metrics>,
     /// Reusable buffer for commit decisions.
     leaders: VecDeque<LeaderStatus>,
 }
 
 impl Committer {
-    pub fn new(
-        committee: Arc<Committee>,
-        block_reader: BlockReader,
-        protocol: Protocol,
-        metrics: Arc<Metrics>,
-    ) -> Self {
+    pub fn new(committee: Arc<Committee>, block_reader: BlockReader, protocol: Protocol) -> Self {
         let mut base_committers = Vec::new();
         let pipeline_stages = if protocol.pipeline {
             protocol.wave_length
@@ -60,7 +53,6 @@ impl Committer {
             base_committers,
             strong_quorum: protocol.strong_quorum,
             leader_wait: protocol.leader_wait,
-            metrics,
             leaders: VecDeque::new(),
         }
     }
@@ -91,13 +83,11 @@ impl Committer {
 
                 // Try to directly decide the leader.
                 let mut status = committer.try_direct_decide(leader, round);
-                self.update_metrics(&status, true);
                 tracing::debug!("Outcome of direct rule: {status}");
 
                 // If we can't directly decide the leader, try to indirectly decide it.
                 if !status.is_decided() {
                     status = committer.try_indirect_decide(leader, round, self.leaders.iter());
-                    self.update_metrics(&status, false);
                     tracing::debug!("Outcome of indirect rule: {status}");
                 }
 
@@ -117,15 +107,6 @@ impl Committer {
             // Stop the sequence upon encountering an undecided leader.
             .take_while(|x| x.is_decided())
             .inspect(|x| tracing::debug!("Decided {x}"))
-    }
-
-    /// Record this leader's decision outcome on `committed_leaders_total`. `Undecided` leaders
-    /// aren't a decision outcome, so `DecisionType::classify` returns `None` and we skip emission.
-    fn update_metrics(&self, leader: &LeaderStatus, direct_decide: bool) {
-        if let Some(decision) = DecisionType::classify(leader, direct_decide) {
-            self.metrics
-                .inc_committed_leaders(leader.authority(), decision);
-        }
     }
 }
 

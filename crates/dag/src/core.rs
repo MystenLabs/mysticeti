@@ -294,9 +294,11 @@ impl<C: Ctx, D: DagConsensus> Core<C, D> {
     }
 
     pub fn try_commit(&mut self) -> Vec<Data<Block>> {
+        let metrics = &self.metrics;
         let sequence: Vec<_> = self
             .committer
             .try_commit(self.last_commit_leader)
+            .inspect(|leader| metrics.inc_decided_leaders(leader))
             .filter_map(|leader| leader.into_decided_block())
             .collect();
 

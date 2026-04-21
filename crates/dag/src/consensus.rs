@@ -35,45 +35,46 @@ pub trait DagConsensus: Send + 'static {
     fn get_leaders(&self, round: RoundNumber) -> Option<impl Iterator<Item = Authority>>;
 }
 
-/// The status of every leader output by the committers. While the core only
-/// cares about committed leaders, providing a richer status allows for easier
-/// debugging, testing, and composition with advanced commit strategies.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+/// The status of every leader output by the committers. While the core only cares about committed
+/// leaders, providing a richer status allows for easier debugging, testing, and composition with
+/// advanced commit strategies.
+#[derive(Debug, Eq, PartialEq)]
 pub enum LeaderStatus {
-    Commit(Data<Block>),
-    Skip(Authority, RoundNumber),
+    DirectCommit(Data<Block>),
+    IndirectCommit(Data<Block>),
+    DirectSkip(Authority, RoundNumber),
+    IndirectSkip(Authority, RoundNumber),
     Undecided(Authority, RoundNumber),
 }
 
 impl LeaderStatus {
     pub fn round(&self) -> RoundNumber {
         match self {
-            Self::Commit(block) => block.round(),
-            Self::Skip(_, round) => *round,
-            Self::Undecided(_, round) => *round,
+            Self::DirectCommit(block) | Self::IndirectCommit(block) => block.round(),
+            Self::DirectSkip(_, round)
+            | Self::IndirectSkip(_, round)
+            | Self::Undecided(_, round) => *round,
         }
     }
 
     pub fn authority(&self) -> Authority {
         match self {
-            Self::Commit(block) => block.author(),
-            Self::Skip(authority, _) => *authority,
-            Self::Undecided(authority, _) => *authority,
+            Self::DirectCommit(block) | Self::IndirectCommit(block) => block.author(),
+            Self::DirectSkip(authority, _)
+            | Self::IndirectSkip(authority, _)
+            | Self::Undecided(authority, _) => *authority,
         }
     }
 
+    /// True for every variant except `Undecided`.
     pub fn is_decided(&self) -> bool {
-        match self {
-            Self::Commit(_) => true,
-            Self::Skip(_, _) => true,
-            Self::Undecided(_, _) => false,
-        }
+        !matches!(self, Self::Undecided(..))
     }
 
     pub fn into_decided_block(self) -> Option<Data<Block>> {
         match self {
-            Self::Commit(block) => Some(block),
-            Self::Skip(..) => None,
+            Self::DirectCommit(block) | Self::IndirectCommit(block) => Some(block),
+            Self::DirectSkip(..) | Self::IndirectSkip(..) => None,
             Self::Undecided(..) => panic!("Decided block is either Commit or Skip"),
         }
     }
@@ -94,13 +95,11 @@ impl Ord for LeaderStatus {
 impl fmt::Display for LeaderStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Commit(block) => write!(f, "Commit({})", block.reference()),
-            Self::Skip(a, r) => {
-                write!(f, "Skip({})", a.with_round(*r))
-            }
-            Self::Undecided(a, r) => {
-                write!(f, "Undecided({})", a.with_round(*r))
-            }
+            Self::DirectCommit(block) => write!(f, "DirectCommit({})", block.reference()),
+            Self::IndirectCommit(block) => write!(f, "IndirectCommit({})", block.reference()),
+            Self::DirectSkip(a, r) => write!(f, "DirectSkip({})", a.with_round(*r)),
+            Self::IndirectSkip(a, r) => write!(f, "IndirectSkip({})", a.with_round(*r)),
+            Self::Undecided(a, r) => write!(f, "Undecided({})", a.with_round(*r)),
         }
     }
 }

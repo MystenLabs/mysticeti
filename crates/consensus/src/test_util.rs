@@ -30,12 +30,7 @@ fn open_core<C: Ctx>(
         Storage::new_for_tests(authority, metrics.clone(), committee)
     };
     let protocol = ConsensusProtocol::default().to_protocol(committee.total_stake());
-    let committer = Committer::new(
-        committee.clone(),
-        storage.block_reader().clone(),
-        protocol,
-        metrics.clone(),
-    );
+    let committer = Committer::new(committee.clone(), storage.block_reader().clone(), protocol);
     let (block_handler, _tx_sender) = RealBlockHandler::new(metrics.clone());
     let crypto = CryptoEngine::disabled();
     Core::open(

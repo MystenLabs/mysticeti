@@ -37,7 +37,6 @@ fn direct_commit() {
                 leader_wait: false,
                 require_crypto: false,
             },
-            Metrics::new_for_test(0),
         );
 
         let last_committed = BlockReference::new_test(0, 0);
@@ -46,7 +45,8 @@ fn direct_commit() {
 
         assert_eq!(sequence.len(), leader_count);
         for (i, leader) in sequence.iter().enumerate() {
-            if let LeaderStatus::Commit(block) = leader {
+            if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) = leader
+            {
                 let leader_round = wave_length;
                 let leader_offset = i as u64;
                 let expected = leader_elector.elect_leader(leader_round + leader_offset);
@@ -80,7 +80,6 @@ fn idempotence() {
                 leader_wait: false,
                 require_crypto: false,
             },
-            Metrics::new_for_test(0),
         );
 
         // Commit one block.
@@ -126,7 +125,6 @@ fn multiple_direct_commit() {
                 leader_wait: false,
                 require_crypto: false,
             },
-            Metrics::new_for_test(0),
         );
 
         let sequence = committer.try_commit(last_committed).collect::<Vec<_>>();
@@ -135,7 +133,8 @@ fn multiple_direct_commit() {
 
         let leader_round = n * wave_length;
         for (i, leader) in sequence.iter().enumerate() {
-            if let LeaderStatus::Commit(block) = leader {
+            if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) = leader
+            {
                 let leader_offset = i as u64;
                 let expected = leader_elector.elect_leader(leader_round + leader_offset);
                 assert_eq!(block.author(), expected);
@@ -181,7 +180,6 @@ fn direct_commit_partial_round() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let sequence = committer.try_commit(last_committed).collect::<Vec<_>>();
@@ -189,7 +187,7 @@ fn direct_commit_partial_round() {
     assert_eq!(sequence.len(), leader_count - 1);
 
     for (i, leader) in sequence.iter().enumerate() {
-        if let LeaderStatus::Commit(block) = leader {
+        if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) = leader {
             let leader_offset = (i + 1) % committee.len();
             let expected = leader_elector.elect_leader(first_leader_round + leader_offset as u64);
             assert_eq!(block.author(), expected);
@@ -228,7 +226,6 @@ fn direct_commit_late_call() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -239,7 +236,8 @@ fn direct_commit_late_call() {
     for (i, leaders) in sequence.chunks(leader_count).enumerate() {
         let leader_round = (i as u64 + 1) * wave_length;
         for (j, leader) in leaders.iter().enumerate() {
-            if let LeaderStatus::Commit(block) = leader {
+            if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) = leader
+            {
                 let leader_offset = j as u64;
                 let expected = leader_elector.elect_leader(leader_round + leader_offset);
                 assert_eq!(block.author(), expected);
@@ -278,7 +276,6 @@ fn no_genesis_commit() {
                 leader_wait: false,
                 require_crypto: false,
             },
-            Metrics::new_for_test(0),
         );
 
         let last_committed = BlockReference::new_test(0, 0);
@@ -332,7 +329,6 @@ fn no_leader() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -345,13 +341,17 @@ fn no_leader() {
         let leader_offset = i as u64;
         let expected_leader = leader_elector.elect_leader(leader_round + leader_offset);
         if i == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[i] {
+            if let LeaderStatus::DirectSkip(leader, round)
+            | LeaderStatus::IndirectSkip(leader, round) = sequence[i]
+            {
                 assert_eq!(leader, expected_leader);
                 assert_eq!(round, leader_round_1);
             } else {
                 panic!("Expected to directly skip the leader");
             }
-        } else if let LeaderStatus::Commit(block) = leader {
+        } else if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) =
+            leader
+        {
             assert_eq!(block.author(), expected_leader);
         } else {
             panic!("Expected a committed leader")
@@ -405,7 +405,6 @@ fn direct_skip() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -418,13 +417,17 @@ fn direct_skip() {
         let leader_offset = i as u64;
         let expected_leader = leader_elector.elect_leader(leader_round + leader_offset);
         if i == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[i] {
+            if let LeaderStatus::DirectSkip(leader, round)
+            | LeaderStatus::IndirectSkip(leader, round) = sequence[i]
+            {
                 assert_eq!(leader, expected_leader);
                 assert_eq!(round, leader_round_1);
             } else {
                 panic!("Expected to directly skip the leader");
             }
-        } else if let LeaderStatus::Commit(block) = leader {
+        } else if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) =
+            leader
+        {
             assert_eq!(block.author(), expected_leader);
         } else {
             panic!("Expected a committed leader")
@@ -525,7 +528,6 @@ fn indirect_commit() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -535,7 +537,9 @@ fn indirect_commit() {
 
     let leader_round = wave_length;
     let leader = leader_elector.elect_leader(leader_round);
-    if let LeaderStatus::Commit(ref block) = sequence[0] {
+    if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+        sequence[0]
+    {
         assert_eq!(block.author(), leader);
     } else {
         panic!("Expected a committed leader")
@@ -603,7 +607,6 @@ fn indirect_skip() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
@@ -616,7 +619,7 @@ fn indirect_skip() {
         let leader_round_1 = wave_length;
         let leader_offset = n as u64;
         let leader_1 = leader_elector.elect_leader(leader_round_1 + leader_offset);
-        if let LeaderStatus::Commit(block) = status {
+        if let LeaderStatus::DirectCommit(block) | LeaderStatus::IndirectCommit(block) = status {
             assert_eq!(block.author(), leader_1);
         } else {
             panic!("Expected a committed leader")
@@ -625,7 +628,9 @@ fn indirect_skip() {
 
     // Ensure we skip the first leader of wave 2 but commit the other leaders of wave 2.
     let leader_round_2 = 2 * wave_length;
-    if let LeaderStatus::Skip(leader, round) = sequence[leader_count] {
+    if let LeaderStatus::DirectSkip(leader, round) | LeaderStatus::IndirectSkip(leader, round) =
+        sequence[leader_count]
+    {
         assert_eq!(leader, leader_2);
         assert_eq!(round, leader_round_2);
     } else {
@@ -636,7 +641,9 @@ fn indirect_skip() {
         let leader_round_2 = 2 * wave_length;
         let leader_offset = n as u64;
         if n == 0 {
-            if let LeaderStatus::Skip(leader, round) = sequence[leader_count + n] {
+            if let LeaderStatus::DirectSkip(leader, round)
+            | LeaderStatus::IndirectSkip(leader, round) = sequence[leader_count + n]
+            {
                 assert_eq!(leader, leader_2);
                 assert_eq!(round, leader_round_2);
             } else {
@@ -644,7 +651,9 @@ fn indirect_skip() {
             }
         } else {
             let leader_2 = leader_elector.elect_leader(leader_round_2 + leader_offset);
-            if let LeaderStatus::Commit(ref block) = sequence[leader_count + n] {
+            if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+                sequence[leader_count + n]
+            {
                 assert_eq!(block.author(), leader_2);
             } else {
                 panic!("Expected a committed leader")
@@ -657,7 +666,9 @@ fn indirect_skip() {
         let leader_round_3 = 3 * wave_length;
         let leader_offset = n as u64;
         let leader_3 = leader_elector.elect_leader(leader_round_3 + leader_offset);
-        if let LeaderStatus::Commit(ref block) = sequence[2 * leader_count + n] {
+        if let LeaderStatus::DirectCommit(ref block) | LeaderStatus::IndirectCommit(ref block) =
+            sequence[2 * leader_count + n]
+        {
             assert_eq!(block.author(), leader_3);
         } else {
             panic!("Expected a committed leader")
@@ -718,7 +729,6 @@ fn undecided() {
             leader_wait: false,
             require_crypto: false,
         },
-        Metrics::new_for_test(0),
     );
 
     let last_committed = BlockReference::new_test(0, 0);
